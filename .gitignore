@@ -1,0 +1,18 @@
+.build/
+dist/
+.DS_Store
+
+# Local indexes and editor state
+.codegraph/
+.cursor/
+
+# Local diagnostics, screenshots and test recordings
+docs/
+*.log
+
+# Local credentials and overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
