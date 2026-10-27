@@ -34,6 +34,9 @@ struct ClipboardShortcut: Codable, Equatable {
 
 @MainActor
 final class GlobalClipboardShortcut {
+    private static var nextID: UInt32 = 0
+    let identifier: UInt32
+    init() { Self.nextID += 1; identifier = Self.nextID }
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private(set) var current: ClipboardShortcut?
@@ -43,16 +46,21 @@ final class GlobalClipboardShortcut {
         if hotKey != nil, current?.keyCode == value.keyCode, current?.modifiers == value.modifiers { return true }
         if handler == nil {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            let result = InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
+            let result = InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
                 guard let context else { return OSStatus(eventNotHandledErr) }
                 let shortcut = Unmanaged<GlobalClipboardShortcut>.fromOpaque(context).takeUnretainedValue()
+                var received = EventHotKeyID()
+                guard let event,
+                      GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                                        MemoryLayout<EventHotKeyID>.size, nil, &received) == noErr,
+                      received.signature == 0x4c54534b, received.id == shortcut.identifier else { return OSStatus(eventNotHandledErr) }
                 Task { @MainActor in shortcut.action?() }
                 return noErr
             }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &handler)
             guard result == noErr else { return false }
         }
         var replacement: EventHotKeyRef?
-        guard RegisterEventHotKey(value.keyCode, value.modifiers, EventHotKeyID(signature: 0x4c54534b, id: 1),
+        guard RegisterEventHotKey(value.keyCode, value.modifiers, EventHotKeyID(signature: 0x4c54534b, id: identifier),
                                   GetApplicationEventTarget(), 0, &replacement) == noErr else { return false }
         // Keep the old registration alive unless the new combination succeeds.
         if let hotKey { UnregisterEventHotKey(hotKey) }

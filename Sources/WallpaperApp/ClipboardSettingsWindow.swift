@@ -190,7 +190,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -203,7 +203,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let tabs = NSTabView()
         tabs.wantsLayer = true
         tabs.tabViewType = .noTabsNoBorder
-        let navigation = NSSegmentedControl(labels: [AppLanguage.text("通用"), AppLanguage.text("剪贴板"), AppLanguage.text("桌面背景")], trackingMode: .selectOne, target: self, action: #selector(sectionChanged(_:)))
+        let navigation = NSSegmentedControl(labels: [AppLanguage.text("通用"), AppLanguage.text("剪贴板"), AppLanguage.text("桌面背景")] + (appSwitcher == nil ? [] : [AppLanguage.english ? "Apps" : "应用切换"]), trackingMode: .selectOne, target: self, action: #selector(sectionChanged(_:)))
         navigation.wantsLayer = true
         navigation.selectedSegment = 0
         navigation.translatesAutoresizingMaskIntoConstraints = false
@@ -217,7 +217,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
             navigation.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             navigation.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
-            navigation.widthAnchor.constraint(equalToConstant: 360),
+            navigation.widthAnchor.constraint(equalToConstant: appSwitcher == nil ? 360 : 520),
             tabs.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
             tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16)
         ])
@@ -226,6 +226,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
                                    ("wallpaper", AppLanguage.text("桌面背景"), makeBackgroundView())] {
             let item = NSTabViewItem(identifier: id)
             item.label = AppLanguage.text(title); item.view = view
+            tabs.addTabViewItem(item)
+        }
+        if let appSwitcher {
+            let item = NSTabViewItem(identifier: "apps")
+            item.label = AppLanguage.english ? "Apps" : "应用切换"
+            item.view = AppSwitcherSettingsView(manager: appSwitcher)
             tabs.addTabViewItem(item)
         }
         window.contentView = root

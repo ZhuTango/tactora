@@ -5,6 +5,32 @@ import ServiceManagement
 @main
 struct Preview {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--scan-only") {
+            print("SCAN start")
+            let found = await Task.detached { AppSwitcher.discover() }.value
+            print("SCAN found", found.count)
+            return
+        }
+        if CommandLine.arguments.contains("--activation-check") {
+            _ = NSApplication.shared
+            let previous = NSWorkspace.shared.frontmostApplication
+            defer { previous?.activate(options: []) }
+            let suite = "switcher-activation-" + UUID().uuidString
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let manager = AppSwitcher(defaults: defaults, start: false)
+            manager.panelEnabled = false
+            let finder = SwitcherApp(id: "com.apple.finder", name: "Finder", path: "/System/Library/CoreServices/Finder.app")
+            try manager.configure(finder, shortcut: nil, show: true)
+            manager.activate(finder.id)
+            for _ in 0..<30 {
+                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finder.id { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            precondition(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finder.id)
+            print("PASS: activates actual Finder without clipboard or accessibility permissions")
+            return
+        }
         var checks = 0
         var sends = 0
         let delayed = await ClipboardPasteDelivery.deliver(target: 2, own: 1,
@@ -52,11 +78,60 @@ struct Preview {
         if shortcut.register() {
             var event: EventRef?
             CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(kEventHotKeyPressed), 0, 0, &event)
-            if let event { SendEventToEventTarget(event, GetApplicationEventTarget()); ReleaseEvent(event) }
+            if let event {
+                var id = EventHotKeyID(signature: 0x4c54534b, id: shortcut.identifier)
+                SetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), MemoryLayout<EventHotKeyID>.size, &id)
+                SendEventToEventTarget(event, GetApplicationEventTarget()); ReleaseEvent(event)
+            }
             try await Task.sleep(nanoseconds: 100_000_000)
             precondition(fired)
             print("PASS: global shortcut registration and application event dispatch")
         } else { print("SKIP: global shortcut already reserved by another application") }
+        // Independent Carbon registrations must dispatch only to their matching owner.
+        let appKey = GlobalClipboardShortcut()
+        var appFired = 0
+        appKey.action = { appFired += 1 }
+        let testKey = ClipboardShortcut(keyCode: 17, modifiers: UInt32(cmdKey | controlKey | optionKey | shiftKey), label: "⌃⌥⇧⌘T")
+        precondition(appKey.register(testKey))
+        fired = false
+        var hotEvent: EventRef?
+        CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(kEventHotKeyPressed), 0, 0, &hotEvent)
+        var appID = EventHotKeyID(signature: 0x4c54534b, id: appKey.identifier)
+        SetEventParameter(hotEvent!, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), MemoryLayout<EventHotKeyID>.size, &appID)
+        SendEventToEventTarget(hotEvent!, GetApplicationEventTarget()); ReleaseEvent(hotEvent!)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        precondition(appFired == 1 && !fired)
+        var hold = OptionHoldState()
+        precondition(!hold.visible(optionOnly: true, now: 1))
+        precondition(!hold.visible(optionOnly: true, now: 1.3))
+        precondition(hold.visible(optionOnly: true, now: 1.5))
+        hold.suppress(); precondition(!hold.visible(optionOnly: true, now: 2))
+        precondition(!hold.visible(optionOnly: false, now: 3))
+        precondition(!hold.visible(optionOnly: true, now: 4))
+        precondition(hold.visible(optionOnly: true, now: 4.5))
+        let suite = "switcher-test-" + UUID().uuidString
+        let switcherDefaults = UserDefaults(suiteName: suite)!
+        defer { switcherDefaults.removePersistentDomain(forName: suite) }
+        let switcher = AppSwitcher(defaults: switcherDefaults, start: false)
+        switcher.panelEnabled = false
+        let fixtureApp = SwitcherApp(id: "test.fixture", name: "Test", path: "/missing.app")
+        let bindingKey = ClipboardShortcut(keyCode: 11, modifiers: UInt32(cmdKey | controlKey | optionKey | shiftKey), label: "⌃⌥⇧⌘B")
+        try switcher.configure(fixtureApp, shortcut: bindingKey, show: true)
+        try switcher.setVisibility(fixtureApp, show: false)
+        precondition(switcher.bindings[fixtureApp.id]?.shortcut == bindingKey)
+        let restoredSwitcher = AppSwitcher(defaults: switcherDefaults, start: false)
+        precondition(restoredSwitcher.bindings == switcher.bindings && !restoredSwitcher.panelEnabled)
+        do { try switcher.configure(fixtureApp, shortcut: testKey, show: false); preconditionFailure("Conflict must fail") } catch {}
+        precondition(switcher.bindings[fixtureApp.id]?.shortcut == bindingKey)
+        do { try switcher.configure(SwitcherApp(id: "other", name: "Other", path: "/other.app"), shortcut: bindingKey, show: false); preconditionFailure("Duplicate must fail") } catch {}
+        try switcher.setVisibility(fixtureApp, show: true)
+        let hintPanel = switcher.makePanel()
+        precondition(hintPanel.styleMask.contains(.nonactivatingPanel))
+        precondition(hintPanel.frame.height == 114)
+        hintPanel.close()
+        try switcher.configure(fixtureApp, shortcut: nil, show: false)
+        precondition(switcher.bindings[fixtureApp.id]?.shortcut == nil)
+        print("PASS: app hotkey routing, hold delay/release/suppression, persistence, independent visibility, conflict preservation and clear")
         try String(panel.window!.windowNumber).write(toFile: ".build/clipboard-window-id", atomically: true, encoding: .utf8)
         try await Task.sleep(nanoseconds: 300_000_000)
         guard let window = panel.window, let view = window.contentView else { fatalError() }
@@ -362,17 +437,24 @@ struct Preview {
         var loginState = SMAppService.Status.notRegistered
         let loginAccess = LoginItemAccess(status: { loginState }, register: { loginState = .enabled }, unregister: { loginState = .notRegistered })
         let unified = ClipboardSettingsWindow(store: store, loginAccess: loginAccess)
-        unified.configureUnified(backgroundMenu: backgroundMenu)
+        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher)
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
-        precondition(tabs.numberOfTabViewItems == 3)
+        precondition(tabs.numberOfTabViewItems == 4)
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
             let bitmap = unifiedView.bitmapImageRepForCachingDisplay(in: unifiedView.bounds)!
             unifiedView.cacheDisplay(in: unifiedView.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
         }
+        unified.selectSection("apps")
+        // AppKit modal checks stop the command-line async main runloop; keep this final UI phase synchronous.
+        let switcherView = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? AppSwitcherSettingsView }.first!
+        switcherView.applyInventory(AppSwitcher.discover())
+        let appsTable = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTableView }.first!
+        precondition(appsTable.numberOfRows > 1)
+        try settingsSnapshot("settings-app-switcher")
         unified.selectSection("general")
         let loginButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.title == "登录 Mac 时自动启动" }!
         loginButton.performClick(nil); precondition(loginState == .enabled && loginButton.state == .on)
