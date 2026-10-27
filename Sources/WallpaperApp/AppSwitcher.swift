@@ -275,8 +275,8 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         filtered = apps.filter { query.isEmpty || ($0.name + " " + $0.path).localizedStandardContains(query) }
         table.reloadData()
         status.stringValue = manager.loadError ?? (AppLanguage.english
-            ? "\(filtered.count) apps · Changes saved automatically · Refresh after installing or moving an app"
-            : "\(filtered.count) 个应用 · 配置自动保存 · 安装或移动应用后请刷新列表")
+            ? "\(filtered.count) apps · Click to record · Esc cancels · Backspace clears · Auto-saved"
+            : "\(filtered.count) 个应用 · 点击录入 · Esc 取消 · Backspace 清除 · 配置自动保存")
     }
     @objc private func togglePanel() { manager.panelEnabled = enabled.state == .on }
     func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
@@ -298,17 +298,31 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             cell.toolTip = app.path
             return cell
         }
-        let button = tableView.makeView(withIdentifier: key, owner: self) as? NSButton
-            ?? (key.rawValue == "show" ? NSButton(checkboxWithTitle: "", target: nil, action: nil) : SettingsFeedbackButton())
-        button.identifier = key; button.cell?.representedObject = app.id; button.target = self
-        if key.rawValue == "show" {
-            button.title = AppLanguage.english ? "Show" : "展示"
-            button.state = binding?.showInPanel == true ? .on : .off; button.action = #selector(toggleApp(_:))
-        } else {
-            button.title = binding?.shortcut?.label ?? (AppLanguage.english ? "Set shortcut…" : "设置快捷键…")
-            if manager.failures[app.id] != nil { button.title += " ⚠" }
-            button.action = #selector(editShortcut(_:))
+        if key.rawValue == "shortcut" {
+            let recorder = tableView.makeView(withIdentifier: key, owner: self) as? SwitcherShortcutRecorder ?? SwitcherShortcutRecorder()
+            recorder.cancelRecording()
+            recorder.identifier = key
+            recorder.title = binding?.shortcut?.label ?? (AppLanguage.english ? "Click to record" : "点击录入快捷键")
+            recorder.toolTip = AppLanguage.english ? "Press a shortcut · Esc cancels · Backspace clears" : "按下组合键 · Esc 取消 · Backspace 清除"
+            recorder.setAccessibilityLabel(app.name + " · " + column.title)
+            recorder.onRecordingChanged = { [weak manager] value in manager?.pausePanel(value) }
+            recorder.onRecord = { [weak self] value in
+                guard let self else { return }
+                do {
+                    try self.manager.configure(app, shortcut: value, show: self.manager.bindings[app.id]?.showInPanel ?? false)
+                    self.status.textColor = .secondaryLabelColor
+                } catch {
+                    self.status.textColor = .systemRed
+                    self.status.stringValue = error.localizedDescription
+                }
+            }
+            return recorder
         }
+        let button = tableView.makeView(withIdentifier: key, owner: self) as? NSButton
+            ?? NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        button.identifier = key; button.cell?.representedObject = app.id; button.target = self
+        button.title = AppLanguage.english ? "Show" : "展示"
+        button.state = binding?.showInPanel == true ? .on : .off; button.action = #selector(toggleApp(_:))
         button.toolTip = manager.failures[app.id] ?? app.path
         button.setAccessibilityLabel(app.name + " · " + column.title)
         return button
@@ -322,38 +336,67 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         do { try manager.setVisibility(app, show: sender.state == .on) }
         catch { showError(error); reload() }
     }
-    @objc private func editShortcut(_ sender: NSButton) {
-        guard let app = app(for: sender) else { return }
-        manager.pausePanel(true); defer { manager.pausePanel(false) }
-        let alert = NSAlert(); alert.messageText = app.name
-        alert.informativeText = AppLanguage.english ? "Choose modifiers and a key. Conflicting shortcuts will not replace your current setting." : "选择修饰键与字母/数字。快捷键冲突时保留原配置。"
-        alert.addButton(withTitle: AppLanguage.english ? "Save" : "保存")
-        alert.addButton(withTitle: AppLanguage.english ? "Cancel" : "取消")
-        alert.addButton(withTitle: AppLanguage.english ? "Clear shortcut" : "清除快捷键")
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 390, height: 76))
-        let existing = manager.bindings[app.id]?.shortcut
-        var toggles: [(NSButton, UInt32, String)] = []
-        for (index, entry) in [("⌃", controlKey), ("⌥", optionKey), ("⇧", shiftKey), ("⌘", cmdKey)].enumerated() {
-            let button = NSButton(checkboxWithTitle: entry.0, target: nil, action: nil)
-            button.frame = NSRect(x: index * 70, y: 42, width: 65, height: 24)
-            button.state = (existing?.modifiers ?? UInt32(optionKey)) & UInt32(entry.1) != 0 ? .on : .off
-            view.addSubview(button); toggles.append((button, UInt32(entry.1), entry.0))
-        }
-        let codes: [(String, UInt32)] = [("A",0),("B",11),("C",8),("D",2),("E",14),("F",3),("G",5),("H",4),("I",34),("J",38),("K",40),("L",37),("M",46),("N",45),("O",31),("P",35),("Q",12),("R",15),("S",1),("T",17),("U",32),("V",9),("W",13),("X",7),("Y",16),("Z",6),("0",29),("1",18),("2",19),("3",20),("4",21),("5",23),("6",22),("7",26),("8",28),("9",25),("Space",49)]
-        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 2, width: 150, height: 28))
-        picker.addItems(withTitles: codes.map(\.0)); picker.selectItem(at: codes.firstIndex(where: { $0.1 == existing?.keyCode }) ?? 0)
-        picker.setAccessibilityLabel(AppLanguage.english ? "Shortcut key" : "快捷键字母")
-        view.addSubview(picker); alert.accessoryView = view
-        let response = alert.runModal()
-        guard response != .alertSecondButtonReturn else { return }
-        var value: ClipboardShortcut?
-        if response == .alertFirstButtonReturn {
-            let mods = toggles.filter { $0.0.state == .on }
-            let key = codes[picker.indexOfSelectedItem]
-            value = ClipboardShortcut(keyCode: key.1, modifiers: mods.reduce(0) { $0 | $1.1 }, label: mods.map(\.2).joined() + key.0)
-        }
-        do { try manager.configure(app, shortcut: value, show: manager.bindings[app.id]?.showInPanel ?? false) }
-        catch { showError(error) }
-    }
     private func showError(_ error: Error) { let alert = NSAlert(); alert.messageText = error.localizedDescription; alert.runModal() }
+}
+
+// A local recorder exists only while its visible row is being edited.
+@MainActor
+final class SwitcherShortcutRecorder: NSButton {
+    private(set) var isRecording = false
+    private var previousTitle = ""
+    private var monitor: Any?
+    private var observers: [NSObjectProtocol] = []
+    var onRecord: ((ClipboardShortcut?) -> Void)?
+    var onRecordingChanged: ((Bool) -> Void)?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        bezelStyle = .rounded; target = self; action = #selector(beginRecording)
+        focusRingType = .exterior
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    @objc func beginRecording() {
+        if isRecording { cancelRecording(); return }
+        guard window != nil else { return }
+        window?.makeFirstResponder(self)
+        previousTitle = title; isRecording = true
+        title = AppLanguage.english ? "Press shortcut…" : "请按快捷键…"
+        contentTintColor = .controlAccentColor
+        GlobalClipboardShortcut.setRecording(true); onRecordingChanged?(true)
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, self.isRecording else { return event }
+            guard event.type == .keyDown else { self.cancelRecording(); return event }
+            guard event.window === self.window else { self.cancelRecording(); return event }
+            self.handleKey(event); return nil
+        }
+        for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cancelRecording() }
+            })
+        }
+    }
+    func handleKey(_ event: NSEvent) {
+        guard isRecording, !event.isARepeat else { return }
+        if event.keyCode == 53 { cancelRecording(); return }
+        let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if flags.isEmpty && (event.keyCode == 51 || event.keyCode == 117) {
+            cancelRecording(); onRecord?(nil); return
+        }
+        guard let value = ClipboardShortcut.from(event) else {
+            title = AppLanguage.english ? "Use ⌃ / ⌥ / ⌘ + key" : "需要 ⌃ / ⌥ / ⌘ 组合键"
+            return
+        }
+        cancelRecording(); onRecord?(value)
+    }
+    func cancelRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }; observers.removeAll()
+        title = previousTitle; contentTintColor = nil
+        GlobalClipboardShortcut.setRecording(false); onRecordingChanged?(false)
+    }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        cancelRecording(); super.viewWillMove(toWindow: newWindow)
+    }
+    override func resignFirstResponder() -> Bool { cancelRecording(); return super.resignFirstResponder() }
 }

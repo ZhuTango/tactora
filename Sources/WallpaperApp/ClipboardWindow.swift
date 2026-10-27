@@ -35,8 +35,19 @@ struct ClipboardShortcut: Codable, Equatable {
 @MainActor
 final class GlobalClipboardShortcut {
     private static var nextID: UInt32 = 0
+    private static let instances = NSHashTable<GlobalClipboardShortcut>.weakObjects()
+    private(set) static var isRecording = false
+    static func setRecording(_ recording: Bool) {
+        guard isRecording != recording else { return }
+        isRecording = recording
+        for item in instances.allObjects {
+            if recording {
+                if let key = item.hotKey { UnregisterEventHotKey(key); item.hotKey = nil }
+            } else if let value = item.current { _ = item.register(value) }
+        }
+    }
     let identifier: UInt32
-    init() { Self.nextID += 1; identifier = Self.nextID }
+    init() { Self.nextID += 1; identifier = Self.nextID; Self.instances.add(self) }
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private(set) var current: ClipboardShortcut?
@@ -54,7 +65,7 @@ final class GlobalClipboardShortcut {
                       GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
                                         MemoryLayout<EventHotKeyID>.size, nil, &received) == noErr,
                       received.signature == 0x4c54534b, received.id == shortcut.identifier else { return OSStatus(eventNotHandledErr) }
-                Task { @MainActor in shortcut.action?() }
+                Task { @MainActor in if !GlobalClipboardShortcut.isRecording { shortcut.action?() } }
                 return noErr
             }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &handler)
             guard result == noErr else { return false }

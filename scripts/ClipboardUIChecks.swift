@@ -101,6 +101,34 @@ struct Preview {
         SendEventToEventTarget(hotEvent!, GetApplicationEventTarget()); ReleaseEvent(hotEvent!)
         try await Task.sleep(nanoseconds: 100_000_000)
         precondition(appFired == 1 && !fired)
+        let inlineRecorder = SwitcherShortcutRecorder()
+        let inlineRecorderWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        inlineRecorderWindow.contentView = inlineRecorder
+        var recorded: ClipboardShortcut?
+        var didClear = false
+        inlineRecorder.onRecord = { recorded = $0; didClear = $0 == nil }
+        inlineRecorder.beginRecording()
+        precondition(inlineRecorder.isRecording && GlobalClipboardShortcut.isRecording)
+        var probe: EventHotKeyRef?
+        precondition(RegisterEventHotKey(testKey.keyCode, testKey.modifiers, EventHotKeyID(signature: 0x54455354, id: 9), GetApplicationEventTarget(), 0, &probe) == noErr)
+        UnregisterEventHotKey(probe!)
+        let keyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0, windowNumber: inlineRecorderWindow.windowNumber, context: nil, characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13)!
+        inlineRecorder.handleKey(keyEvent)
+        precondition(recorded?.label == "⌥W" && !inlineRecorder.isRecording && !GlobalClipboardShortcut.isRecording)
+        inlineRecorder.beginRecording()
+        let inlineEscape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: inlineRecorderWindow.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53)!
+        inlineRecorder.handleKey(inlineEscape)
+        precondition(!inlineRecorder.isRecording && recorded?.label == "⌥W")
+        inlineRecorder.beginRecording()
+        let delete = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: inlineRecorderWindow.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 51)!
+        inlineRecorder.handleKey(delete)
+        precondition(didClear && !GlobalClipboardShortcut.isRecording)
+        var restoredProbe: EventHotKeyRef?
+        precondition(RegisterEventHotKey(testKey.keyCode, testKey.modifiers, EventHotKeyID(signature: 0x54455354, id: 10), GetApplicationEventTarget(), 0, &restoredProbe) != noErr)
+        inlineRecorder.beginRecording()
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: inlineRecorderWindow)
+        precondition(!inlineRecorder.isRecording && !GlobalClipboardShortcut.isRecording)
+        print("PASS: inline shortcut recording, Escape cancellation, Backspace clearing, focus loss and hotkey restoration")
         var hold = OptionHoldState()
         precondition(!hold.visible(optionOnly: true, now: 1))
         precondition(!hold.visible(optionOnly: true, now: 1.3))
