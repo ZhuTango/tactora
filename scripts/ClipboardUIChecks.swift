@@ -44,6 +44,13 @@ struct Preview {
             print("PASS: activates, hides and restores Finder without minimization or accessibility permissions")
             return
         }
+        for path in ["/System/Library/CoreServices/CoreLocationAgent.app", "/System/Library/CoreServices/Coverage Details.app", "/System/Library/CoreServices/Database Events.app"] {
+            if let bundle = Bundle(path: path) { precondition(!AppSwitcher.hasApplicationIcon(bundle)) }
+        }
+        for path in ["/System/Applications/Contacts.app", "/Applications/Cursor.app"] {
+            if let bundle = Bundle(path: path) { precondition(AppSwitcher.hasApplicationIcon(bundle)) }
+        }
+        print("PASS: automatic discovery excludes generic-icon system helpers and keeps normal app icons")
         var checks = 0
         var sends = 0
         let delayed = await ClipboardPasteDelivery.deliver(target: 2, own: 1,

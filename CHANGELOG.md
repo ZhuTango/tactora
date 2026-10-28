@@ -7,6 +7,13 @@
 ### 项目维护
 - 建立统一版本、标签、安装包、发布说明和安装验收规则，见 [RELEASING.md](RELEASING.md)。
 
+## v1.10.2 — 2026-10-28
+
+- 自动扫描过滤没有独立应用图标资源的系统辅助应用，减少占位图标和无用条目。
+- 保留手动添加入口及已保存应用配置，过滤不影响手动添加和重启恢复。
+- 验证截图中的 CoreLocationAgent、Coverage Details、Database Events 被过滤，Contacts、Cursor 保留；界面回归通过。
+- macOS 13+、Apple Silicon；ad-hoc 签名，未公证。
+
 ## v1.10.1 — 2026-10-28
 
 - 应用切换设置新增 Option 长按响应时间滑块，范围 0.10–5.00 秒，步长 0.05 秒，默认 0.45 秒。

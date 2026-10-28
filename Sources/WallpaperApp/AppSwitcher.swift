@@ -69,6 +69,21 @@ final class AppSwitcher: NSObject {
         }
     }
     deinit { timer?.invalidate() }
+    // Check declared application resources rather than loading hundreds of icon bitmaps.
+    // Manual additions intentionally bypass this automatic-inventory filter.
+    nonisolated static func hasApplicationIcon(_ bundle: Bundle) -> Bool {
+        let primary = (bundle.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any])?["CFBundlePrimaryIcon"] as? [String: Any] ?? [:]
+        let files = [bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String].compactMap { $0 }
+            + (bundle.object(forInfoDictionaryKey: "CFBundleIconFiles") as? [String] ?? [])
+            + (primary["CFBundleIconFiles"] as? [String] ?? [])
+        for name in files where !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if bundle.url(forResource: name, withExtension: nil) != nil
+                || bundle.url(forResource: name, withExtension: "icns") != nil { return true }
+        }
+        let names = [bundle.object(forInfoDictionaryKey: "CFBundleIconName") as? String, primary["CFBundleIconName"] as? String].compactMap { $0 }
+        return names.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && bundle.url(forResource: "Assets", withExtension: "car") != nil
+    }
     nonisolated static func discover() -> [SwitcherApp] {
         let roots = ["/Applications", NSHomeDirectory() + "/Applications", "/System/Applications", "/System/Library/CoreServices"]
         var found: [String: SwitcherApp] = [:]
@@ -79,7 +94,8 @@ final class AppSwitcher: NSObject {
                 guard url.pathExtension.lowercased() == "app" else { continue }
                 enumerator.skipDescendants()
                 guard let bundle = Bundle(url: url), bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
-                      !(bundle.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool ?? false) else { continue }
+                      !(bundle.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool ?? false),
+                      hasApplicationIcon(bundle) else { continue }
                 let id = bundle.bundleIdentifier ?? url.standardizedFileURL.path
                 if id == "local.tango.macbglive" || found[id] != nil { continue }
                 let name = [bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
@@ -218,8 +234,8 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         let heading = NSTextField(labelWithString: AppLanguage.english ? "App Switcher" : "应用切换")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let hint = NSTextField(wrappingLabelWithString: AppLanguage.english
-            ? "Set shortcuts to activate or launch apps. Choose which apps appear when holding Option. Hidden apps keep their shortcuts."
-            : "配置快捷键以切换或启动应用。长按 Option 显示勾选的应用，松开隐藏；取消展示不会停用快捷键。")
+            ? "Set shortcuts to activate or launch apps. Choose which apps appear when holding Option. Hidden apps keep their shortcuts. Apps without an icon can be added manually."
+            : "配置快捷键以切换或启动应用。长按 Option 显示勾选的应用，松开隐藏；取消展示不会停用快捷键。无独立图标的应用请手动添加。")
         hint.textColor = .secondaryLabelColor
         enabled.title = AppLanguage.english ? "Show app panel when holding Option" : "长按 Option 显示应用切换面板"
         enabled.state = manager.panelEnabled ? .on : .off
