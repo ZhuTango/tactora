@@ -19,11 +19,11 @@ struct OptionHoldState {
     private var began: TimeInterval?
     private var suppressed = false
     mutating func suppress() { suppressed = true }
-    mutating func visible(optionOnly: Bool, now: TimeInterval) -> Bool {
+    mutating func visible(optionOnly: Bool, now: TimeInterval, delay: TimeInterval = 0.45) -> Bool {
         guard optionOnly else { began = nil; suppressed = false; return false }
         guard !suppressed else { return false }
         if began == nil { began = now }
-        return now - (began ?? now) >= 0.45
+        return now - (began ?? now) >= delay
     }
 }
 
@@ -40,6 +40,16 @@ final class AppSwitcher: NSObject {
     private var configurationOpen = false
     private(set) var featureEnabled = true
     var onChange: (() -> Void)?
+    var holdDelay: TimeInterval {
+        get { Self.validDelay(defaults.object(forKey: "appSwitcherHoldDelay") as? Double ?? 0.45) }
+        set {
+            defaults.set(Self.validDelay(newValue), forKey: "appSwitcherHoldDelay")
+            hold = OptionHoldState(); panel?.orderOut(nil)
+        }
+    }
+    private static func validDelay(_ value: Double) -> Double {
+        value.isFinite ? min(5, max(0.1, value)) : 0.45
+    }
     var panelEnabled: Bool {
         get { defaults.object(forKey: "appSwitcherPanelEnabled") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "appSwitcherPanelEnabled"); updateTimer(); onChange?() }
@@ -149,7 +159,7 @@ final class AppSwitcher: NSObject {
     }
     private func tick() {
         let flags = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
-        let visible = hold.visible(optionOnly: flags == .option, now: ProcessInfo.processInfo.systemUptime)
+        let visible = hold.visible(optionOnly: flags == .option, now: ProcessInfo.processInfo.systemUptime, delay: holdDelay)
         guard featureEnabled, visible, !configurationOpen else { panel?.orderOut(nil); return }
         if panel == nil { panel = makePanel() }
         guard let panel, !panel.isVisible else { return }
@@ -200,14 +210,16 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private var filtered: [SwitcherApp] = []
     private var scanTask: Task<Void, Never>?
     private let refreshButton = SettingsFeedbackButton()
+    private let delaySlider = NSSlider(value: 0.45, minValue: 0.1, maxValue: 5, target: nil, action: nil)
+    private let delayLabel = NSTextField(labelWithString: "")
     init(manager: AppSwitcher) {
         self.manager = manager
         super.init(frame: .zero)
         let heading = NSTextField(labelWithString: AppLanguage.english ? "App Switcher" : "应用切换")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let hint = NSTextField(wrappingLabelWithString: AppLanguage.english
-            ? "Set shortcuts to activate or launch apps. Choose which apps appear when holding Option for half a second. Hidden apps keep their shortcuts."
-            : "配置快捷键以切换或启动应用。长按 Option 半秒显示勾选的应用，松开隐藏；取消展示不会停用快捷键。")
+            ? "Set shortcuts to activate or launch apps. Choose which apps appear when holding Option. Hidden apps keep their shortcuts."
+            : "配置快捷键以切换或启动应用。长按 Option 显示勾选的应用，松开隐藏；取消展示不会停用快捷键。")
         hint.textColor = .secondaryLabelColor
         enabled.title = AppLanguage.english ? "Show app panel when holding Option" : "长按 Option 显示应用切换面板"
         enabled.state = manager.panelEnabled ? .on : .off
@@ -219,7 +231,18 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         let addApp = SettingsFeedbackButton(title: AppLanguage.english ? "Add app…" : "添加应用…", target: self, action: #selector(addApplication))
         let row = NSStackView(views: [search, refreshButton, addApp]); row.spacing = 12
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
-        let top = NSStackView(views: [heading, hint, enabled, row]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
+        delaySlider.doubleValue = manager.holdDelay
+        delaySlider.target = self; delaySlider.action = #selector(changeDelay)
+        delaySlider.isContinuous = true
+        delaySlider.setAccessibilityLabel(AppLanguage.english ? "Option hold delay in seconds" : "Option 长按响应时间（秒）")
+        delaySlider.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        delayLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        delayLabel.widthAnchor.constraint(equalToConstant: 65).isActive = true
+        updateDelayLabel()
+        let delayRow = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Hold delay" : "长按响应时间"), delaySlider, delayLabel])
+        delayRow.spacing = 12
+        delayRow.toolTip = AppLanguage.english ? "0.10–5.00 seconds · Saved automatically" : "0.10–5.00 秒 · 自动保存"
+        let top = NSStackView(views: [heading, hint, enabled, delayRow, row]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.drawsBackground = false; scroll.borderType = .noBorder
@@ -289,6 +312,14 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         status.stringValue = manager.loadError ?? (AppLanguage.english
             ? "\(filtered.count) apps · Click to record · Esc cancels · Backspace clears · Auto-saved"
             : "\(filtered.count) 个应用 · 点击录入 · Esc 取消 · Backspace 清除 · 配置自动保存")
+    }
+    private func updateDelayLabel() {
+        delayLabel.stringValue = String(format: "%.2f %@", manager.holdDelay, AppLanguage.english ? "s" : "秒")
+    }
+    @objc private func changeDelay() {
+        manager.holdDelay = (delaySlider.doubleValue * 20).rounded() / 20
+        delaySlider.doubleValue = manager.holdDelay
+        updateDelayLabel()
     }
     @objc private func togglePanel() { manager.panelEnabled = enabled.state == .on }
     func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }

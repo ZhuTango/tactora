@@ -154,6 +154,17 @@ struct Preview {
         let switcherDefaults = UserDefaults(suiteName: suite)!
         defer { switcherDefaults.removePersistentDomain(forName: suite) }
         let switcher = AppSwitcher(defaults: switcherDefaults, start: false)
+        precondition(switcher.holdDelay == 0.45)
+        switcher.holdDelay = 5
+        precondition(AppSwitcher(defaults: switcherDefaults, start: false).holdDelay == 5)
+        var slowHold = OptionHoldState()
+        precondition(!slowHold.visible(optionOnly: true, now: 10, delay: switcher.holdDelay))
+        precondition(!slowHold.visible(optionOnly: true, now: 14.99, delay: switcher.holdDelay))
+        precondition(slowHold.visible(optionOnly: true, now: 15, delay: switcher.holdDelay))
+        switcher.holdDelay = 6; precondition(switcher.holdDelay == 5)
+        switcher.holdDelay = -1; precondition(switcher.holdDelay == 0.1)
+        switcher.holdDelay = .nan; precondition(switcher.holdDelay == 0.45)
+        print("PASS: Option hold delay default, persistence, five-second boundary and invalid input")
         switcher.panelEnabled = false
         let fixtureApp = SwitcherApp(id: "test.fixture", name: "Test", path: "/missing.app")
         let bindingKey = ClipboardShortcut(keyCode: 11, modifiers: UInt32(cmdKey | controlKey | optionKey | shiftKey), label: "⌃⌥⇧⌘B")
