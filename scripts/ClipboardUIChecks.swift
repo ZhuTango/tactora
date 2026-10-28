@@ -595,6 +595,17 @@ struct Preview {
         switcherView.applyInventory(AppSwitcher.discover())
         let appsTable = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTableView }.first!
         precondition(appsTable.numberOfRows > 1)
+        precondition(appsTable.tableColumns.map { $0.identifier.rawValue } == ["app", "alias", "shortcut", "show"])
+        for width: CGFloat in [170, 220, 300] {
+            let aliasColumn = appsTable.tableColumns[1]
+            let cell = switcherView.tableView(appsTable, viewFor: aliasColumn, row: 0) as! NSTableCellView
+            cell.frame = NSRect(x: 0, y: 0, width: width, height: 52)
+            cell.layoutSubtreeIfNeeded()
+            let field = cell.textField!
+            precondition(field.frame.minX >= 5 && field.frame.maxX <= width - 5)
+            precondition(field.frame.minY >= 0 && field.frame.maxY <= 52)
+        }
+        print("PASS: alias column input and focus padding stay inside resized cells")
         try settingsSnapshot("settings-app-switcher")
         unified.selectSection("general")
         let loginButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.title == "登录 Mac 时自动启动" }!

@@ -362,13 +362,15 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.drawsBackground = false; scroll.borderType = .noBorder
-        table.rowHeight = 46; table.intercellSpacing = NSSize(width: 8, height: 4)
+        table.rowHeight = 52; table.intercellSpacing = NSSize(width: 8, height: 4)
         table.usesAlternatingRowBackgroundColors = true; table.backgroundColor = .clear
-        table.dataSource = self; table.delegate = self; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        for (id, title, width) in [("app", AppLanguage.english ? "Application" : "应用", 310.0),
-                                    ("shortcut", AppLanguage.english ? "Shortcut" : "快捷键", 205.0),
-                                    ("show", AppLanguage.english ? "Show in panel" : "面板中展示", 140.0)] {
+        table.dataSource = self; table.delegate = self; table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        for (id, title, width) in [("app", AppLanguage.english ? "Application" : "应用", 230.0),
+                                    ("alias", AppLanguage.english ? "Display alias" : "显示别名", 170.0),
+                                    ("shortcut", AppLanguage.english ? "Shortcut" : "快捷键", 160.0),
+                                    ("show", AppLanguage.english ? "Show in panel" : "面板中展示", 115.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = title; column.width = width
+            column.minWidth = id == "app" ? 180 : width; column.resizingMask = .autoresizingMask
             table.addTableColumn(column)
         }
         table.setAccessibilityLabel(AppLanguage.english ? "Installed applications" : "已安装应用列表")
@@ -479,25 +481,49 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
             cell.identifier = key
             if cell.textField == nil {
-                let label = NSTextField(labelWithString: ""); label.frame = NSRect(x: 36, y: 25, width: 265, height: 18)
-                label.autoresizingMask = [.width]; label.lineBreakMode = .byTruncatingMiddle
-                let icon = NSImageView(frame: NSRect(x: 3, y: 9, width: 28, height: 28))
-                let alias = AppAliasField(frame: NSRect(x: 36, y: 2, width: 265, height: 21))
-                alias.autoresizingMask = [.width]; alias.font = .systemFont(ofSize: 12)
-                alias.isBezeled = false; alias.drawsBackground = false; alias.focusRingType = .exterior
-                alias.placeholderString = AppLanguage.english ? "Set display alias…" : "设置显示别名…"
-                alias.delegate = self
-                cell.addSubview(label); cell.addSubview(icon); cell.addSubview(alias)
+                let label = NSTextField(labelWithString: "")
+                label.font = .systemFont(ofSize: 13, weight: .medium)
+                label.lineBreakMode = .byTruncatingMiddle
+                let icon = NSImageView()
+                for view in [label, icon] { view.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(view) }
+                NSLayoutConstraint.activate([
+                    icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                    icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    icon.widthAnchor.constraint(equalToConstant: 28), icon.heightAnchor.constraint(equalToConstant: 28),
+                    label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+                    label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+                    label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+                ])
                 cell.textField = label; cell.imageView = icon
             }
             cell.textField?.stringValue = app.displayName
-            if let field = cell.subviews.compactMap({ $0 as? AppAliasField }).first {
-                field.appID = app.id; field.stringValue = binding?.alias ?? ""
-                field.setAccessibilityLabel(app.displayName + (AppLanguage.english ? " · Display alias" : " · 显示别名"))
-                field.toolTip = AppLanguage.english ? "Return or leave to save; clear to restore the original name" : "回车或离开输入框保存；清空恢复原名称"
-            }
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: app.path)
             cell.toolTip = app.path
+            return cell
+        }
+        if key.rawValue == "alias" {
+            let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
+            cell.identifier = key
+            let field: AppAliasField
+            if let existing = cell.textField as? AppAliasField { field = existing }
+            else {
+                field = AppAliasField()
+                field.translatesAutoresizingMaskIntoConstraints = false
+                field.font = .systemFont(ofSize: 12)
+                field.isBezeled = true; field.bezelStyle = .roundedBezel
+                field.focusRingType = .exterior; field.delegate = self
+                field.placeholderString = AppLanguage.english ? "Use original name" : "使用原名称"
+                cell.addSubview(field); cell.textField = field
+                NSLayoutConstraint.activate([
+                    field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                    field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                    field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    field.heightAnchor.constraint(equalToConstant: 28)
+                ])
+            }
+            field.appID = app.id; field.stringValue = binding?.alias ?? ""
+            field.setAccessibilityLabel(app.displayName + (AppLanguage.english ? " · Display alias" : " · 显示别名"))
+            field.toolTip = AppLanguage.english ? "Return or leave to save; clear to restore the original name" : "回车或离开输入框保存；清空恢复原名称"
             return cell
         }
         if key.rawValue == "shortcut" {
@@ -506,7 +532,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             recorder.identifier = key
             recorder.title = binding?.shortcut?.label ?? (AppLanguage.english ? "Click to record" : "点击录入快捷键")
             recorder.toolTip = AppLanguage.english ? "Press a shortcut · Esc cancels · Backspace clears" : "按下组合键 · Esc 取消 · Backspace 清除"
-            recorder.setAccessibilityLabel(app.name + " · " + column.title)
+            recorder.setAccessibilityLabel(app.displayName + " · " + column.title)
             recorder.onRecordingChanged = { [weak manager] value in manager?.pausePanel(value) }
             recorder.onRecord = { [weak self] value in
                 guard let self else { return }
