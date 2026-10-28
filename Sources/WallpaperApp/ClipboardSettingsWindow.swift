@@ -324,8 +324,9 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             : "包括外接显示器；仅适用于 MacBook，轻工具运行期间生效。")
         lidNote.textColor = .secondaryLabelColor
         lidNote.font = .systemFont(ofSize: 11)
-        let language = settingsCard(AppLanguage.english ? "Appearance & Displays" : "显示", [row, lidSleepToggle, lidNote])
-        lidNote.widthAnchor.constraint(equalTo: language.widthAnchor, constant: -32).isActive = true
+        let language = settingsCard(AppLanguage.english ? "Language" : "语言", [row])
+        let lidBehavior = settingsCard(AppLanguage.english ? "Lid Behavior" : "合盖行为", [lidSleepToggle, lidNote])
+        lidNote.widthAnchor.constraint(equalTo: lidBehavior.widthAnchor, constant: -32).isActive = true
         let startup = settingsCard(AppLanguage.english ? "Startup" : "启动", [loginToggle, loginStatus, systemSettings])
         loginStatus.widthAnchor.constraint(equalTo: startup.widthAnchor, constant: -32).isActive = true
         let featureButtons = ToolFeature.allCases.map { feature -> NSView in
@@ -347,7 +348,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         featureNote.textColor = .secondaryLabelColor
         let features = settingsCard(AppLanguage.english ? "Tools" : "功能开关", featureButtons + [featureNote])
         featureNote.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
-        return form([heading, features, language, startup])
+        return form([heading, features, language, lidBehavior, startup])
     }
     @objc private func changeLanguage() {
         AppLanguage.selection = ["system", "zh-Hans", "en"][languagePicker.indexOfSelectedItem]
