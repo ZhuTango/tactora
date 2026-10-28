@@ -198,9 +198,8 @@ struct Preview {
         let hintPanel = switcher.makePanel()
         precondition(hintPanel.styleMask.contains(.nonactivatingPanel))
         precondition(hintPanel.frame.width > hintPanel.frame.height)
-        let switcherScroll = hintPanel.contentView!.subviews.compactMap { $0 as? NSScrollView }.first!
-        precondition(switcherScroll.hasHorizontalScroller && !switcherScroll.hasVerticalScroller)
-        let iconButtons = switcherScroll.documentView!.subviews.compactMap { $0 as? SwitcherIconButton }
+        precondition(!hintPanel.contentView!.subviews.contains { $0 is NSScrollView })
+        let iconButtons = hintPanel.contentView!.subviews.compactMap { $0 as? SwitcherIconButton }
         precondition(iconButtons.map { $0.cell?.representedObject as? String } == [fixtureApp.id, extraApp.id])
         precondition(iconButtons.first?.shortcutText == bindingKey.label)
         let preview = hintPanel.contentView!
@@ -210,6 +209,21 @@ struct Preview {
         try switcherBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/switcher-panel.png"))
         print("PASS: configured-first ordering, persistent reordering, panel filtering and horizontal icon layout")
         hintPanel.close()
+        let crowdedDefaults = UserDefaults(suiteName: "switcher-layout-" + UUID().uuidString)!
+        let crowded = AppSwitcher(defaults: crowdedDefaults, start: false)
+        for index in 0..<30 {
+            try crowded.setVisibility(SwitcherApp(id: "layout.\(index)", name: "App \(index)", path: "/System/Applications/Contacts.app"), show: true)
+        }
+        for screenWidth: CGFloat in [800, 1440, 2560] {
+            let fitted = crowded.makePanel(availableWidth: screenWidth)
+            let buttons = fitted.contentView!.subviews.compactMap { $0 as? SwitcherIconButton }
+            precondition(buttons.count == 30 && fitted.frame.width <= screenWidth - 64)
+            precondition(buttons.allSatisfy { $0.frame.minX >= 0 && $0.frame.maxX <= fitted.frame.width && $0.frame.maxY <= fitted.frame.height })
+            precondition(buttons.first!.frame.width < 108)
+            precondition(!fitted.contentView!.subviews.contains { $0 is NSScrollView })
+            fitted.close()
+        }
+        print("PASS: 30 apps fit 800/1440/2560-point screens without scrolling")
         let savedBindings = switcher.bindings
         switcher.setFeatureEnabled(false)
         precondition(!switcher.featureEnabled && !switcher.containsShortcut(bindingKey))

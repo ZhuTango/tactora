@@ -37,6 +37,7 @@ final class AppSwitcher: NSObject {
     private var timer: Timer?
     private var hold = OptionHoldState()
     private var panel: NSPanel?
+    private var panelScreenWidth: CGFloat?
     private var configurationOpen = false
     private(set) var featureEnabled = true
     var onChange: (() -> Void)?
@@ -210,24 +211,29 @@ final class AppSwitcher: NSObject {
         let flags = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
         let visible = hold.visible(optionOnly: flags == .option, now: ProcessInfo.processInfo.systemUptime, delay: holdDelay)
         guard featureEnabled, visible, !configurationOpen else { panel?.orderOut(nil); return }
-        if panel == nil { panel = makePanel() }
-        guard let panel, !panel.isVisible else { return }
         let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        let screenWidth = screen?.visibleFrame.width ?? 1120
+        if panel == nil || panelScreenWidth != screenWidth {
+            panel?.orderOut(nil)
+            panel = makePanel(availableWidth: screenWidth)
+            panelScreenWidth = screenWidth
+        }
+        guard let panel, !panel.isVisible else { return }
         if let frame = screen?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.midY - panel.frame.height / 2))
         }
-        if let scroll = panel.contentView?.subviews.compactMap({ $0 as? NSScrollView }).first {
-            for button in scroll.documentView?.subviews.compactMap({ $0 as? SwitcherIconButton }) ?? [] {
-                button.activeApp = button.cell?.representedObject as? String == NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            }
+        for button in panel.contentView?.subviews.compactMap({ $0 as? SwitcherIconButton }) ?? [] {
+            button.activeApp = button.cell?.representedObject as? String == NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         }
         panel.orderFrontRegardless()
     }
-    func makePanel() -> NSPanel {
+    func makePanel(availableWidth: CGFloat? = nil) -> NSPanel {
         let items = panelItems
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
-        let width = min(max(280, CGFloat(items.count) * 116 + 40), min(1040, (screen?.visibleFrame.width ?? 1120) - 64))
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: 202),
+        let width = min(max(280, CGFloat(items.count) * 116 + 40), max(80, (availableWidth ?? screen?.visibleFrame.width ?? 1120) - 64))
+        let scale = min(1, (width - 40) / CGFloat(max(1, items.count)) / 116)
+        let startX = (width - CGFloat(items.count) * 116 * scale) / 2
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: 52 + 150 * scale),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.hasShadow = true; panel.hidesOnDeactivate = false
@@ -236,21 +242,17 @@ final class AppSwitcher: NSObject {
         let root = NSVisualEffectView(); root.material = .hudWindow; root.blendingMode = .behindWindow; root.state = .active
         root.wantsLayer = true; root.layer?.cornerRadius = 24; root.layer?.masksToBounds = true
         panel.contentView = root
-        let scroll = NSScrollView(frame: NSRect(x: 20, y: 36, width: width - 40, height: 150))
-        scroll.drawsBackground = false; scroll.hasHorizontalScroller = true; scroll.hasVerticalScroller = false
-        scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
-        let document = NSView(frame: NSRect(x: 0, y: 0, width: max(width - 40, CGFloat(items.count) * 116), height: 150))
         for (index, app) in items.enumerated() {
-            let button = SwitcherIconButton(frame: NSRect(x: CGFloat(index) * 116, y: 0, width: 108, height: 150))
+            let button = SwitcherIconButton(frame: NSRect(x: startX + CGFloat(index) * 116 * scale, y: 36, width: 108 * scale, height: 150 * scale))
+            button.bounds = NSRect(x: 0, y: 0, width: 108, height: 150)
             button.title = app.name; button.image = NSWorkspace.shared.icon(forFile: app.path)
             button.shortcutText = bindings[app.id]?.shortcut?.label ?? "—"
             button.target = self; button.action = #selector(panelClick(_:)); button.cell?.representedObject = app.id
             button.toolTip = failures[app.id] ?? app.name + " · " + button.shortcutText
             button.setAccessibilityLabel(app.name + " · " + button.shortcutText)
             button.activeApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.id
-            document.addSubview(button)
+            root.addSubview(button)
         }
-        scroll.documentView = document; root.addSubview(scroll)
         let hint = NSTextField(labelWithString: AppLanguage.english ? "Hold ⌥ · Click an app or use its shortcut" : "按住 ⌥ · 点击应用或按快捷键切换")
         hint.font = .systemFont(ofSize: 11); hint.textColor = .white.withAlphaComponent(0.75); hint.alignment = .center
         hint.frame = NSRect(x: 12, y: 12, width: width - 24, height: 16)
