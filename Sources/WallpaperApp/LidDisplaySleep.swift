@@ -6,9 +6,14 @@ import IOKit.pwr_mgt
 @MainActor
 final class LidDisplaySleep {
     private let defaults: UserDefaults
+    private let lidStateOverride: (() -> Bool?)?
+    private let displaysOverride: (() -> [Bool]?)?
     private let testSleep: (() -> Void)?
-    init(defaults: UserDefaults = .standard, sleepForTesting: (() -> Void)? = nil) {
+    init(defaults: UserDefaults = .standard, sleepForTesting: (() -> Void)? = nil,
+         lidStateForTesting: (() -> Bool?)? = nil, displaysForTesting: (() -> [Bool]?)? = nil) {
         self.defaults = defaults
+        self.lidStateOverride = lidStateForTesting
+        self.displaysOverride = displaysForTesting
         self.testSleep = sleepForTesting
     }
     private var port: IONotificationPortRef?
@@ -48,22 +53,41 @@ final class LidDisplaySleep {
     }
 
     private func closed() -> Bool? {
+        if let lidStateOverride { return lidStateOverride() }
         guard root != 0 else { return nil }
         return IORegistryEntryCreateCFProperty(root, "AppleClamshellState" as CFString,
                                               kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool
     }
 
+    private func canSleepInternalDisplay() -> Bool {
+        if let displaysOverride {
+            return LidSleepPolicy.canSleepDisplays(onlineDisplaysBuiltIn: displaysOverride())
+        }
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &displays, &count) == .success else { return false }
+        return LidSleepPolicy.canSleepDisplays(onlineDisplaysBuiltIn:
+            displays.prefix(Int(count)).map { CGDisplayIsBuiltin($0) != 0 })
+    }
+
+    func displaysChanged() {
+        pending?.cancel(); pending = nil
+        policy = LidSleepPolicy()
+        lidChanged()
+    }
+
     private func lidChanged() {
         let state = closed()
         if state != true { pending?.cancel(); pending = nil }
-        if policy.update(enabled: defaults.bool(forKey: LidSleepPolicy.preferenceKey), closed: state) {
+        if policy.update(enabled: defaults.bool(forKey: LidSleepPolicy.preferenceKey) && canSleepInternalDisplay(), closed: state) {
             scheduleSleep()
         }
     }
 
-    /// Clamshell mode may wake an external screen after the initial lid event.
+    /// Reapply only with the lid closed and no online external display.
     func displaysDidWake() {
-        guard closed() == true, defaults.bool(forKey: LidSleepPolicy.preferenceKey) else { return }
+        guard closed() == true, canSleepInternalDisplay(), defaults.bool(forKey: LidSleepPolicy.preferenceKey) else { return }
         scheduleSleep()
     }
 
@@ -71,7 +95,7 @@ final class LidDisplaySleep {
         pending?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.closed() == true,
+                guard let self, self.closed() == true, self.canSleepInternalDisplay(),
                       self.defaults.bool(forKey: LidSleepPolicy.preferenceKey),
                       self.process?.isRunning != true else { return }
                 if let testSleep = self.testSleep { testSleep(); return }

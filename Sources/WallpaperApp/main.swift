@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         observe(.default, .NSProcessInfoPowerStateDidChange) {
             $0.controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
-        observe(.default, NSApplication.didChangeScreenParametersNotification) { $0.refreshDisplays() }
+        observe(.default, NSApplication.didChangeScreenParametersNotification) { $0.refreshDisplays(); $0.lidDisplaySleep.displaysChanged() }
         refreshDisplays()
         if let url = pendingOpenURLs.last { openFile(url); pendingOpenURLs.removeAll() }
         if CommandLine.arguments.contains("--settings") { showSettings() }
