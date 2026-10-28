@@ -8,12 +8,17 @@ extension WindowLayout {
             .top: ("上半屏", "Top Half"), .bottom: ("下半屏", "Bottom Half"),
             .topLeft: ("左上角", "Top Left"), .topRight: ("右上角", "Top Right"),
             .bottomLeft: ("左下角", "Bottom Left"), .bottomRight: ("右下角", "Bottom Right"),
-            .center: ("居中", "Center"), .restore: ("恢复原尺寸", "Restore"), .fullscreen: ("系统全屏切换", "Toggle Full Screen")]
+            .center: ("居中", "Center"), .restore: ("恢复原尺寸", "Restore"), .fullscreen: ("系统全屏切换", "Toggle Full Screen"),
+            .previousDisplay: ("移到上一屏", "Previous Display"), .nextDisplay: ("移到下一屏", "Next Display")]
         return AppLanguage.english ? names[self]!.1 : names[self]!.0
     }
     var defaultShortcut: ClipboardShortcut? {
         let keys: [WindowLayout: (Int, String)] = [.maximize: (kVK_ANSI_M, "M"), .left: (kVK_LeftArrow, "←"),
-            .right: (kVK_RightArrow, "→"), .top: (kVK_UpArrow, "↑"), .bottom: (kVK_DownArrow, "↓")]
+            .right: (kVK_RightArrow, "→"), .top: (kVK_UpArrow, "↑"), .bottom: (kVK_DownArrow, "↓"),
+            .topLeft: (kVK_ANSI_U, "U"), .topRight: (kVK_ANSI_I, "I"),
+            .bottomLeft: (kVK_ANSI_J, "J"), .bottomRight: (kVK_ANSI_K, "K"),
+            .center: (kVK_ANSI_C, "C"), .restore: (kVK_ANSI_R, "R"), .fullscreen: (kVK_ANSI_F, "F"),
+            .previousDisplay: (kVK_ANSI_P, "P"), .nextDisplay: (kVK_ANSI_N, "N")]
         guard let key = keys[self] else { return nil }
         return ClipboardShortcut(keyCode: UInt32(key.0), modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘" + key.1)
     }
@@ -33,7 +38,14 @@ final class WindowManager {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: "windowLayoutShortcuts") {
-            if let saved = try? JSONDecoder().decode([String: ClipboardShortcut].self, from: data), saved.values.allSatisfy(\.isValid) { bindings = saved }
+            if let saved = try? JSONDecoder().decode([String: ClipboardShortcut].self, from: data), saved.values.allSatisfy(\.isValid) {
+                bindings = saved
+                // Only new actions receive defaults during migration; absent old actions stay cleared.
+                let known = Set(defaults.stringArray(forKey: "windowLayoutKnownActions") ?? WindowLayout.allCases.filter { $0 != .previousDisplay && $0 != .nextDisplay }.map(\.rawValue))
+                for action in WindowLayout.allCases where !known.contains(action.rawValue) && bindings[action.rawValue] == nil {
+                    if let value = action.defaultShortcut, !contains(value) { bindings[action.rawValue] = value }
+                }
+            }
             else { loadError = true; status = "窗口快捷键配置无法读取，原配置已保留。" }
         } else {
             for action in WindowLayout.allCases { bindings[action.rawValue] = action.defaultShortcut }
@@ -74,6 +86,7 @@ final class WindowManager {
         } else { hotkeys.removeValue(forKey: action) }
         bindings[action.rawValue] = value
         defaults.set(try JSONEncoder().encode(bindings), forKey: "windowLayoutShortcuts")
+        defaults.set(WindowLayout.allCases.map(\.rawValue), forKey: "windowLayoutKnownActions")
         status = ""; onChange?()
     }
     private func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
@@ -118,6 +131,13 @@ final class WindowManager {
             return (x.isNull ? 0 : x.width * x.height) < (y.isNull ? 0 : y.width * y.height)
         }) else { return }
         var target = action.frame(in: area, current: current)
+        if action == .previousDisplay || action == .nextDisplay {
+            guard areas.count > 1 else { report("当前只有一块显示器，无法迁移窗口。"); return }
+            let ordered = areas.sorted { $0.minX == $1.minX ? $0.minY < $1.minY : $0.minX < $1.minX }
+            guard let index = ordered.firstIndex(of: area) else { return }
+            let offset = action == .nextDisplay ? 1 : ordered.count - 1
+            target = WindowLayout.transferred(current, from: area, to: ordered[(index + offset) % ordered.count])
+        }
         let saved = originals.firstIndex { CFEqual($0.0, window) }
         if action == .restore {
             guard let saved else { report("这个窗口还没有可恢复的尺寸。"); return }
@@ -173,8 +193,16 @@ final class WindowManagerSettingsView: NSView {
             recorders[action] = recorder
             recorder.widthAnchor.constraint(equalToConstant: 190).isActive = true
             recorder.heightAnchor.constraint(equalToConstant: 30).isActive = true
-            let row = NSStackView(views: [label, NSView(), recorder]); row.spacing = 12
-            row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            let diagram = WindowLayoutDiagram(action: action)
+            diagram.widthAnchor.constraint(equalToConstant: 64).isActive = true
+            diagram.heightAnchor.constraint(equalToConstant: 34).isActive = true
+            let reset = SettingsFeedbackButton(title: "↺", target: self, action: #selector(resetShortcut(_:)))
+            reset.cell?.representedObject = action.rawValue
+            reset.toolTip = (AppLanguage.english ? "Restore default: " : "恢复默认：") + (action.defaultShortcut?.label ?? "")
+            reset.setAccessibilityLabel(action.title + (AppLanguage.english ? " Restore default" : "恢复默认快捷键"))
+            reset.widthAnchor.constraint(equalToConstant: 32).isActive = true
+            let row = NSStackView(views: [diagram, label, NSView(), recorder, reset]); row.spacing = 12
+            row.heightAnchor.constraint(equalToConstant: 44).isActive = true
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
@@ -192,6 +220,11 @@ final class WindowManagerSettingsView: NSView {
         refresh()
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
+    @objc private func resetShortcut(_ sender: NSButton) {
+        guard let raw = sender.cell?.representedObject as? String, let action = WindowLayout(rawValue: raw) else { return }
+        do { try manager.configure(action, shortcut: action.defaultShortcut); refresh() }
+        catch { status.stringValue = error.localizedDescription }
+    }
     private func updateTitles() {
         for (action, recorder) in recorders { recorder.title = manager.shortcut(action)?.label ?? (AppLanguage.english ? "Click to record" : "点击录入快捷键") }
     }
@@ -211,5 +244,44 @@ final class WindowManagerSettingsView: NSView {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+}
+
+
+@MainActor
+final class WindowLayoutDiagram: NSView {
+    let action: WindowLayout
+    init(action: WindowLayout) {
+        self.action = action
+        super.init(frame: .zero)
+        toolTip = action.title
+        setAccessibilityElement(false)
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        let screen = bounds.insetBy(dx: 3, dy: 4)
+        NSColor.secondaryLabelColor.setStroke()
+        if action == .previousDisplay || action == .nextDisplay {
+            let left = NSRect(x: 2, y: 5, width: 24, height: 23)
+            let right = NSRect(x: 38, y: 5, width: 24, height: 23)
+            NSBezierPath(roundedRect: left, xRadius: 3, yRadius: 3).stroke()
+            NSBezierPath(roundedRect: right, xRadius: 3, yRadius: 3).stroke()
+            NSColor.controlAccentColor.withAlphaComponent(0.65).setFill()
+            NSBezierPath(roundedRect: (action == .nextDisplay ? right : left).insetBy(dx: 3, dy: 3), xRadius: 2, yRadius: 2).fill()
+            let symbol = action == .nextDisplay ? "→" : "←"
+            (symbol as NSString).draw(at: NSPoint(x: 26, y: 8), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor])
+            return
+        }
+        let border = NSBezierPath(roundedRect: screen, xRadius: 3, yRadius: 3)
+        border.lineWidth = 1; border.stroke()
+        let inset = screen.insetBy(dx: 3, dy: 3)
+        let normal = NSRect(x: inset.midX - 12, y: inset.midY - 7, width: 24, height: 14)
+        let fill = action == .restore ? normal.offsetBy(dx: -5, dy: -2) : action.frame(in: inset, current: normal)
+        NSColor.controlAccentColor.withAlphaComponent(0.65).setFill()
+        NSBezierPath(roundedRect: fill.insetBy(dx: 1, dy: 1), xRadius: 2, yRadius: 2).fill()
+        if action == .fullscreen {
+            ("⛶" as NSString).draw(at: NSPoint(x: screen.midX - 6, y: screen.midY - 8), withAttributes: [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor])
+        }
     }
 }

@@ -573,6 +573,9 @@ struct Preview {
         precondition(WindowManagerSettingsView.permissionMessage(trusted: true, actionStatus: "") == "辅助功能已授权")
         precondition(WindowManagerSettingsView.permissionMessage(trusted: true, actionStatus: "conflict") == "conflict")
         let windowManager = WindowManager(defaults: switcherDefaults)
+        precondition(WindowLayout.allCases.allSatisfy { $0.defaultShortcut != nil })
+        let combinations = WindowLayout.allCases.compactMap { $0.defaultShortcut }.map { "\($0.keyCode):\($0.modifiers)" }
+        precondition(Set(combinations).count == WindowLayout.allCases.count)
         precondition(windowManager.shortcut(.maximize)?.label == "⌃⌥⌘M")
         precondition(windowManager.shortcut(.left)?.keyCode == 123)
         let customWindowShortcut = ClipboardShortcut(keyCode: 8, modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘C")
@@ -581,7 +584,7 @@ struct Preview {
         do {
             try windowManager.configure(.restore, shortcut: customWindowShortcut)
             preconditionFailure("Duplicate window shortcut must fail")
-        } catch { precondition(windowManager.shortcut(.restore) == nil) }
+        } catch { precondition(windowManager.shortcut(.restore) == WindowLayout.restore.defaultShortcut) }
         try windowManager.configure(.center, shortcut: nil)
         precondition(WindowManager(defaults: switcherDefaults).shortcut(.center) == nil)
         let arrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option, .command], timestamp: 0, windowNumber: 0, context: nil, characters: "\u{f702}", charactersIgnoringModifiers: "\u{f702}", isARepeat: false, keyCode: 123)!
