@@ -582,6 +582,19 @@ struct Preview {
         }
         let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
         precondition(featureButtons.count == 3)
+        let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
+        manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 112)
+        manyTools.layoutSubtreeIfNeeded()
+        precondition(manyTools.documentView!.frame.height == 352)
+        precondition(manyTools.frame.height == 112, "Additional tools must not grow the settings page")
+        let lastTool = manyTools.documentView!.subviews.last!
+        precondition(lastTool.frame.maxX <= manyTools.contentView.bounds.width)
+        precondition(lastTool.frame.maxY == 352)
+        manyTools.contentView.scroll(to: NSPoint(x: 0, y: 240))
+        manyTools.reflectScrolledClipView(manyTools.contentView)
+        precondition(manyTools.documentVisibleRect.intersects(lastTool.frame), "Last tool must be reachable by scrolling")
+        print("PASS: 18 tool cards fit three columns with bounded height and reachable overflow")
+
         for button in featureButtons { button.performClick(nil) }
         precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 3)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })

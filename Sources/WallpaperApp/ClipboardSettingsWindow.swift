@@ -269,6 +269,10 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
     @objc private func changeFeature(_ sender: NSButton) {
         guard let raw = sender.cell?.representedObject as? String, let feature = ToolFeature(rawValue: raw) else { return }
         let enabled = sender.state == .on
+        if let button = sender as? SettingsFeedbackButton {
+            button.selectedStyle = enabled
+            button.image = NSImage(systemSymbolName: enabled ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)
+        }
         feature.setEnabled(enabled, in: defaults)
         stopRecordingShortcut()
         onFeatureChange?(feature, enabled)
@@ -336,17 +340,28 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .wallpaper: title = AppLanguage.text("桌面背景")
             case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
             }
-            let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(changeFeature(_:)))
+            let button = SettingsFeedbackButton(title: title, target: self, action: #selector(changeFeature(_:)))
+            button.setButtonType(.toggle)
+            button.imagePosition = .imageLeading
+            button.imageHugsTitle = true
+            button.titleHorizontalInset = 0
+            button.alignment = .center
+            button.setAccessibilityLabel(title)
+            button.toolTip = AppLanguage.english ? "Enable or disable this tool. Settings are kept." : "启用或停用此功能，保留原配置。"
             button.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             button.cell?.representedObject = feature.rawValue
             button.state = feature.isEnabled(in: defaults) ? .on : .off
+            button.selectedStyle = button.state == .on
+            button.image = NSImage(systemSymbolName: button.state == .on ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)
             return button
         }
         let featureNote = NSTextField(wrappingLabelWithString: AppLanguage.english
             ? "Disabled tools disappear from menus and stop running. Their settings are kept."
             : "关闭后隐藏入口并停用功能，保留原配置。背景关闭后保留当前静态壁纸。")
         featureNote.textColor = .secondaryLabelColor
-        let features = settingsCard(AppLanguage.english ? "Tools" : "功能开关", featureButtons + [featureNote])
+        let featureGrid = SettingsFeatureGrid(items: featureButtons)
+        let features = settingsCard(AppLanguage.english ? "Tools" : "功能开关", [featureGrid, featureNote])
+        featureGrid.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
         featureNote.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
         return form([heading, features, language, lidBehavior, startup])
     }
@@ -489,6 +504,7 @@ private final class SettingsGroupCard: NSView {
 final class SettingsFeedbackButton: NSButton {
     private var hoverArea: NSTrackingArea?
     private(set) var hovered = false
+    var titleHorizontalInset: CGFloat = 10
     var selectedStyle = false { didSet { updateSurface() } }
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -540,6 +556,46 @@ private final class SettingsFeedbackCell: NSButtonCell {
         didSet { (controlView as? SettingsFeedbackButton)?.updateSurface(pressed: isHighlighted) }
     }
     override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
-        super.drawTitle(title, withFrame: frame.insetBy(dx: 10, dy: 0), in: controlView)
+        super.drawTitle(title, withFrame: frame.insetBy(dx: (controlView as? SettingsFeedbackButton)?.titleHorizontalInset ?? 10, dy: 0), in: controlView)
     }
+}
+
+
+/// Bounded three-column tool picker: additional tools scroll inside the section.
+@MainActor
+final class SettingsFeatureGrid: NSScrollView {
+    private let items: [NSView]
+    private let content = SettingsFeatureGridContent()
+    init(items: [NSView]) {
+        self.items = items
+        super.init(frame: .zero)
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        documentView = content
+        for item in items { content.addSubview(item) }
+        let rows = max(1, (items.count + 2) / 3)
+        heightAnchor.constraint(equalToConstant: CGFloat(min(2, rows) * 60 - 8)).isActive = true
+        setAccessibilityLabel(AppLanguage.english ? "Tool switches" : "功能开关")
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override func layout() {
+        super.layout()
+        let width = contentView.bounds.width
+        let rows = max(1, (items.count + 2) / 3)
+        content.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows * 60 - 8))
+        let cellWidth = max(0, (width - 16) / 3)
+        for (index, item) in items.enumerated() {
+            item.frame = NSRect(x: CGFloat(index % 3) * (cellWidth + 8),
+                                y: CGFloat(index / 3) * 60, width: cellWidth, height: 52)
+        }
+    }
+}
+
+@MainActor
+private final class SettingsFeatureGridContent: NSView {
+    override var isFlipped: Bool { true }
 }
