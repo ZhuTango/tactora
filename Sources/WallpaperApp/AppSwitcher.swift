@@ -145,6 +145,17 @@ final class AppSwitcher: NSObject {
         defaults.set(ids + dormant, forKey: "appSwitcherOrder")
         panel?.orderOut(nil); panel = nil; onChange?()
     }
+    func moveConfigured(_ id: String, before target: String?) {
+        guard loadError == nil else { return }
+        var ids = configuredApps.map(\.id)
+        guard ids.contains(id), target != id, target == nil || ids.contains(target!) else { return }
+        ids.removeAll { $0 == id }
+        let insertion = target.flatMap { ids.firstIndex(of: $0) } ?? ids.count
+        ids.insert(id, at: insertion)
+        let dormant = (defaults.stringArray(forKey: "appSwitcherOrder") ?? []).filter { !ids.contains($0) }
+        defaults.set(ids + dormant, forKey: "appSwitcherOrder")
+        panel?.orderOut(nil); panel = nil; onChange?()
+    }
     @discardableResult
     private func install(_ value: ClipboardShortcut, id: String) -> Bool {
         let hotkey = shortcuts[id] ?? GlobalClipboardShortcut()
@@ -317,8 +328,8 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private var searchIndices: [String: AppSearchIndex] = [:]
     private var scanTask: Task<Void, Never>?
     private let refreshButton = SettingsFeedbackButton()
-    private let moveUp = SettingsFeedbackButton()
-    private let moveDown = SettingsFeedbackButton()
+    private let moveTop = SettingsFeedbackButton()
+    private static let dragType = NSPasteboard.PasteboardType("local.tango.lighttools.app-order")
     private let delaySlider = NSSlider(value: 0.45, minValue: 0.1, maxValue: 5, target: nil, action: nil)
     private let delayLabel = NSTextField(labelWithString: "")
     init(manager: AppSwitcher) {
@@ -351,13 +362,13 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         let delayRow = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Hold delay" : "长按响应时间"), delaySlider, delayLabel])
         delayRow.spacing = 12
         delayRow.toolTip = AppLanguage.english ? "0.10–5.00 seconds · Saved automatically" : "0.10–5.00 秒 · 自动保存"
-        moveUp.title = AppLanguage.english ? "Move up" : "↑ 上移"
-        moveDown.title = AppLanguage.english ? "Move down" : "↓ 下移"
-        moveUp.target = self; moveUp.action = #selector(reorderApp(_:)); moveUp.tag = -1
-        moveDown.target = self; moveDown.action = #selector(reorderApp(_:)); moveDown.tag = 1
-        let orderHint = NSTextField(labelWithString: AppLanguage.english ? "Configured apps first · Select a row to reorder" : "已配置应用置顶 · 选中一行调整顺序")
+        moveTop.title = AppLanguage.english ? "Move to top" : "置顶"
+        moveTop.image = NSImage(systemSymbolName: "arrow.up.to.line", accessibilityDescription: nil)
+        moveTop.imagePosition = .imageLeading
+        moveTop.target = self; moveTop.action = #selector(moveSelectedToTop)
+        let orderHint = NSTextField(labelWithString: AppLanguage.english ? "Drag configured apps to reorder · Auto-saved" : "拖拽已配置应用调整顺序 · 自动保存")
         orderHint.textColor = .secondaryLabelColor; orderHint.font = .systemFont(ofSize: 12)
-        let orderRow = NSStackView(views: [orderHint, moveUp, moveDown]); orderRow.spacing = 12
+        let orderRow = NSStackView(views: [orderHint, moveTop]); orderRow.spacing = 12
         let top = NSStackView(views: [heading, hint, enabled, delayRow, row, orderRow]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
@@ -373,6 +384,14 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             column.minWidth = id == "app" ? 180 : width; column.resizingMask = .autoresizingMask
             table.addTableColumn(column)
         }
+        table.registerForDraggedTypes([Self.dragType])
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
+        let orderMenu = NSMenu()
+        for (title, offset) in [(AppLanguage.english ? "Move up" : "上移", -1), (AppLanguage.english ? "Move down" : "下移", 1)] {
+            let item = NSMenuItem(title: title, action: #selector(reorderApp(_:)), keyEquivalent: "")
+            item.target = self; item.tag = offset; orderMenu.addItem(item)
+        }
+        table.menu = orderMenu
         table.setAccessibilityLabel(AppLanguage.english ? "Installed applications" : "已安装应用列表")
         scroll.documentView = table; scroll.translatesAutoresizingMaskIntoConstraints = false; addSubview(scroll)
         status.textColor = .secondaryLabelColor; status.font = .systemFont(ofSize: 12)
@@ -449,19 +468,42 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             : "\(filtered.count) 个应用 · 点击录入 · Esc 取消 · Backspace 清除 · 配置自动保存")
     }
     func tableViewSelectionDidChange(_ notification: Notification) { updateOrderButtons() }
+    private var canReorder: Bool { search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private func updateOrderButtons() {
         let ids = manager.configuredApps.map(\.id)
         let id = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : ""
-        let index = ids.firstIndex(of: id)
-        let canMove = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        moveUp.isEnabled = canMove && (index ?? 0) > 0
-        moveDown.isEnabled = canMove && index != nil && index! + 1 < ids.count
-        moveUp.toolTip = AppLanguage.english ? "Clear search to reorder configured apps" : "清空搜索后调整已配置应用的顺序"
-        moveDown.toolTip = moveUp.toolTip
+        moveTop.isEnabled = ids.contains(id) && ids.first != id
+        moveTop.toolTip = AppLanguage.english ? "Move the selected configured app to the first position" : "将选中的已配置应用移到第一位"
     }
-    @objc private func reorderApp(_ sender: NSButton) {
-        guard filtered.indices.contains(table.selectedRow), search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        manager.moveConfigured(filtered[table.selectedRow].id, offset: sender.tag)
+    @objc private func moveSelectedToTop() {
+        guard filtered.indices.contains(table.selectedRow) else { return }
+        manager.moveConfigured(filtered[table.selectedRow].id, before: manager.configuredApps.first?.id)
+    }
+    @objc private func reorderApp(_ sender: NSMenuItem) {
+        let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+        guard canReorder, filtered.indices.contains(row) else { return }
+        manager.moveConfigured(filtered[row].id, offset: sender.tag)
+    }
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard canReorder, filtered.indices.contains(row), manager.isConfigured(filtered[row].id) else { return nil }
+        let item = NSPasteboardItem(); item.setString(filtered[row].id, forType: Self.dragType)
+        return item
+    }
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+        guard canReorder, let source = info.draggingSource as? NSTableView, source === table,
+              let id = info.draggingPasteboard.string(forType: Self.dragType), manager.isConfigured(id) else { return [] }
+        let destination = min(max(0, row), manager.configuredApps.count)
+        tableView.setDropRow(destination, dropOperation: .above)
+        return .move
+    }
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard canReorder, let source = info.draggingSource as? NSTableView, source === table,
+              let id = info.draggingPasteboard.string(forType: Self.dragType), manager.isConfigured(id) else { return false }
+        let ids = manager.configuredApps.map(\.id)
+        let destination = min(max(0, row), ids.count)
+        manager.moveConfigured(id, before: destination < ids.count ? ids[destination] : nil)
+        if let index = filtered.firstIndex(where: { $0.id == id }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
+        return true
     }
     private func updateDelayLabel() {
         delayLabel.stringValue = String(format: "%.2f %@", manager.holdDelay, AppLanguage.english ? "s" : "秒")
@@ -478,8 +520,9 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         let app = filtered[row], binding = manager.bindings[app.id]
         let key = column.identifier
         if key.rawValue == "app" {
-            let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
+            let cell = tableView.makeView(withIdentifier: key, owner: self) as? AppDragCell ?? AppDragCell()
             cell.identifier = key
+            cell.draggable = canReorder && manager.isConfigured(app.id)
             if cell.textField == nil {
                 let label = NSTextField(labelWithString: "")
                 label.font = .systemFont(ofSize: 13, weight: .medium)
@@ -487,7 +530,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
                 let icon = NSImageView()
                 for view in [label, icon] { view.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(view) }
                 NSLayoutConstraint.activate([
-                    icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                    icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 25),
                     icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                     icon.widthAnchor.constraint(equalToConstant: 28), icon.heightAnchor.constraint(equalToConstant: 28),
                     label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
@@ -498,7 +541,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             }
             cell.textField?.stringValue = app.displayName
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: app.path)
-            cell.toolTip = app.path
+            cell.toolTip = cell.draggable ? (AppLanguage.english ? "Drag to reorder · " : "拖拽调整顺序 · ") + app.path : (canReorder ? app.path : (AppLanguage.english ? "Clear search to drag" : "清空搜索后可拖拽排序"))
             return cell
         }
         if key.rawValue == "alias" {
@@ -631,3 +674,31 @@ final class SwitcherShortcutRecorder: NSButton {
 
 @MainActor
 private final class AppAliasField: NSTextField { var appID = "" }
+
+@MainActor
+private final class AppDragCell: NSTableCellView {
+    var draggable = false { didSet { grip.isHidden = !draggable; window?.invalidateCursorRects(for: self) } }
+    private let grip = NSImageView()
+    private var hoverArea: NSTrackingArea?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        grip.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: nil)
+        grip.contentTintColor = .secondaryLabelColor; grip.alphaValue = 0.45
+        grip.translatesAutoresizingMaskIntoConstraints = false; addSubview(grip)
+        NSLayoutConstraint.activate([
+            grip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            grip.centerYAnchor.constraint(equalTo: centerYAnchor),
+            grip.widthAnchor.constraint(equalToConstant: 13), grip.heightAnchor.constraint(equalToConstant: 16)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override func resetCursorRects() { super.resetCursorRects(); if draggable { addCursorRect(bounds, cursor: .openHand) } }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { grip.alphaValue = 1 }
+    override func mouseExited(with event: NSEvent) { grip.alphaValue = 0.45 }
+}
