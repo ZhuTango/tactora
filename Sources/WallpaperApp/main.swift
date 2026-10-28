@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let clipboardShortcut = GlobalClipboardShortcut()
     private var shortcutRegistered = false
     private var appSwitcher: AppSwitcher!
+    private let windowManager = WindowManager()
     private let lidDisplaySleep = LidDisplaySleep()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
@@ -44,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shortcutRegistered = ToolFeature.clipboard.isEnabled() && clipboardShortcut.register()
         appSwitcher = AppSwitcher(start: ToolFeature.apps.isEnabled())
         appSwitcher.setFeatureEnabled(ToolFeature.apps.isEnabled())
+        windowManager.conflicts = { [weak self] value in
+            let clipboard = ClipboardShortcut.saved()
+            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+                || self?.appSwitcher.bindings.values.contains(where: { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }) == true
+        }
+        windowManager.setEnabled(ToolFeature.windows.isEnabled())
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "轻工具")
@@ -164,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.wallpaper.isEnabled() && connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
         self.menu.addItem(.separator())
         if ToolFeature.apps.isEnabled() { add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings)) }
+        if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
         add("关于轻工具", to: self.menu, action: #selector(about))
@@ -454,12 +462,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showAppSwitcherSettings() { guard ToolFeature.apps.isEnabled() else { return }; showClipboardSettings(); clipboardSettings?.selectSection("apps") }
 
+    @objc private func showWindowSettings() { guard ToolFeature.windows.isEnabled() else { return }; showClipboardSettings(); clipboardSettings?.selectSection("windows") }
+
     @objc private func showSettings() { showClipboardSettings(); clipboardSettings?.selectSection("general") }
 
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -471,7 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showSettings()
             }
             settings.onShortcutChange = { [weak self] value in
-                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), self.clipboardShortcut.register(value) else { return false }
+                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), self.clipboardShortcut.register(value) else { return false }
                 value.save()
                 self.shortcutRegistered = true
                 self.updateMenu()
@@ -498,6 +508,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else { clipboardShortcut.unregister(); shortcutRegistered = false }
         case .apps:
             appSwitcher.setFeatureEnabled(enabled)
+        case .windows:
+            windowManager.setEnabled(enabled)
         case .wallpaper:
             for task in selections.values { task.cancel() }
             selections.removeAll(); generations.removeAll(); refreshTask?.cancel()
@@ -512,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         for task in selections.values { task.cancel() }
         refreshTask?.cancel()
+        windowManager.setEnabled(false)
         lidDisplaySleep.stop()
         clipboard?.stop()
         clipboardWindow?.close()

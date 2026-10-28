@@ -129,7 +129,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             : "当前保存 \(store.entries.count) 条 · \(store.enabled ? "正在记录" : "已暂停记录")")
     }
     func windowWillClose(_ notification: Notification) { stopRecordingShortcut(); onClose?() }
-    func windowDidBecomeKey(_ notification: Notification) { refresh(); refreshGeneral() }
+    func windowDidBecomeKey(_ notification: Notification) { refresh(); refreshGeneral(); (tabs?.selectedTabViewItem?.view as? WindowManagerSettingsView)?.refresh() }
     func windowDidResignKey(_ notification: Notification) { stopRecordingShortcut() }
     @objc private func recordShortcut() {
         if recordingShortcut { stopRecordingShortcut(); return }
@@ -194,7 +194,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -221,7 +221,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
             navigation.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             navigation.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
-            navigation.widthAnchor.constraint(equalToConstant: appSwitcher == nil ? 360 : 520),
+            navigation.widthAnchor.constraint(equalToConstant: windowManager != nil ? 680 : appSwitcher == nil ? 360 : 520),
             tabs.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
             tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16)
         ])
@@ -236,6 +236,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             let item = NSTabViewItem(identifier: "apps")
             item.label = AppLanguage.english ? "Apps" : "应用切换"
             item.view = AppSwitcherSettingsView(manager: appSwitcher)
+            tabs.addTabViewItem(item)
+        }
+        if let windowManager {
+            let item = NSTabViewItem(identifier: "windows")
+            item.label = AppLanguage.english ? "Windows" : "窗口管理"
+            item.view = WindowManagerSettingsView(manager: windowManager)
             tabs.addTabViewItem(item)
         }
         window.contentView = root
@@ -283,6 +289,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         if let tabViewItem { sectionPicker?.selectedSegment = tabView.indexOfTabViewItem(tabViewItem) }
         refreshGeneral()
         if tabViewItem?.identifier as? String == "wallpaper" { rebuildBackground() }
+        (tabViewItem?.view as? WindowManagerSettingsView)?.refresh()
     }
     private func form(_ views: [NSView]) -> NSView {
         let root = NSView()
@@ -339,6 +346,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .clipboard: title = AppLanguage.text("剪贴板")
             case .wallpaper: title = AppLanguage.text("桌面背景")
             case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
+            case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
             let button = SettingsFeedbackButton(title: title, target: self, action: #selector(changeFeature(_:)))
             button.setButtonType(.toggle)
