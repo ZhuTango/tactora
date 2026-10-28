@@ -8,6 +8,9 @@ xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -whole-m
 xcrun swift scripts/icon.swift .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP"
+# Pass a stable code-signing identity to retain TCC identity across builds.
+# Ad-hoc builds necessarily require fresh user authorization after updates.
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
+codesign --force --sign "$SIGNING_IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 printf 'Built: %s/%s\n' "$PWD" "$APP"

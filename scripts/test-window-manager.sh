@@ -9,4 +9,4 @@ xcrun swiftc -parse-as-library Sources/ToolCore/*.swift Sources/WallpaperApp/App
 # Fixture closes itself after 25 seconds; no user's app windows are modified.
 .build/window-fixture > .build/window-fixture.log 2>&1 &
 fixture_pid=$!
-.build/window-smoke-checks "$fixture_pid"
+.build/window-smoke-checks "$fixture_pid" "$@"

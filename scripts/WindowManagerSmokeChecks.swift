@@ -1,7 +1,7 @@
 import AppKit
 @main struct WindowManagerSmokeChecks {
  @MainActor static func main() async throws {
-  guard CommandLine.arguments.count == 2, let pid = Int32(CommandLine.arguments[1]) else { fatalError("Pass fixture PID") }
+  guard CommandLine.arguments.count >= 2, let pid = Int32(CommandLine.arguments[1]) else { fatalError("Pass fixture PID") }
   guard AXIsProcessTrusted() else { print("SKIP: auxiliary test process lacks accessibility permission"); return }
   NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateIgnoringOtherApps])
   try await Task.sleep(nanoseconds: 500_000_000)
@@ -10,7 +10,8 @@ import AppKit
   let defaults = UserDefaults(suiteName: name)!
   defer { defaults.removePersistentDomain(forName: name) }
   let manager = WindowManager(defaults: defaults)
-  manager.setEnabled(true)
+  let installed = CommandLine.arguments.contains("--installed")
+  if !installed { manager.setEnabled(true) }
   defer { manager.setEnabled(false) }
   let app = AXUIElementCreateApplication(pid)
   var value: CFTypeRef?
@@ -28,15 +29,22 @@ import AppKit
   let original = frame()
   let screen = NSScreen.screens.first!
   let area = CGRect(x: screen.visibleFrame.minX, y: screen.frame.maxY - screen.visibleFrame.maxY, width: screen.visibleFrame.width, height: screen.visibleFrame.height)
-  for action in [WindowLayout.left, .right, .maximize, .topLeft, .center, .restore] {
+  for action in (installed ? [WindowLayout.left, .right, .maximize] : [.left, .right, .maximize, .topLeft, .center, .restore]) {
    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { print("SKIP: focus changed; no other app modified"); return }
    let before = frame()
-   manager.perform(action)
-   try await Task.sleep(nanoseconds: 150_000_000)
+   if installed {
+    let shortcut = action.defaultShortcut!
+    let down = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(shortcut.keyCode), keyDown: true)!
+    let up = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(shortcut.keyCode), keyDown: false)!
+    down.flags = [.maskControl, .maskAlternate, .maskCommand]
+    up.flags = [.maskControl, .maskAlternate, .maskCommand]
+    down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+   } else { manager.perform(action) }
+   try await Task.sleep(nanoseconds: 500_000_000)
    let expected = action == .restore ? original : action.frame(in: area, current: before)
    let actual = frame()
    precondition(abs(actual.minX-expected.minX)<3 && abs(actual.minY-expected.minY)<3 && abs(actual.width-expected.width)<3 && abs(actual.height-expected.height)<3, "\(action): \(actual) vs \(expected), \(manager.status)")
   }
-  print("PASS: real AX fixture left/right/maximize/corner/center/restore")
+  print(installed ? "PASS: installed app hotkeys left/right/maximize changed fixture via AX" : "PASS: real AX fixture left/right/maximize/corner/center/restore")
  }
 }

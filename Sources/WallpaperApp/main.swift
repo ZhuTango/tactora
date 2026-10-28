@@ -72,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshDisplays()
         if let url = pendingOpenURLs.last { openFile(url); pendingOpenURLs.removeAll() }
         if CommandLine.arguments.contains("--settings") { showSettings() }
+        if CommandLine.arguments.contains("--request-accessibility") {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            showWindowSettings()
+        }
     }
 
     private func observe(_ center: NotificationCenter, _ name: Notification.Name,

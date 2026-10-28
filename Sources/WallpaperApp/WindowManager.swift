@@ -91,7 +91,10 @@ final class WindowManager {
     private func report(_ message: String) { status = message; NSSound.beep(); onChange?() }
     func perform(_ action: WindowLayout) {
         guard enabled else { return }
-        guard AXIsProcessTrusted() else { report("请在系统设置 → 隐私与安全性 → 辅助功能中允许轻工具控制窗口。"); return }
+        guard AXIsProcessTrusted() else {
+            // Permission is live state, not a sticky action error.
+            status = ""; NSSound.beep(); onChange?(); return
+        }
         guard let app = NSWorkspace.shared.frontmostApplication else { return }
         let application = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(application, 0.5)
@@ -194,9 +197,19 @@ final class WindowManagerSettingsView: NSView {
     }
     func refresh() {
         updateTitles()
-        status.stringValue = manager.status.isEmpty ? (AXIsProcessTrusted() ? "辅助功能已授权" : "需要辅助功能授权，授权后即可使用快捷键。") : manager.status
+        status.stringValue = Self.permissionMessage(trusted: AXIsProcessTrusted(), actionStatus: manager.status)
+    }
+    static func permissionMessage(trusted: Bool, actionStatus: String) -> String {
+        guard trusted else {
+            return AppLanguage.english
+                ? "Accessibility permission is missing for this version. If already enabled, remove and re-add the installed Light Tools app."
+                : "当前版本未获辅助功能授权。若系统中已开启，请移除旧条目，重新添加 /Users/tango/Applications/轻工具.app。"
+        }
+        return actionStatus.isEmpty ? (AppLanguage.english ? "Accessibility permission granted" : "辅助功能已授权") : actionStatus
     }
     @objc private func openPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 }

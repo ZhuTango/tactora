@@ -569,6 +569,9 @@ struct Preview {
         var loginState = SMAppService.Status.notRegistered
         let loginAccess = LoginItemAccess(status: { loginState }, register: { loginState = .enabled }, unregister: { loginState = .notRegistered })
         let unified = ClipboardSettingsWindow(store: store, defaults: switcherDefaults, loginAccess: loginAccess)
+        precondition(WindowManagerSettingsView.permissionMessage(trusted: false, actionStatus: "old error").contains("当前版本"))
+        precondition(WindowManagerSettingsView.permissionMessage(trusted: true, actionStatus: "") == "辅助功能已授权")
+        precondition(WindowManagerSettingsView.permissionMessage(trusted: true, actionStatus: "conflict") == "conflict")
         let windowManager = WindowManager(defaults: switcherDefaults)
         precondition(windowManager.shortcut(.maximize)?.label == "⌃⌥⌘M")
         precondition(windowManager.shortcut(.left)?.keyCode == 123)
