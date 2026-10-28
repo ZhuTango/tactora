@@ -4,6 +4,8 @@ import ServiceManagement
 @MainActor
 final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTabViewDelegate {
     private var tabs: NSTabView?
+    private var allSections: [NSTabViewItem] = []
+    var onFeatureChange: ((ToolFeature, Bool) -> Void)?
     private var sectionPicker: NSSegmentedControl?
     private var backgroundMenu: NSMenu?
     private let backgroundActions = NSStackView()
@@ -237,10 +239,39 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         window.contentView = root
         tabs.delegate = self
         tabs.selectTabViewItem(at: 0)
+        allSections = tabs.tabViewItems
+        refreshFeatureSections()
         refreshGeneral()
     }
     @objc private func sectionChanged(_ sender: NSSegmentedControl) { tabs?.selectTabViewItem(at: sender.selectedSegment) }
-    func selectSection(_ id: String) { tabs?.selectTabViewItem(withIdentifier: id) }
+    func selectSection(_ id: String) {
+        let target = tabs?.tabViewItems.first { $0.identifier as? String == id }
+            ?? tabs?.tabViewItems.first
+        if let target { tabs?.selectTabViewItem(target) }
+    }
+    private func refreshFeatureSections() {
+        guard let tabs, let picker = sectionPicker else { return }
+        let selected = tabs.selectedTabViewItem?.identifier as? String ?? "general"
+        let visible = allSections.filter { item in
+            guard let id = item.identifier as? String, let feature = ToolFeature(rawValue: id) else { return true }
+            return feature.isEnabled(in: defaults)
+        }
+        tabs.delegate = nil
+        for item in tabs.tabViewItems { tabs.removeTabViewItem(item) }
+        for item in visible { tabs.addTabViewItem(item) }
+        picker.segmentCount = visible.count
+        for (index, item) in visible.enumerated() { picker.setLabel(item.label, forSegment: index) }
+        tabs.delegate = self
+        selectSection(selected)
+    }
+    @objc private func changeFeature(_ sender: NSButton) {
+        guard let raw = sender.cell?.representedObject as? String, let feature = ToolFeature(rawValue: raw) else { return }
+        let enabled = sender.state == .on
+        feature.setEnabled(enabled, in: defaults)
+        stopRecordingShortcut()
+        onFeatureChange?(feature, enabled)
+        refreshFeatureSections()
+    }
     func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         stopRecordingShortcut()
         if let tabViewItem { sectionPicker?.selectedSegment = tabView.indexOfTabViewItem(tabViewItem) }
@@ -285,7 +316,26 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let language = settingsCard(AppLanguage.english ? "Appearance" : "显示", [row])
         let startup = settingsCard(AppLanguage.english ? "Startup" : "启动", [loginToggle, loginStatus, systemSettings])
         loginStatus.widthAnchor.constraint(equalTo: startup.widthAnchor, constant: -32).isActive = true
-        return form([heading, language, startup, note])
+        let featureButtons = ToolFeature.allCases.map { feature -> NSView in
+            let title: String
+            switch feature {
+            case .clipboard: title = AppLanguage.text("剪贴板")
+            case .wallpaper: title = AppLanguage.text("桌面背景")
+            case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
+            }
+            let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(changeFeature(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
+            button.cell?.representedObject = feature.rawValue
+            button.state = feature.isEnabled(in: defaults) ? .on : .off
+            return button
+        }
+        let featureNote = NSTextField(wrappingLabelWithString: AppLanguage.english
+            ? "Disabled tools disappear from menus and stop running. Their settings are kept."
+            : "关闭后隐藏入口并停用功能，保留原配置。背景关闭后保留当前静态壁纸。")
+        featureNote.textColor = .secondaryLabelColor
+        let features = settingsCard(AppLanguage.english ? "Tools" : "功能开关", featureButtons + [featureNote])
+        featureNote.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
+        return form([heading, features, language, startup])
     }
     @objc private func changeLanguage() {
         AppLanguage.selection = ["system", "zh-Hans", "en"][languagePicker.indexOfSelectedItem]

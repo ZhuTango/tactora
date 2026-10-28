@@ -79,6 +79,10 @@ final class GlobalClipboardShortcut {
         current = value
         return true
     }
+    func unregister() {
+        if let hotKey { UnregisterEventHotKey(hotKey) }
+        hotKey = nil; current = nil
+    }
     deinit {
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let handler { RemoveEventHandler(handler) }

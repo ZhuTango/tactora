@@ -38,6 +38,7 @@ final class AppSwitcher: NSObject {
     private var hold = OptionHoldState()
     private var panel: NSPanel?
     private var configurationOpen = false
+    private(set) var featureEnabled = true
     var onChange: (() -> Void)?
     var panelEnabled: Bool {
         get { defaults.object(forKey: "appSwitcherPanelEnabled") as? Bool ?? true }
@@ -94,7 +95,7 @@ final class AppSwitcher: NSObject {
             guard !same(.saved()), !bindings.contains(where: { $0.key != app.id && $0.value.shortcut.map(same) == true }) else {
                 throw error("此快捷键已用于剪贴板或其他应用，原配置已保留。")
             }
-            guard install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }
+            guard !featureEnabled || install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }
         } else { shortcuts.removeValue(forKey: app.id); failures.removeValue(forKey: app.id) }
         bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show)
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
@@ -109,26 +110,37 @@ final class AppSwitcher: NSObject {
         panel?.orderOut(nil); panel = nil; updateTimer(); onChange?()
     }
     func containsShortcut(_ value: ClipboardShortcut) -> Bool {
-        bindings.values.contains { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }
+        featureEnabled && bindings.values.contains { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }
     }
     private func error(_ message: String) -> NSError { NSError(domain: "AppSwitcher", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
     func activate(_ id: String) {
+        guard featureEnabled else { return }
         guard let binding = bindings[id] else { return }
         hold.suppress(); panel?.orderOut(nil)
         let url = URL(fileURLWithPath: binding.path)
         guard FileManager.default.fileExists(atPath: url.path) else { failures[id] = "应用已移动或卸载，请刷新列表重新配置"; onChange?(); return }
         if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
-            running.activate(options: [.activateIgnoringOtherApps]); return
+            if running.isActive && !running.isHidden { running.hide() }
+            else { running.unhide(); running.activate(options: []) }
+            return
         }
         let config = NSWorkspace.OpenConfiguration(); config.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, error in
             if let error { Task { @MainActor in self?.failures[id] = error.localizedDescription; self?.onChange?() } }
         }
     }
+    func setFeatureEnabled(_ enabled: Bool) {
+        guard featureEnabled != enabled else { return }
+        featureEnabled = enabled
+        if enabled {
+            for (id, binding) in bindings { if let key = binding.shortcut { install(key, id: id) } }
+        } else { shortcuts.removeAll(); panel?.orderOut(nil); panel = nil }
+        updateTimer()
+    }
     func pausePanel(_ value: Bool) { configurationOpen = value; hold.suppress(); panel?.orderOut(nil) }
     private func updateTimer() {
         timer?.invalidate(); timer = nil; panel?.orderOut(nil); hold = OptionHoldState()
-        guard panelEnabled, bindings.values.contains(where: \.showInPanel) else { return }
+        guard featureEnabled, panelEnabled, bindings.values.contains(where: \.showInPanel) else { return }
         let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -138,7 +150,7 @@ final class AppSwitcher: NSObject {
     private func tick() {
         let flags = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
         let visible = hold.visible(optionOnly: flags == .option, now: ProcessInfo.processInfo.systemUptime)
-        guard visible, !configurationOpen else { panel?.orderOut(nil); return }
+        guard featureEnabled, visible, !configurationOpen else { panel?.orderOut(nil); return }
         if panel == nil { panel = makePanel() }
         guard let panel, !panel.isVisible else { return }
         let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main

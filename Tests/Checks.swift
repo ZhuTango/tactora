@@ -3,6 +3,29 @@ import Foundation
 @main
 struct Checks {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--feature-disable-only") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let store = DisplayConfigurationStore(url: folder.appendingPathComponent("displays.json"))
+            let records = ["offline": DisplayConfiguration(name: "Offline", path: "/missing.mp4", kind: .video, stopped: false)]
+            try store.save(records)
+            var discoveries = 0
+            let controller = try WallpaperController(store: store, connected: { discoveries += 1; return [] })
+            controller.setFeatureEnabled(false)
+            await controller.refreshDisplays()
+            precondition(discoveries == 0 && controller.groups.isEmpty && !controller.featureEnabled)
+            let stored = try store.load()
+            precondition(controller.configurations == records && stored == records)
+            controller.policy.lowPowerMode = false
+            await controller.refreshDisplays()
+            precondition(discoveries == 0)
+            controller.setFeatureEnabled(true)
+            await controller.refreshDisplays()
+            precondition(discoveries > 0 && controller.configurations == records)
+            controller.shutdown()
+            print("PASS: wallpaper disable prevents refresh, preserves configuration and resumes discovery")
+            return
+        }
         if CommandLine.arguments.contains("--wallpaper-preferences-only") {
             try await checkGlobalWallpaperPreferences(); return
         }

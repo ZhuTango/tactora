@@ -28,7 +28,20 @@ struct Preview {
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             precondition(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finder.id)
-            print("PASS: activates actual Finder without clipboard or accessibility permissions")
+            let runningFinder = NSRunningApplication.runningApplications(withBundleIdentifier: finder.id).first!
+            manager.activate(finder.id)
+            for _ in 0..<30 {
+                if runningFinder.isHidden { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard runningFinder.isHidden else { throw NSError(domain: "AppToggleTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "Second shortcut must hide the frontmost app"]) }
+            manager.activate(finder.id)
+            for _ in 0..<30 {
+                if runningFinder.isActive && !runningFinder.isHidden { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            precondition(runningFinder.isActive && !runningFinder.isHidden)
+            print("PASS: activates, hides and restores Finder without minimization or accessibility permissions")
             return
         }
         var checks = 0
@@ -157,6 +170,12 @@ struct Preview {
         precondition(hintPanel.styleMask.contains(.nonactivatingPanel))
         precondition(hintPanel.frame.height == 114)
         hintPanel.close()
+        let savedBindings = switcher.bindings
+        switcher.setFeatureEnabled(false)
+        precondition(!switcher.featureEnabled && !switcher.containsShortcut(bindingKey))
+        precondition(switcher.bindings == savedBindings)
+        switcher.setFeatureEnabled(true)
+        precondition(switcher.containsShortcut(bindingKey) && switcher.bindings == savedBindings)
         try switcher.configure(fixtureApp, shortcut: nil, show: false)
         precondition(switcher.bindings[fixtureApp.id]?.shortcut == nil)
         print("PASS: app hotkey routing, hold delay/release/suppression, persistence, independent visibility, conflict preservation and clear")
@@ -464,12 +483,28 @@ struct Preview {
         preferences.submenu = preferencesMenu; backgroundMenu.addItem(preferences)
         var loginState = SMAppService.Status.notRegistered
         let loginAccess = LoginItemAccess(status: { loginState }, register: { loginState = .enabled }, unregister: { loginState = .notRegistered })
-        let unified = ClipboardSettingsWindow(store: store, loginAccess: loginAccess)
+        let unified = ClipboardSettingsWindow(store: store, defaults: switcherDefaults, loginAccess: loginAccess)
         unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher)
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
         precondition(tabs.numberOfTabViewItems == 4)
+        precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) })
+        var featureChanges = 0
+        unified.onFeatureChange = { feature, enabled in
+            featureChanges += 1
+            precondition(feature.isEnabled(in: switcherDefaults) == enabled)
+        }
+        let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
+        precondition(featureButtons.count == 3)
+        for button in featureButtons { button.performClick(nil) }
+        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 3)
+        precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
+        unified.selectSection("apps")
+        precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
+        for button in featureButtons { button.performClick(nil) }
+        precondition(tabs.numberOfTabViewItems == 4 && featureChanges == 6)
+        print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
             let bitmap = unifiedView.bitmapImageRepForCachingDisplay(in: unifiedView.bounds)!

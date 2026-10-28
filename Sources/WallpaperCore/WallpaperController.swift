@@ -10,6 +10,7 @@ final class WallpaperController {
     private var deadlines: [String: Date] = [:]
     private var rotating = false
     private var terminated = false
+    private(set) var featureEnabled = true
     deinit { rotationTimer?.invalidate() }
     private let cache: VideoCache
     private var automaticallyPauseWhenOccluded: Bool
@@ -53,7 +54,7 @@ final class WallpaperController {
     }
 
     func refreshDisplays() async {
-        guard !Task.isCancelled else { return }
+        guard featureEnabled, !terminated, !Task.isCancelled else { return }
         let previousIDs = Set(displays.map(\.id))
         displays = connected()
         for display in displays where !previousIDs.contains(display.id) {
@@ -77,7 +78,7 @@ final class WallpaperController {
             throw NSError(domain: "WallpaperDisplay", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "这块屏幕已断开，请连接后重新选择。"])
         }
-        guard !terminated, configurations[id] == previous else { throw CancellationError() }
+        guard featureEnabled, !terminated, configurations[id] == previous else { throw CancellationError() }
         var next = configurations
         next[id] = DisplayConfiguration(name: display.name, path: url.path, kind: kind, stopped: false,
                                         playlist: playlist, interval: interval, playlistIndex: index, rotationEnabled: rotationEnabled,
@@ -129,6 +130,18 @@ final class WallpaperController {
     func isPlaying(_ id: String) -> Bool {
         guard let config = configurations[id], config.kind == .video, !config.stopped else { return false }
         return groups[Self.videoKey(config)]?.isPlaying == true && displays.contains(where: { $0.id == id })
+    }
+
+    func setFeatureEnabled(_ enabled: Bool) {
+        guard featureEnabled != enabled else { return }
+        featureEnabled = enabled
+        if !enabled {
+            rotationTimer?.invalidate(); rotationTimer = nil
+            deadlines.removeAll(); revision += 1
+            for engine in groups.values { engine.clear() }
+            groups.removeAll(); preparing.removeAll(); displays.removeAll()
+        }
+        onChange?()
     }
 
     func shutdown() {
@@ -201,7 +214,7 @@ final class WallpaperController {
     private func scheduleRotation() {
         rotationTimer?.invalidate()
         rotationTimer = nil
-        guard !terminated, policy.shouldPlay else { deadlines.removeAll(); return }
+        guard featureEnabled, !terminated, policy.shouldPlay else { deadlines.removeAll(); return }
         let eligible = Set(displays.compactMap { configurations[$0.id]?.isRotating == true ? $0.id : nil })
         deadlines = deadlines.filter { eligible.contains($0.key) }
         for id in eligible where deadlines[id] == nil {
@@ -217,11 +230,11 @@ final class WallpaperController {
     }
 
     private func rotateDue() async {
-        guard !rotating, !terminated, policy.shouldPlay else { scheduleRotation(); return }
+        guard featureEnabled, !rotating, !terminated, policy.shouldPlay else { scheduleRotation(); return }
         rotating = true
         let due = deadlines.filter { $0.value <= Date() }.map(\.key)
         for id in due {
-            guard !terminated, policy.shouldPlay, configurations[id]?.isRotating == true,
+            guard featureEnabled, !terminated, policy.shouldPlay, configurations[id]?.isRotating == true,
                   connected().contains(where: { $0.id == id }) else { continue }
             do { try await advance(for: id) }
             catch is CancellationError {}
@@ -275,6 +288,7 @@ final class WallpaperController {
     }
 
     private func rebuildPlayback() async {
+        guard featureEnabled, !terminated else { return }
         revision += 1
         let current = revision
         preparing.removeAll()

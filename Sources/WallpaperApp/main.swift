@@ -36,10 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         clipboard = ClipboardStore()
         clipboard.onChange = { [weak self] in self?.clipboardWindow?.refresh(); self?.clipboardSettings?.refresh(); self?.updateMenu() }
+        clipboard.setSuspended(!ToolFeature.clipboard.isEnabled())
         clipboard.start()
         clipboardShortcut.action = { [weak self] in self?.showClipboard() }
-        shortcutRegistered = clipboardShortcut.register()
-        appSwitcher = AppSwitcher()
+        shortcutRegistered = ToolFeature.clipboard.isEnabled() && clipboardShortcut.register()
+        appSwitcher = AppSwitcher(start: ToolFeature.apps.isEnabled())
+        appSwitcher.setFeatureEnabled(ToolFeature.apps.isEnabled())
+        controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "轻工具")
         statusItem.button?.toolTip = "轻工具 · 背景与剪贴板"
@@ -68,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 action(self)
-                self.clipboard?.setSuspended(self.controller.policy.displayAsleep || self.controller.policy.systemAsleep || self.controller.policy.sessionInactive)
+                self.clipboard?.setSuspended(!ToolFeature.clipboard.isEnabled() || self.controller.policy.displayAsleep || self.controller.policy.systemAsleep || self.controller.policy.sessionInactive)
                 self.updateMenu()
             }
         }
@@ -77,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshDisplays() {
         refreshTask?.cancel()
+        guard ToolFeature.wallpaper.isEnabled() else { return }
         refreshTask = Task { [weak self] in await self?.controller.refreshDisplays() }
         updateMenu()
     }
@@ -125,11 +129,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         self.menu.removeAllItems()
         self.menu.autoenablesItems = false
+        if ToolFeature.clipboard.isEnabled() {
         add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") + "  " + ClipboardShortcut.saved().label : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
         self.menu.addItem(.separator())
+        }
         let quickActions: Set<Selector> = [#selector(chooseFiles(_:)), #selector(nextBackground(_:)),
             #selector(toggleRotation(_:)), #selector(stop(_:)), #selector(resume(_:)), #selector(clear(_:))]
-        for display in backgroundMenu.items where display.submenu != nil && display.identifier == nil {
+        for display in backgroundMenu.items where ToolFeature.wallpaper.isEnabled() && display.submenu != nil && display.identifier == nil {
             guard let source = display.submenu else { continue }
             let parent = add(display.title.components(separatedBy: " · ").prefix(2).joined(separator: " · "), to: self.menu)
             parent.isEnabled = true
@@ -153,9 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             quick.addItem(.separator())
             add("背景详细设置…", to: quick, action: #selector(showWallpaperSettings))
         }
-        if connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
+        if ToolFeature.wallpaper.isEnabled() && connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
         self.menu.addItem(.separator())
-        add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings))
+        if ToolFeature.apps.isEnabled() { add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings)) }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
         add("关于轻工具", to: self.menu, action: #selector(about))
@@ -302,6 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func runOperation(for id: String, operation: @escaping @MainActor () async throws -> Void) {
+        guard ToolFeature.wallpaper.isEnabled() else { return }
         selections[id]?.cancel()
         let generation = UUID()
         generations[id] = generation
@@ -399,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func openFile(_ url: URL) {
+        guard ToolFeature.wallpaper.isEnabled() else { return }
         let displays = DisplayTarget.connected()
         guard !displays.isEmpty else { return }
         var index = 0
@@ -420,6 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showClipboard() {
+        guard ToolFeature.clipboard.isEnabled() else { return }
         if clipboardWindow?.window?.isVisible == true { clipboardWindow?.close(); return }
         if clipboardWindow == nil {
             let panel = ClipboardWindow(store: clipboard)
@@ -436,11 +445,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showWallpaperSettings() {
+        guard ToolFeature.wallpaper.isEnabled() else { return }
         showClipboardSettings()
         clipboardSettings?.selectSection("wallpaper")
     }
 
-    @objc private func showAppSwitcherSettings() { showClipboardSettings(); clipboardSettings?.selectSection("apps") }
+    @objc private func showAppSwitcherSettings() { guard ToolFeature.apps.isEnabled() else { return }; showClipboardSettings(); clipboardSettings?.selectSection("apps") }
 
     @objc private func showSettings() { showClipboardSettings(); clipboardSettings?.selectSection("general") }
 
@@ -448,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
             settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher)
+            settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
                 guard let self else { return }
                 self.clipboardWindow?.close()
@@ -457,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showSettings()
             }
             settings.onShortcutChange = { [weak self] value in
-                guard let self, !self.appSwitcher.containsShortcut(value), self.clipboardShortcut.register(value) else { return false }
+                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), self.clipboardShortcut.register(value) else { return false }
                 value.save()
                 self.shortcutRegistered = true
                 self.updateMenu()
@@ -473,6 +484,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         clipboardSettings?.selectSection("clipboard")
         clipboardSettings?.present()
+    }
+
+    private func applyFeature(_ feature: ToolFeature, enabled: Bool) {
+        switch feature {
+        case .clipboard:
+            clipboardWindow?.close(); clipboardWindow = nil
+            clipboard.setSuspended(!enabled || controller.policy.displayAsleep || controller.policy.systemAsleep || controller.policy.sessionInactive)
+            if enabled { shortcutRegistered = clipboardShortcut.register() }
+            else { clipboardShortcut.unregister(); shortcutRegistered = false }
+        case .apps:
+            appSwitcher.setFeatureEnabled(enabled)
+        case .wallpaper:
+            for task in selections.values { task.cancel() }
+            selections.removeAll(); generations.removeAll(); refreshTask?.cancel()
+            controller.setFeatureEnabled(enabled)
+            if enabled { refreshDisplays() }
+        }
+        updateMenu()
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
