@@ -6,6 +6,10 @@ struct SwitcherApp: Identifiable, Sendable {
     let id: String
     let name: String
     let path: String
+    var displayName: String {
+        let filename = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        return filename != name && filename.localizedCaseInsensitiveContains(name) ? filename : name
+    }
 }
 struct SwitcherBinding: Codable, Equatable {
     var path: String
@@ -245,11 +249,11 @@ final class AppSwitcher: NSObject {
         for (index, app) in items.enumerated() {
             let button = SwitcherIconButton(frame: NSRect(x: startX + CGFloat(index) * 116 * scale, y: 36, width: 108 * scale, height: 150 * scale))
             button.bounds = NSRect(x: 0, y: 0, width: 108, height: 150)
-            button.title = app.name; button.image = NSWorkspace.shared.icon(forFile: app.path)
+            button.title = app.displayName; button.image = NSWorkspace.shared.icon(forFile: app.path)
             button.shortcutText = bindings[app.id]?.shortcut?.label ?? "—"
             button.target = self; button.action = #selector(panelClick(_:)); button.cell?.representedObject = app.id
-            button.toolTip = failures[app.id] ?? app.name + " · " + button.shortcutText
-            button.setAccessibilityLabel(app.name + " · " + button.shortcutText)
+            button.toolTip = failures[app.id] ?? app.displayName + " · " + button.shortcutText
+            button.setAccessibilityLabel(app.displayName + " · " + button.shortcutText)
             button.activeApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.id
             root.addSubview(button)
         }
@@ -299,6 +303,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private let enabled = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private var apps: [SwitcherApp] = []
     private var filtered: [SwitcherApp] = []
+    private var searchIndices: [String: AppSearchIndex] = [:]
     private var scanTask: Task<Void, Never>?
     private let refreshButton = SettingsFeedbackButton()
     private let moveUp = SettingsFeedbackButton()
@@ -317,7 +322,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         enabled.title = AppLanguage.english ? "Show app panel when holding Option" : "长按 Option 显示应用切换面板"
         enabled.state = manager.panelEnabled ? .on : .off
         enabled.target = self; enabled.action = #selector(togglePanel)
-        search.placeholderString = AppLanguage.english ? "Search installed apps" : "搜索应用名称或路径"
+        search.placeholderString = AppLanguage.english ? "Search apps, paths or pinyin" : "搜索应用、路径、拼音或首字母"
         search.delegate = self
         refreshButton.title = AppLanguage.english ? "Refresh apps" : "刷新应用"
         refreshButton.target = self; refreshButton.action = #selector(scan)
@@ -399,6 +404,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         }
     }
     func applyInventory(_ inventory: [SwitcherApp]) {
+        searchIndices.removeAll(keepingCapacity: true)
         apps = inventory
         let ids = Set(inventory.map(\.id))
         apps += manager.bindings.filter { !ids.contains($0.key) }.map { SwitcherApp(id: $0.key, name: $0.value.name, path: $0.value.path) }
@@ -408,7 +414,12 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private func reload() {
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedID = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : nil
-        filtered = manager.orderedApps(apps).filter { query.isEmpty || ($0.name + " " + $0.path).localizedStandardContains(query) }
+        filtered = manager.orderedApps(apps).filter { app in
+            if query.isEmpty { return true }
+            let source = app.displayName + "\n" + app.name + "\n" + app.path
+            if searchIndices[app.id]?.source != source { searchIndices[app.id] = AppSearchIndex(source: source) }
+            return searchIndices[app.id]!.matches(query)
+        }
         table.reloadData()
         if let selectedID, let index = filtered.firstIndex(where: { $0.id == selectedID }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
         else { table.deselectAll(nil) }
@@ -455,7 +466,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
                 let icon = NSImageView(frame: NSRect(x: 3, y: 9, width: 28, height: 28))
                 cell.addSubview(label); cell.addSubview(icon); cell.textField = label; cell.imageView = icon
             }
-            cell.textField?.stringValue = app.name
+            cell.textField?.stringValue = app.displayName
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: app.path)
             cell.toolTip = app.path
             return cell
@@ -486,7 +497,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         button.title = AppLanguage.english ? "Show" : "展示"
         button.state = binding?.showInPanel == true ? .on : .off; button.action = #selector(toggleApp(_:))
         button.toolTip = manager.failures[app.id] ?? app.path
-        button.setAccessibilityLabel(app.name + " · " + column.title)
+        button.setAccessibilityLabel(app.displayName + " · " + column.title)
         return button
     }
     private func app(for sender: NSButton) -> SwitcherApp? {

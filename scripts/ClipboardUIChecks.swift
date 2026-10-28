@@ -184,6 +184,15 @@ struct Preview {
         precondition(switcher.bindings[fixtureApp.id]?.shortcut == bindingKey)
         do { try switcher.configure(SwitcherApp(id: "other", name: "Other", path: "/other.app"), shortcut: bindingKey, show: false); preconditionFailure("Duplicate must fail") } catch {}
         try switcher.setVisibility(fixtureApp, show: true)
+        let appIndex = AppSearchIndex(source: "微信\n/Applications/微信.app")
+        for query in ["微信", "weixin", "WEIX", "wx", "wei xin", "ｗｘ", "Applications wx"] {
+            precondition(appIndex.matches(query), "App search must match \(query)")
+        }
+        precondition(!appIndex.matches("notepad"))
+        precondition(!appIndex.matches("wx missing"))
+        precondition(SwitcherApp(id: "classic", name: "ChatGPT", path: "/Applications/ChatGPT Classic.app").displayName == "ChatGPT Classic")
+        precondition(SwitcherApp(id: "current", name: "ChatGPT", path: "/Applications/ChatGPT.app").displayName == "ChatGPT")
+        print("PASS: app pinyin, initials, mixed-token search and distinct edition names")
         let extraApp = SwitcherApp(id: "test.alpha", name: "Alpha", path: "/System/Applications/Contacts.app")
         let unconfiguredApp = SwitcherApp(id: "test.aaa", name: "AAA", path: "/missing.app")
         try switcher.setVisibility(extraApp, show: true)
