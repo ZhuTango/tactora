@@ -614,6 +614,20 @@ struct Preview {
         }
         print("PASS: alias column input and focus padding stay inside resized cells")
         try settingsSnapshot("settings-app-switcher")
+        appsTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        appsTable.layoutSubtreeIfNeeded()
+        let aliasView = appsTable.view(atColumn: 1, row: 0, makeIfNecessary: true) as! NSTableCellView
+        let shortcutView = appsTable.view(atColumn: 2, row: 0, makeIfNecessary: true)!
+        let shortcutControl = allViews(shortcutView).compactMap { $0 as? SwitcherShortcutRecorder }.first!
+        precondition(abs(aliasView.textField!.frame.height - shortcutControl.frame.height) < 1)
+        precondition(abs(aliasView.textField!.frame.midY - shortcutControl.frame.midY) < 1)
+        unified.window!.makeKeyAndOrderFront(nil)
+        unified.window!.makeFirstResponder(aliasView.textField!)
+        try settingsSnapshot("settings-app-switcher-focused")
+        unified.window!.makeFirstResponder(nil)
+        precondition(unified.window!.appearance?.name == .darkAqua)
+        print("PASS: equal-height aligned app controls and selected/focused layout in the supported dark appearance")
+
         unified.selectSection("general")
         let loginButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.title == "登录 Mac 时自动启动" }!
         loginButton.performClick(nil); precondition(loginState == .enabled && loginButton.state == .on)

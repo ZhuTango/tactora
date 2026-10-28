@@ -363,18 +363,28 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         delayRow.spacing = 12
         delayRow.toolTip = AppLanguage.english ? "0.10–5.00 seconds · Saved automatically" : "0.10–5.00 秒 · 自动保存"
         moveTop.title = AppLanguage.english ? "Move to top" : "置顶"
-        moveTop.image = NSImage(systemSymbolName: "arrow.up.to.line", accessibilityDescription: nil)
-        moveTop.imagePosition = .imageLeading
         moveTop.target = self; moveTop.action = #selector(moveSelectedToTop)
         let orderHint = NSTextField(labelWithString: AppLanguage.english ? "Drag configured apps to reorder · Auto-saved" : "拖拽已配置应用调整顺序 · 自动保存")
         orderHint.textColor = .secondaryLabelColor; orderHint.font = .systemFont(ofSize: 12)
-        let orderRow = NSStackView(views: [orderHint, moveTop]); orderRow.spacing = 12
+        let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let orderRow = NSStackView(views: [orderHint, spacer, moveTop]); orderRow.spacing = 12
+        for button in [refreshButton, addApp, moveTop] {
+            button.alignment = .center
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        }
+        moveTop.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        refreshButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        addApp.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        search.heightAnchor.constraint(equalToConstant: 30).isActive = true
         let top = NSStackView(views: [heading, hint, enabled, delayRow, row, orderRow]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
+        orderRow.widthAnchor.constraint(equalTo: top.widthAnchor).isActive = true
+        row.widthAnchor.constraint(equalTo: top.widthAnchor).isActive = true
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.drawsBackground = false; scroll.borderType = .noBorder
-        table.rowHeight = 52; table.intercellSpacing = NSSize(width: 8, height: 4)
-        table.usesAlternatingRowBackgroundColors = true; table.backgroundColor = .clear
+        table.rowHeight = 48; table.intercellSpacing = NSSize(width: 8, height: 0)
+        table.usesAlternatingRowBackgroundColors = false; table.backgroundColor = .clear
+        table.style = .plain
         table.dataSource = self; table.delegate = self; table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         for (id, title, width) in [("app", AppLanguage.english ? "Application" : "应用", 230.0),
                                     ("alias", AppLanguage.english ? "Display alias" : "显示别名", 170.0),
@@ -515,6 +525,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     }
     @objc private func togglePanel() { manager.panelEnabled = enabled.state == .on }
     func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { AppSwitcherRowView() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard filtered.indices.contains(row), let column = tableColumn else { return nil }
         let app = filtered[row], binding = manager.bindings[app.id]
@@ -525,14 +536,14 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             cell.draggable = canReorder && manager.isConfigured(app.id)
             if cell.textField == nil {
                 let label = NSTextField(labelWithString: "")
-                label.font = .systemFont(ofSize: 13, weight: .medium)
+                label.font = .systemFont(ofSize: 13)
                 label.lineBreakMode = .byTruncatingMiddle
                 let icon = NSImageView()
                 for view in [label, icon] { view.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(view) }
                 NSLayoutConstraint.activate([
                     icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 25),
                     icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                    icon.widthAnchor.constraint(equalToConstant: 28), icon.heightAnchor.constraint(equalToConstant: 28),
+                    icon.widthAnchor.constraint(equalToConstant: 24), icon.heightAnchor.constraint(equalToConstant: 24),
                     label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
                     label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
                     label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
@@ -552,6 +563,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             else {
                 field = AppAliasField()
                 field.translatesAutoresizingMaskIntoConstraints = false
+                field.cell = AppAliasCell(textCell: "")
                 field.font = .systemFont(ofSize: 12)
                 field.isBezeled = true; field.bezelStyle = .roundedBezel
                 field.focusRingType = .exterior; field.delegate = self
@@ -570,7 +582,20 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             return cell
         }
         if key.rawValue == "shortcut" {
-            let recorder = tableView.makeView(withIdentifier: key, owner: self) as? SwitcherShortcutRecorder ?? SwitcherShortcutRecorder()
+            let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
+            cell.identifier = key
+            let recorder: SwitcherShortcutRecorder
+            if let existing = cell.subviews.compactMap({ $0 as? SwitcherShortcutRecorder }).first { recorder = existing }
+            else {
+                recorder = SwitcherShortcutRecorder()
+                recorder.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(recorder)
+                NSLayoutConstraint.activate([
+                    recorder.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                    recorder.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                    recorder.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    recorder.heightAnchor.constraint(equalToConstant: 28)
+                ])
+            }
             recorder.cancelRecording()
             recorder.identifier = key
             recorder.title = binding?.shortcut?.label ?? (AppLanguage.english ? "Click to record" : "点击录入快捷键")
@@ -587,16 +612,28 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
                     self.status.stringValue = error.localizedDescription
                 }
             }
-            return recorder
+            return cell
         }
-        let button = tableView.makeView(withIdentifier: key, owner: self) as? NSButton
-            ?? NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
+        cell.identifier = key
+        let button: NSButton
+        if let existing = cell.subviews.compactMap({ $0 as? NSButton }).first { button = existing }
+        else {
+            button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+            button.font = .systemFont(ofSize: 12)
+            button.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                button.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8)
+            ])
+        }
         button.identifier = key; button.cell?.representedObject = app.id; button.target = self
         button.title = AppLanguage.english ? "Show" : "展示"
         button.state = binding?.showInPanel == true ? .on : .off; button.action = #selector(toggleApp(_:))
         button.toolTip = manager.failures[app.id] ?? app.path
         button.setAccessibilityLabel(app.displayName + " · " + column.title)
-        return button
+        return cell
     }
     private func app(for sender: NSButton) -> SwitcherApp? {
         guard let id = sender.cell?.representedObject as? String else { return nil }
@@ -615,16 +652,39 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
 final class SwitcherShortcutRecorder: NSButton {
     private(set) var isRecording = false
     private var previousTitle = ""
+    private var hoverArea: NSTrackingArea?
+    private var hovered = false
     private var monitor: Any?
     private var observers: [NSObjectProtocol] = []
     var onRecord: ((ClipboardShortcut?) -> Void)?
     var onRecordingChanged: ((Bool) -> Void)?
     override init(frame: NSRect) {
         super.init(frame: frame)
-        bezelStyle = .rounded; target = self; action = #selector(beginRecording)
+        isBordered = false; target = self; action = #selector(beginRecording)
+        font = .systemFont(ofSize: 12); alignment = .center
         focusRingType = .exterior
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.14 : hovered ? 0.10 : 0.05).setFill(); shape.fill()
+        (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke(); shape.lineWidth = 1; shape.stroke()
+        let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center; paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [.font: font ?? NSFont.systemFont(ofSize: 12), .foregroundColor: isRecording ? NSColor.controlAccentColor : NSColor.labelColor, .paragraphStyle: paragraph]
+        let height = (title as NSString).size(withAttributes: attributes).height
+        (title as NSString).draw(in: NSRect(x: 10, y: (bounds.height - height) / 2, width: max(0, bounds.width - 20), height: height), withAttributes: attributes)
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill() }
     @objc func beginRecording() {
         if isRecording { cancelRecording(); return }
         guard window != nil else { return }
@@ -701,4 +761,40 @@ private final class AppDragCell: NSTableCellView {
     }
     override func mouseEntered(with event: NSEvent) { grip.alphaValue = 1 }
     override func mouseExited(with event: NSEvent) { grip.alphaValue = 0.45 }
+}
+
+@MainActor
+private final class AppAliasCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var result = super.drawingRect(forBounds: rect)
+        let font = font ?? .systemFont(ofSize: 12)
+        let height = ceil(font.ascender - font.descender + font.leading)
+        result.origin.y = rect.midY - height / 2
+        result.size.height = height
+        return result
+    }
+}
+
+@MainActor
+private final class AppSwitcherRowView: NSTableRowView {
+    private var hoverArea: NSTrackingArea?
+    private var hovered = false
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+    override func drawBackground(in dirtyRect: NSRect) {
+        NSColor.labelColor.withAlphaComponent(hovered ? 0.065 : 0.025).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 3), xRadius: 7, yRadius: 7).fill()
+    }
+    override func drawSelection(in dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 3), xRadius: 7, yRadius: 7)
+        NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.15 : 0.09).setFill(); shape.fill()
+        NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.65 : 0.35).setStroke(); shape.lineWidth = 1; shape.stroke()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
 }
