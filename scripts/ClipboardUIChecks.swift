@@ -184,9 +184,31 @@ struct Preview {
         precondition(switcher.bindings[fixtureApp.id]?.shortcut == bindingKey)
         do { try switcher.configure(SwitcherApp(id: "other", name: "Other", path: "/other.app"), shortcut: bindingKey, show: false); preconditionFailure("Duplicate must fail") } catch {}
         try switcher.setVisibility(fixtureApp, show: true)
+        let extraApp = SwitcherApp(id: "test.alpha", name: "Alpha", path: "/System/Applications/Contacts.app")
+        let unconfiguredApp = SwitcherApp(id: "test.aaa", name: "AAA", path: "/missing.app")
+        try switcher.setVisibility(extraApp, show: true)
+        precondition(switcher.orderedApps([unconfiguredApp, fixtureApp, extraApp]).map(\.id) == [extraApp.id, fixtureApp.id, unconfiguredApp.id])
+        switcher.moveConfigured(fixtureApp.id, offset: -1)
+        precondition(switcher.orderedApps([unconfiguredApp, extraApp, fixtureApp]).map(\.id) == [fixtureApp.id, extraApp.id, unconfiguredApp.id])
+        precondition(AppSwitcher(defaults: switcherDefaults, start: false).panelItems.map(\.id) == [fixtureApp.id, extraApp.id])
+        try switcher.setVisibility(fixtureApp, show: false)
+        precondition(switcher.orderedApps([extraApp, fixtureApp]).first?.id == fixtureApp.id)
+        precondition(switcher.panelItems.map(\.id) == [extraApp.id])
+        try switcher.setVisibility(fixtureApp, show: true)
         let hintPanel = switcher.makePanel()
         precondition(hintPanel.styleMask.contains(.nonactivatingPanel))
-        precondition(hintPanel.frame.height == 114)
+        precondition(hintPanel.frame.width > hintPanel.frame.height)
+        let switcherScroll = hintPanel.contentView!.subviews.compactMap { $0 as? NSScrollView }.first!
+        precondition(switcherScroll.hasHorizontalScroller && !switcherScroll.hasVerticalScroller)
+        let iconButtons = switcherScroll.documentView!.subviews.compactMap { $0 as? SwitcherIconButton }
+        precondition(iconButtons.map { $0.cell?.representedObject as? String } == [fixtureApp.id, extraApp.id])
+        precondition(iconButtons.first?.shortcutText == bindingKey.label)
+        let preview = hintPanel.contentView!
+        preview.layoutSubtreeIfNeeded(); preview.displayIfNeeded()
+        let switcherBitmap = preview.bitmapImageRepForCachingDisplay(in: preview.bounds)!
+        preview.cacheDisplay(in: preview.bounds, to: switcherBitmap)
+        try switcherBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/switcher-panel.png"))
+        print("PASS: configured-first ordering, persistent reordering, panel filtering and horizontal icon layout")
         hintPanel.close()
         let savedBindings = switcher.bindings
         switcher.setFeatureEnabled(false)

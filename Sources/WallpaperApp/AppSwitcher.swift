@@ -106,6 +106,39 @@ final class AppSwitcher: NSObject {
         }
         return found.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
+    func isConfigured(_ id: String) -> Bool {
+        guard let binding = bindings[id] else { return false }
+        return binding.showInPanel || binding.shortcut != nil
+    }
+    func orderedApps(_ apps: [SwitcherApp]) -> [SwitcherApp] {
+        let saved = defaults.stringArray(forKey: "appSwitcherOrder") ?? []
+        var ranks: [String: Int] = [:]
+        for (index, id) in saved.enumerated() where ranks[id] == nil { ranks[id] = index }
+        return apps.sorted { lhs, rhs in
+            let a = isConfigured(lhs.id), b = isConfigured(rhs.id)
+            if a != b { return a }
+            if a {
+                let x = ranks[lhs.id] ?? Int.max, y = ranks[rhs.id] ?? Int.max
+                if x != y { return x < y }
+            }
+            let comparison = lhs.name.localizedStandardCompare(rhs.name)
+            return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
+        }
+    }
+    var configuredApps: [SwitcherApp] {
+        orderedApps(bindings.map { SwitcherApp(id: $0.key, name: $0.value.name, path: $0.value.path) }).filter { isConfigured($0.id) }
+    }
+    var panelItems: [SwitcherApp] { configuredApps.filter { bindings[$0.id]?.showInPanel == true } }
+    func moveConfigured(_ id: String, offset: Int) {
+        guard loadError == nil, offset == -1 || offset == 1 else { return }
+        var ids = configuredApps.map(\.id)
+        guard let index = ids.firstIndex(of: id), ids.indices.contains(index + offset) else { return }
+        ids.swapAt(index, index + offset)
+        // Retain inactive entries' positions for later re-enabling, after active entries.
+        let dormant = (defaults.stringArray(forKey: "appSwitcherOrder") ?? []).filter { !ids.contains($0) }
+        defaults.set(ids + dormant, forKey: "appSwitcherOrder")
+        panel?.orderOut(nil); panel = nil; onChange?()
+    }
     @discardableResult
     private func install(_ value: ClipboardShortcut, id: String) -> Bool {
         let hotkey = shortcuts[id] ?? GlobalClipboardShortcut()
@@ -183,37 +216,77 @@ final class AppSwitcher: NSObject {
         if let frame = screen?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.midY - panel.frame.height / 2))
         }
+        if let scroll = panel.contentView?.subviews.compactMap({ $0 as? NSScrollView }).first {
+            for button in scroll.documentView?.subviews.compactMap({ $0 as? SwitcherIconButton }) ?? [] {
+                button.activeApp = button.cell?.representedObject as? String == NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            }
+        }
         panel.orderFrontRegardless()
     }
     func makePanel() -> NSPanel {
-        let items = bindings.sorted { $0.value.name.localizedStandardCompare($1.value.name) == .orderedAscending }.filter { $0.value.showInPanel }
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: min(540, 72 + items.count * 42)),
+        let items = panelItems
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        let width = min(max(280, CGFloat(items.count) * 116 + 40), min(1040, (screen?.visibleFrame.width ?? 1120) - 64))
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: 202),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.hasShadow = true; panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let root = NSView(); root.wantsLayer = true; root.layer?.cornerRadius = 16
-        root.layer?.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 0.98).cgColor
-        root.layer?.masksToBounds = true; panel.contentView = root; panel.appearance = NSAppearance(named: .darkAqua)
-        let title = NSTextField(labelWithString: AppLanguage.english ? "App Switcher · Hold ⌥" : "应用切换 · 按住 ⌥")
-        title.font = .systemFont(ofSize: 16, weight: .semibold); title.frame = NSRect(x: 20, y: panel.frame.height - 42, width: 380, height: 24)
-        root.addSubview(title)
-        let scroll = NSScrollView(frame: NSRect(x: 12, y: 12, width: 396, height: panel.frame.height - 64))
-        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-        let document = SwitcherFlippedView(frame: NSRect(x: 0, y: 0, width: 380, height: items.count * 42))
-        for (index, item) in items.enumerated() {
-            let button = SettingsFeedbackButton(title: item.value.name + "   " + (item.value.shortcut?.label ?? "—"), target: self, action: #selector(panelClick(_:)))
-            button.frame = NSRect(x: 0, y: index * 42, width: 380, height: 36)
-            button.cell?.representedObject = item.key
-            button.toolTip = failures[item.key] ?? item.value.path
+        panel.appearance = NSAppearance(named: .darkAqua)
+        let root = NSVisualEffectView(); root.material = .hudWindow; root.blendingMode = .behindWindow; root.state = .active
+        root.wantsLayer = true; root.layer?.cornerRadius = 24; root.layer?.masksToBounds = true
+        panel.contentView = root
+        let scroll = NSScrollView(frame: NSRect(x: 20, y: 36, width: width - 40, height: 150))
+        scroll.drawsBackground = false; scroll.hasHorizontalScroller = true; scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
+        let document = NSView(frame: NSRect(x: 0, y: 0, width: max(width - 40, CGFloat(items.count) * 116), height: 150))
+        for (index, app) in items.enumerated() {
+            let button = SwitcherIconButton(frame: NSRect(x: CGFloat(index) * 116, y: 0, width: 108, height: 150))
+            button.title = app.name; button.image = NSWorkspace.shared.icon(forFile: app.path)
+            button.shortcutText = bindings[app.id]?.shortcut?.label ?? "—"
+            button.target = self; button.action = #selector(panelClick(_:)); button.cell?.representedObject = app.id
+            button.toolTip = failures[app.id] ?? app.name + " · " + button.shortcutText
+            button.setAccessibilityLabel(app.name + " · " + button.shortcutText)
+            button.activeApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.id
             document.addSubview(button)
         }
-        scroll.documentView = document; root.addSubview(scroll); return panel
+        scroll.documentView = document; root.addSubview(scroll)
+        let hint = NSTextField(labelWithString: AppLanguage.english ? "Hold ⌥ · Click an app or use its shortcut" : "按住 ⌥ · 点击应用或按快捷键切换")
+        hint.font = .systemFont(ofSize: 11); hint.textColor = .white.withAlphaComponent(0.75); hint.alignment = .center
+        hint.frame = NSRect(x: 12, y: 12, width: width - 24, height: 16)
+        root.addSubview(hint)
+        return panel
     }
     @objc private func panelClick(_ sender: NSButton) { if let id = sender.cell?.representedObject as? String { activate(id) } }
 }
 
-private final class SwitcherFlippedView: NSView { override var isFlipped: Bool { true } }
+@MainActor
+final class SwitcherIconButton: NSButton {
+    var shortcutText = "" { didSet { needsDisplay = true } }
+    var activeApp = false { didSet { needsDisplay = true } }
+    private var hovered = false
+    private var hoverArea: NSTrackingArea?
+    override init(frame: NSRect) { super.init(frame: frame); isBordered = false; setButtonType(.momentaryChange) }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        if hovered || activeApp || isHighlighted {
+            NSColor.white.withAlphaComponent(isHighlighted ? 0.24 : hovered ? 0.18 : 0.10).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 15, yRadius: 15).fill()
+        }
+        image?.draw(in: NSRect(x: 18, y: 12, width: 72, height: 72), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center; paragraph.lineBreakMode = .byTruncatingTail
+        (title as NSString).draw(in: NSRect(x: 4, y: 92, width: 100, height: 20), withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
+        (shortcutText as NSString).draw(in: NSRect(x: 3, y: 118, width: 102, height: 20), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .paragraphStyle: paragraph])
+    }
+}
 
 @MainActor
 final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
@@ -226,6 +299,8 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private var filtered: [SwitcherApp] = []
     private var scanTask: Task<Void, Never>?
     private let refreshButton = SettingsFeedbackButton()
+    private let moveUp = SettingsFeedbackButton()
+    private let moveDown = SettingsFeedbackButton()
     private let delaySlider = NSSlider(value: 0.45, minValue: 0.1, maxValue: 5, target: nil, action: nil)
     private let delayLabel = NSTextField(labelWithString: "")
     init(manager: AppSwitcher) {
@@ -258,7 +333,14 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         let delayRow = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Hold delay" : "长按响应时间"), delaySlider, delayLabel])
         delayRow.spacing = 12
         delayRow.toolTip = AppLanguage.english ? "0.10–5.00 seconds · Saved automatically" : "0.10–5.00 秒 · 自动保存"
-        let top = NSStackView(views: [heading, hint, enabled, delayRow, row]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
+        moveUp.title = AppLanguage.english ? "Move up" : "↑ 上移"
+        moveDown.title = AppLanguage.english ? "Move down" : "↓ 下移"
+        moveUp.target = self; moveUp.action = #selector(reorderApp(_:)); moveUp.tag = -1
+        moveDown.target = self; moveDown.action = #selector(reorderApp(_:)); moveDown.tag = 1
+        let orderHint = NSTextField(labelWithString: AppLanguage.english ? "Configured apps first · Select a row to reorder" : "已配置应用置顶 · 选中一行调整顺序")
+        orderHint.textColor = .secondaryLabelColor; orderHint.font = .systemFont(ofSize: 12)
+        let orderRow = NSStackView(views: [orderHint, moveUp, moveDown]); orderRow.spacing = 12
+        let top = NSStackView(views: [heading, hint, enabled, delayRow, row, orderRow]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.drawsBackground = false; scroll.borderType = .noBorder
@@ -323,11 +405,30 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     func controlTextDidChange(_ obj: Notification) { reload() }
     private func reload() {
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        filtered = apps.filter { query.isEmpty || ($0.name + " " + $0.path).localizedStandardContains(query) }
+        let selectedID = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : nil
+        filtered = manager.orderedApps(apps).filter { query.isEmpty || ($0.name + " " + $0.path).localizedStandardContains(query) }
         table.reloadData()
+        if let selectedID, let index = filtered.firstIndex(where: { $0.id == selectedID }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
+        else { table.deselectAll(nil) }
+        updateOrderButtons()
         status.stringValue = manager.loadError ?? (AppLanguage.english
             ? "\(filtered.count) apps · Click to record · Esc cancels · Backspace clears · Auto-saved"
             : "\(filtered.count) 个应用 · 点击录入 · Esc 取消 · Backspace 清除 · 配置自动保存")
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) { updateOrderButtons() }
+    private func updateOrderButtons() {
+        let ids = manager.configuredApps.map(\.id)
+        let id = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : ""
+        let index = ids.firstIndex(of: id)
+        let canMove = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        moveUp.isEnabled = canMove && (index ?? 0) > 0
+        moveDown.isEnabled = canMove && index != nil && index! + 1 < ids.count
+        moveUp.toolTip = AppLanguage.english ? "Clear search to reorder configured apps" : "清空搜索后调整已配置应用的顺序"
+        moveDown.toolTip = moveUp.toolTip
+    }
+    @objc private func reorderApp(_ sender: NSButton) {
+        guard filtered.indices.contains(table.selectedRow), search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        manager.moveConfigured(filtered[table.selectedRow].id, offset: sender.tag)
     }
     private func updateDelayLabel() {
         delayLabel.stringValue = String(format: "%.2f %@", manager.holdDelay, AppLanguage.english ? "s" : "秒")
