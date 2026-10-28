@@ -50,7 +50,7 @@ final class AppSwitcher: NSObject {
         get { Self.validDelay(defaults.object(forKey: "appSwitcherHoldDelay") as? Double ?? 0.45) }
         set {
             defaults.set(Self.validDelay(newValue), forKey: "appSwitcherHoldDelay")
-            hold = OptionHoldState(); panel?.orderOut(nil)
+            hold = OptionHoldState(); hidePanelIfVisible()
         }
     }
     private static func validDelay(_ value: Double) -> Double {
@@ -143,7 +143,7 @@ final class AppSwitcher: NSObject {
         // Retain inactive entries' positions for later re-enabling, after active entries.
         let dormant = (defaults.stringArray(forKey: "appSwitcherOrder") ?? []).filter { !ids.contains($0) }
         defaults.set(ids + dormant, forKey: "appSwitcherOrder")
-        panel?.orderOut(nil); panel = nil; onChange?()
+        hidePanelIfVisible(); panel = nil; onChange?()
     }
     func moveConfigured(_ id: String, before target: String?) {
         guard loadError == nil else { return }
@@ -154,7 +154,7 @@ final class AppSwitcher: NSObject {
         ids.insert(id, at: insertion)
         let dormant = (defaults.stringArray(forKey: "appSwitcherOrder") ?? []).filter { !ids.contains($0) }
         defaults.set(ids + dormant, forKey: "appSwitcherOrder")
-        panel?.orderOut(nil); panel = nil; onChange?()
+        hidePanelIfVisible(); panel = nil; onChange?()
     }
     @discardableResult
     private func install(_ value: ClipboardShortcut, id: String) -> Bool {
@@ -175,7 +175,7 @@ final class AppSwitcher: NSObject {
         } else { shortcuts.removeValue(forKey: app.id); failures.removeValue(forKey: app.id) }
         bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show, alias: bindings[app.id]?.alias)
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
-        panel?.orderOut(nil); panel = nil; updateTimer(); onChange?()
+        hidePanelIfVisible(); panel = nil; updateTimer(); onChange?()
     }
     func setVisibility(_ app: SwitcherApp, show: Bool) throws {
         if let loadError { throw error(loadError) }
@@ -183,7 +183,7 @@ final class AppSwitcher: NSObject {
         binding.showInPanel = show; binding.name = app.name; binding.path = app.path
         bindings[app.id] = binding
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
-        panel?.orderOut(nil); panel = nil; updateTimer(); onChange?()
+        hidePanelIfVisible(); panel = nil; updateTimer(); onChange?()
     }
     func displayName(for app: SwitcherApp) -> String { bindings[app.id]?.alias ?? app.displayName }
     func setAlias(_ app: SwitcherApp, alias: String) throws {
@@ -193,7 +193,7 @@ final class AppSwitcher: NSObject {
         binding.alias = trimmed.isEmpty ? nil : trimmed
         bindings[app.id] = binding
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
-        panel?.orderOut(nil); panel = nil; onChange?()
+        hidePanelIfVisible(); panel = nil; onChange?()
     }
     func containsShortcut(_ value: ClipboardShortcut) -> Bool {
         featureEnabled && bindings.values.contains { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }
@@ -202,7 +202,7 @@ final class AppSwitcher: NSObject {
     func activate(_ id: String) {
         guard featureEnabled else { return }
         guard let binding = bindings[id] else { return }
-        hold.suppress(); panel?.orderOut(nil)
+        hold.suppress(); hidePanelIfVisible()
         let url = URL(fileURLWithPath: binding.path)
         guard FileManager.default.fileExists(atPath: url.path) else { failures[id] = "应用已移动或卸载，请刷新列表重新配置"; onChange?(); return }
         if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
@@ -220,27 +220,31 @@ final class AppSwitcher: NSObject {
         featureEnabled = enabled
         if enabled {
             for (id, binding) in bindings { if let key = binding.shortcut { install(key, id: id) } }
-        } else { shortcuts.removeAll(); panel?.orderOut(nil); panel = nil }
+        } else { shortcuts.removeAll(); hidePanelIfVisible(); panel = nil }
         updateTimer()
     }
-    func pausePanel(_ value: Bool) { configurationOpen = value; hold.suppress(); panel?.orderOut(nil) }
+    func pausePanel(_ value: Bool) { configurationOpen = value; hold.suppress(); hidePanelIfVisible() }
     private func updateTimer() {
-        timer?.invalidate(); timer = nil; panel?.orderOut(nil); hold = OptionHoldState()
+        timer?.invalidate(); timer = nil; hidePanelIfVisible(); hold = OptionHoldState()
         guard featureEnabled, panelEnabled, bindings.values.contains(where: \.showInPanel) else { return }
         let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            MainActor.assumeIsolated { self?.tick() }
         }
         timer.tolerance = 0.04
         RunLoop.main.add(timer, forMode: .common); self.timer = timer
     }
+    private func hidePanelIfVisible() {
+        guard let panel, panel.isVisible else { return }
+        panel.orderOut(nil)
+    }
     private func tick() {
         let flags = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
         let visible = hold.visible(optionOnly: flags == .option, now: ProcessInfo.processInfo.systemUptime, delay: holdDelay)
-        guard featureEnabled, visible, !configurationOpen else { panel?.orderOut(nil); return }
+        guard featureEnabled, visible, !configurationOpen else { hidePanelIfVisible(); return }
         let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
         let screenWidth = screen?.visibleFrame.width ?? 1120
         if panel == nil || panelScreenWidth != screenWidth {
-            panel?.orderOut(nil)
+            hidePanelIfVisible()
             panel = makePanel(availableWidth: screenWidth)
             panelScreenWidth = screenWidth
         }
