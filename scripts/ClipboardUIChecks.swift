@@ -622,9 +622,17 @@ struct Preview {
         precondition(abs(aliasView.textField!.frame.height - shortcutControl.frame.height) < 1)
         precondition(abs(aliasView.textField!.frame.midY - shortcutControl.frame.midY) < 1)
         unified.window!.makeKeyAndOrderFront(nil)
-        unified.window!.makeFirstResponder(aliasView.textField!)
+        precondition(aliasView.textField!.isEditable && aliasView.textField!.isSelectable, "Alias cell must remain editable after custom cell replacement")
+        precondition(unified.window!.makeFirstResponder(aliasView.textField!))
+        guard let aliasEditor = aliasView.textField!.currentEditor() as? NSTextView else { preconditionFailure("Alias must acquire a field editor") }
+        aliasEditor.insertText("编辑验证", replacementRange: NSRange(location: 0, length: aliasEditor.string.utf16.count))
         try settingsSnapshot("settings-app-switcher-focused")
         unified.window!.makeFirstResponder(nil)
+        precondition(switcher.bindings[extraApp.id]?.alias == "编辑验证", "Leaving alias editor must save typed text")
+        precondition(AppSwitcher(defaults: switcherDefaults, start: false).bindings[extraApp.id]?.alias == "编辑验证")
+        precondition(AppSearchIndex(source: switcher.displayName(for: extraApp)).matches("bjyz"))
+        try switcher.setAlias(extraApp, alias: "")
+        print("PASS: alias field accepts typed text, saves on blur, reloads and matches pinyin")
         precondition(unified.window!.appearance?.name == .darkAqua)
         print("PASS: equal-height aligned app controls and selected/focused layout in the supported dark appearance")
 

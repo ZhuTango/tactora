@@ -568,6 +568,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
                 field = AppAliasField()
                 field.translatesAutoresizingMaskIntoConstraints = false
                 field.cell = AppAliasCell(textCell: "")
+                field.isEditable = true; field.isSelectable = true
                 field.font = .systemFont(ofSize: 12)
                 field.isBezeled = true; field.bezelStyle = .roundedBezel
                 field.focusRingType = .exterior; field.delegate = self
