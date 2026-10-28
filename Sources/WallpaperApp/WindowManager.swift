@@ -18,7 +18,7 @@ extension WindowLayout {
             .topLeft: (kVK_ANSI_U, "U"), .topRight: (kVK_ANSI_I, "I"),
             .bottomLeft: (kVK_ANSI_J, "J"), .bottomRight: (kVK_ANSI_K, "K"),
             .center: (kVK_ANSI_C, "C"), .restore: (kVK_ANSI_R, "R"), .fullscreen: (kVK_ANSI_F, "F"),
-            .previousDisplay: (kVK_ANSI_P, "P"), .nextDisplay: (kVK_ANSI_N, "N")]
+            .previousDisplay: (kVK_ANSI_LeftBracket, "["), .nextDisplay: (kVK_ANSI_RightBracket, "]")]
         guard let key = keys[self] else { return nil }
         return ClipboardShortcut(keyCode: UInt32(key.0), modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘" + key.1)
     }
@@ -40,6 +40,14 @@ final class WindowManager {
         if let data = defaults.data(forKey: "windowLayoutShortcuts") {
             if let saved = try? JSONDecoder().decode([String: ClipboardShortcut].self, from: data), saved.values.allSatisfy(\.isValid) {
                 bindings = saved
+                // Migrate only the former default pair; retain cleared/custom/colliding bindings.
+                for (action, key): (WindowLayout, Int) in [(.previousDisplay, kVK_ANSI_P), (.nextDisplay, kVK_ANSI_N)] where !defaults.bool(forKey: "windowAdjacentKeysMigrated") {
+                    if let old = bindings[action.rawValue], old.keyCode == UInt32(key),
+                       old.modifiers == UInt32(controlKey | optionKey | cmdKey),
+                       let replacement = action.defaultShortcut, !contains(replacement) {
+                        bindings[action.rawValue] = replacement
+                    }
+                }
                 // Only new actions receive defaults during migration; absent old actions stay cleared.
                 let known = Set(defaults.stringArray(forKey: "windowLayoutKnownActions") ?? WindowLayout.allCases.filter { $0 != .previousDisplay && $0 != .nextDisplay }.map(\.rawValue))
                 for action in WindowLayout.allCases where !known.contains(action.rawValue) && bindings[action.rawValue] == nil {
@@ -87,6 +95,7 @@ final class WindowManager {
         bindings[action.rawValue] = value
         defaults.set(try JSONEncoder().encode(bindings), forKey: "windowLayoutShortcuts")
         defaults.set(WindowLayout.allCases.map(\.rawValue), forKey: "windowLayoutKnownActions")
+        defaults.set(true, forKey: "windowAdjacentKeysMigrated")
         status = ""; onChange?()
     }
     private func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {

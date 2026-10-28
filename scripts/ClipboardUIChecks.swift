@@ -578,6 +578,22 @@ struct Preview {
         precondition(Set(combinations).count == WindowLayout.allCases.count)
         precondition(windowManager.shortcut(.maximize)?.label == "⌃⌥⌘M")
         precondition(windowManager.shortcut(.left)?.keyCode == 123)
+        precondition(windowManager.shortcut(.previousDisplay)?.label == "⌃⌥⌘[")
+        precondition(windowManager.shortcut(.nextDisplay)?.label == "⌃⌥⌘]")
+        let migrationName = "window.migration." + UUID().uuidString
+        let migrationDefaults = UserDefaults(suiteName: migrationName)!
+        defer { migrationDefaults.removePersistentDomain(forName: migrationName) }
+        let legacyPair = ["previousDisplay": ClipboardShortcut(keyCode: UInt32(kVK_ANSI_P), modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘P"),
+                          "nextDisplay": ClipboardShortcut(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘N")]
+        migrationDefaults.set(try JSONEncoder().encode(legacyPair), forKey: "windowLayoutShortcuts")
+        let migrated = WindowManager(defaults: migrationDefaults)
+        precondition(migrated.shortcut(.previousDisplay)?.label == "⌃⌥⌘[")
+        precondition(migrated.shortcut(.nextDisplay)?.label == "⌃⌥⌘]")
+        for (keyCode, character) in [(UInt16(kVK_ANSI_LeftBracket), "["), (UInt16(kVK_ANSI_RightBracket), "]")] {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option, .command], timestamp: 0, windowNumber: 0, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: keyCode)!
+            precondition(ClipboardShortcut.from(event)?.label == "⌃⌥⌘" + character)
+        }
+        print("PASS: adjacent display shortcut defaults, legacy migration and bracket recording")
         let customWindowShortcut = ClipboardShortcut(keyCode: 8, modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘C")
         try windowManager.configure(.center, shortcut: customWindowShortcut)
         precondition(WindowManager(defaults: switcherDefaults).shortcut(.center) == customWindowShortcut)

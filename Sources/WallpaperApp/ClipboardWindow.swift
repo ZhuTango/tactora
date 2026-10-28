@@ -22,7 +22,7 @@ struct ClipboardShortcut: Codable, Equatable {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard !flags.intersection([.command, .control, .option]).isEmpty,
               let key = event.charactersIgnoringModifiers?.lowercased(), key.count == 1,
-              "abcdefghijklmnopqrstuvwxyz0123456789 ".contains(key) || [123, 124, 125, 126].contains(Int(event.keyCode)) else { return nil }
+              "abcdefghijklmnopqrstuvwxyz0123456789 []".contains(key) || [123, 124, 125, 126].contains(Int(event.keyCode)) else { return nil }
         var modifiers: UInt32 = 0
         var label = ""
         for (flag, carbon, glyph): (NSEvent.ModifierFlags, Int, String) in [(.control, controlKey, "⌃"), (.option, optionKey, "⌥"), (.shift, shiftKey, "⇧"), (.command, cmdKey, "⌘")] {
