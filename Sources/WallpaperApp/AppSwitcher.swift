@@ -16,6 +16,7 @@ struct SwitcherBinding: Codable, Equatable {
     var name: String
     var shortcut: ClipboardShortcut?
     var showInPanel = false
+    var alias: String?
 }
 
 // No keyboard content is captured: only the current modifier state is sampled.
@@ -161,7 +162,7 @@ final class AppSwitcher: NSObject {
             }
             guard !featureEnabled || install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }
         } else { shortcuts.removeValue(forKey: app.id); failures.removeValue(forKey: app.id) }
-        bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show)
+        bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show, alias: bindings[app.id]?.alias)
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
         panel?.orderOut(nil); panel = nil; updateTimer(); onChange?()
     }
@@ -172,6 +173,16 @@ final class AppSwitcher: NSObject {
         bindings[app.id] = binding
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
         panel?.orderOut(nil); panel = nil; updateTimer(); onChange?()
+    }
+    func displayName(for app: SwitcherApp) -> String { bindings[app.id]?.alias ?? app.displayName }
+    func setAlias(_ app: SwitcherApp, alias: String) throws {
+        if let loadError { throw error(loadError) }
+        var binding = bindings[app.id] ?? SwitcherBinding(path: app.path, name: app.name)
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        binding.alias = trimmed.isEmpty ? nil : trimmed
+        bindings[app.id] = binding
+        defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
+        panel?.orderOut(nil); panel = nil; onChange?()
     }
     func containsShortcut(_ value: ClipboardShortcut) -> Bool {
         featureEnabled && bindings.values.contains { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }
@@ -249,11 +260,11 @@ final class AppSwitcher: NSObject {
         for (index, app) in items.enumerated() {
             let button = SwitcherIconButton(frame: NSRect(x: startX + CGFloat(index) * 116 * scale, y: 36, width: 108 * scale, height: 150 * scale))
             button.bounds = NSRect(x: 0, y: 0, width: 108, height: 150)
-            button.title = app.displayName; button.image = NSWorkspace.shared.icon(forFile: app.path)
+            button.title = displayName(for: app); button.image = NSWorkspace.shared.icon(forFile: app.path)
             button.shortcutText = bindings[app.id]?.shortcut?.label ?? "—"
             button.target = self; button.action = #selector(panelClick(_:)); button.cell?.representedObject = app.id
-            button.toolTip = failures[app.id] ?? app.displayName + " · " + button.shortcutText
-            button.setAccessibilityLabel(app.displayName + " · " + button.shortcutText)
+            button.toolTip = failures[app.id] ?? displayName(for: app) + " · " + button.shortcutText
+            button.setAccessibilityLabel(displayName(for: app) + " · " + button.shortcutText)
             button.activeApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.id
             root.addSubview(button)
         }
@@ -410,13 +421,20 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         apps += manager.bindings.filter { !ids.contains($0.key) }.map { SwitcherApp(id: $0.key, name: $0.value.name, path: $0.value.path) }
         reload()
     }
-    func controlTextDidChange(_ obj: Notification) { reload() }
+    func controlTextDidChange(_ obj: Notification) {
+        if obj.object as? NSSearchField === search { reload() }
+    }
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? AppAliasField, let app = apps.first(where: { $0.id == field.appID }) else { return }
+        do { try manager.setAlias(app, alias: field.stringValue) }
+        catch { showError(error); reload() }
+    }
     private func reload() {
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedID = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : nil
         filtered = manager.orderedApps(apps).filter { app in
             if query.isEmpty { return true }
-            let source = app.displayName + "\n" + app.name + "\n" + app.path
+            let source = manager.displayName(for: app) + "\n" + app.displayName + "\n" + app.name + "\n" + app.path
             if searchIndices[app.id]?.source != source { searchIndices[app.id] = AppSearchIndex(source: source) }
             return searchIndices[app.id]!.matches(query)
         }
@@ -461,12 +479,23 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
             cell.identifier = key
             if cell.textField == nil {
-                let label = NSTextField(labelWithString: ""); label.frame = NSRect(x: 36, y: 12, width: 265, height: 20)
+                let label = NSTextField(labelWithString: ""); label.frame = NSRect(x: 36, y: 25, width: 265, height: 18)
                 label.autoresizingMask = [.width]; label.lineBreakMode = .byTruncatingMiddle
                 let icon = NSImageView(frame: NSRect(x: 3, y: 9, width: 28, height: 28))
-                cell.addSubview(label); cell.addSubview(icon); cell.textField = label; cell.imageView = icon
+                let alias = AppAliasField(frame: NSRect(x: 36, y: 2, width: 265, height: 21))
+                alias.autoresizingMask = [.width]; alias.font = .systemFont(ofSize: 12)
+                alias.isBezeled = false; alias.drawsBackground = false; alias.focusRingType = .exterior
+                alias.placeholderString = AppLanguage.english ? "Set display alias…" : "设置显示别名…"
+                alias.delegate = self
+                cell.addSubview(label); cell.addSubview(icon); cell.addSubview(alias)
+                cell.textField = label; cell.imageView = icon
             }
             cell.textField?.stringValue = app.displayName
+            if let field = cell.subviews.compactMap({ $0 as? AppAliasField }).first {
+                field.appID = app.id; field.stringValue = binding?.alias ?? ""
+                field.setAccessibilityLabel(app.displayName + (AppLanguage.english ? " · Display alias" : " · 显示别名"))
+                field.toolTip = AppLanguage.english ? "Return or leave to save; clear to restore the original name" : "回车或离开输入框保存；清空恢复原名称"
+            }
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: app.path)
             cell.toolTip = app.path
             return cell
@@ -573,3 +602,6 @@ final class SwitcherShortcutRecorder: NSButton {
     }
     override func resignFirstResponder() -> Bool { cancelRecording(); return super.resignFirstResponder() }
 }
+
+@MainActor
+private final class AppAliasField: NSTextField { var appID = "" }
