@@ -637,6 +637,17 @@ struct Preview {
         print("PASS: equal-height aligned app controls and selected/focused layout in the supported dark appearance")
 
         unified.selectSection("general")
+        let lidButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == LidSleepPolicy.preferenceKey }!
+        precondition(lidButton.state == .off)
+        var lidChanges = 0
+        unified.onLidSleepChange = { lidChanges += 1 }
+        lidButton.performClick(nil)
+        precondition(lidButton.state == .on && lidChanges == 1)
+        unified.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
+        precondition(lidButton.state == .on, "Lid switch must persist across refresh")
+        lidButton.performClick(nil)
+        precondition(lidButton.state == .off && lidChanges == 2)
+        print("PASS: lid display switch defaults off, persists and sends changes")
         let loginButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.title == "登录 Mac 时自动启动" }!
         loginButton.performClick(nil); precondition(loginState == .enabled && loginButton.state == .on)
         loginButton.performClick(nil); precondition(loginState == .notRegistered && loginButton.state == .off)

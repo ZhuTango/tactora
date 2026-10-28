@@ -5,6 +5,8 @@ import ServiceManagement
 final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTabViewDelegate {
     private var tabs: NSTabView?
     private var allSections: [NSTabViewItem] = []
+    var onLidSleepChange: (() -> Void)?
+    private let lidSleepToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     var onFeatureChange: ((ToolFeature, Bool) -> Void)?
     private var sectionPicker: NSSegmentedControl?
     private var backgroundMenu: NSMenu?
@@ -313,7 +315,17 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             ? "Changes are saved automatically. Wallpaper and clipboard preferences are in the tabs above."
             : AppLanguage.text("设置自动保存。桌面背景与剪贴板设置统一在上方分页中，后续工具也会加入这里。"))
         note.textColor = .secondaryLabelColor
-        let language = settingsCard(AppLanguage.english ? "Appearance" : "显示", [row])
+        lidSleepToggle.title = AppLanguage.english ? "Turn off all displays when lid closes" : "合盖关闭所有屏幕"
+        lidSleepToggle.identifier = NSUserInterfaceItemIdentifier(LidSleepPolicy.preferenceKey)
+        lidSleepToggle.target = self
+        lidSleepToggle.action = #selector(changeLidSleep)
+        let lidNote = NSTextField(wrappingLabelWithString: AppLanguage.english
+            ? "Includes external displays. Applies on MacBooks while Light Tools is running."
+            : "包括外接显示器；仅适用于 MacBook，轻工具运行期间生效。")
+        lidNote.textColor = .secondaryLabelColor
+        lidNote.font = .systemFont(ofSize: 11)
+        let language = settingsCard(AppLanguage.english ? "Appearance & Displays" : "显示", [row, lidSleepToggle, lidNote])
+        lidNote.widthAnchor.constraint(equalTo: language.widthAnchor, constant: -32).isActive = true
         let startup = settingsCard(AppLanguage.english ? "Startup" : "启动", [loginToggle, loginStatus, systemSettings])
         loginStatus.widthAnchor.constraint(equalTo: startup.widthAnchor, constant: -32).isActive = true
         let featureButtons = ToolFeature.allCases.map { feature -> NSView in
@@ -341,7 +353,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         AppLanguage.selection = ["system", "zh-Hans", "en"][languagePicker.indexOfSelectedItem]
         onLanguageChange?()
     }
+    @objc private func changeLidSleep() {
+        defaults.set(lidSleepToggle.state == .on, forKey: LidSleepPolicy.preferenceKey)
+        onLidSleepChange?()
+    }
     private func refreshGeneral() {
+        lidSleepToggle.state = defaults.bool(forKey: LidSleepPolicy.preferenceKey) ? .on : .off
         guard tabs != nil else { return }
         let status = loginAccess.status()
         loginToggle.state = status == .enabled ? .on : status == .requiresApproval ? .mixed : .off

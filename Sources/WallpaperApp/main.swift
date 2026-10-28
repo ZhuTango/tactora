@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let clipboardShortcut = GlobalClipboardShortcut()
     private var shortcutRegistered = false
     private var appSwitcher: AppSwitcher!
+    private let lidDisplaySleep = LidDisplaySleep()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
             return
         }
+        lidDisplaySleep.refresh()
         clipboard = ClipboardStore()
         clipboard.onChange = { [weak self] in self?.clipboardWindow?.refresh(); self?.clipboardSettings?.refresh(); self?.updateMenu() }
         clipboard.setSuspended(!ToolFeature.clipboard.isEnabled())
@@ -51,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         controller.onChange = { [weak self] in self?.updateMenu() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidSleepNotification) { $0.controller.policy.displayAsleep = true }
-        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification) { $0.controller.policy.displayAsleep = false }
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification) { $0.controller.policy.displayAsleep = false; $0.lidDisplaySleep.displaysDidWake() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification) { $0.controller.policy.systemAsleep = true }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification) { $0.controller.policy.systemAsleep = false }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidResignActiveNotification) { $0.controller.policy.sessionInactive = true }
@@ -458,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
             settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher)
+            settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
                 guard let self else { return }
@@ -509,6 +512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         for task in selections.values { task.cancel() }
         refreshTask?.cancel()
+        lidDisplaySleep.stop()
         clipboard?.stop()
         clipboardWindow?.close()
         clipboardSettings?.close()
