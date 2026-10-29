@@ -281,7 +281,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     init(store: ClipboardStore) {
         self.store = store
         let window = ClipboardListPanel(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 350),
-                                        styleMask: [.borderless], backing: .buffered, defer: false)
+                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.title = AppLanguage.text("轻工具 · 剪贴板列表")
         window.minSize = NSSize(width: 680, height: 330)
         window.isReleasedWhenClosed = false
@@ -376,7 +376,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             previousApp = front
         }
-        NSApp.activate(ignoringOtherApps: true)
+        // Take keyboard focus only; activating the app also raises its settings window.
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(search)
         if let surface = window.contentView { ClipboardMotion.fade(surface, duration: 0.22) }
