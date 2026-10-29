@@ -54,8 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         windowManager.setEnabled(ToolFeature.windows.isEnabled())
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "轻工具")
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = ToolIcon.statusImage(awake: false)
         statusItem.button?.toolTip = "轻工具 · 背景与剪贴板"
         menu.delegate = self
         statusItem.menu = menu
@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateMenu() {
         guard controller != nil, clipboard != nil else { return }
         let awake = ToolFeature.awake.isEnabled() && keepAwake.active
-        statusItem?.button?.image = NSImage(systemSymbolName: awake ? "cup.and.saucer.fill" : "square.grid.2x2", accessibilityDescription: awake ? "轻工具 · 防休眠已开启" : "轻工具")
+        statusItem?.button?.image = ToolIcon.statusImage(awake: awake)
         statusItem?.button?.toolTip = awake ? "轻工具 · " + keepAwake.status : "轻工具 · 防休眠未开启"
         statusItem?.button?.setAccessibilityLabel(awake ? "轻工具 · 防休眠已开启" : "轻工具 · 防休眠未开启")
         backgroundMenu.removeAllItems()

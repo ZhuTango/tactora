@@ -278,13 +278,10 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         tabs.delegate = self
         selectSection(selected)
     }
-    @objc private func changeFeature(_ sender: NSButton) {
-        guard let raw = sender.cell?.representedObject as? String, let feature = ToolFeature(rawValue: raw) else { return }
+    @objc private func changeFeature(_ sender: NSSwitch) {
+        guard let raw = sender.identifier?.rawValue.replacingOccurrences(of: "toolEnabled.", with: ""),
+              let feature = ToolFeature(rawValue: raw) else { return }
         let enabled = sender.state == .on
-        if let button = sender as? SettingsFeedbackButton {
-            button.selectedStyle = enabled
-            button.image = NSImage(systemSymbolName: enabled ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)
-        }
         feature.setEnabled(enabled, in: defaults)
         stopRecordingShortcut()
         onFeatureChange?(feature, enabled)
@@ -355,27 +352,26 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let button = SettingsFeedbackButton(title: title, target: self, action: #selector(changeFeature(_:)))
-            button.setButtonType(.toggle)
-            button.imagePosition = .imageLeading
-            button.imageHugsTitle = true
-            button.titleHorizontalInset = 0
-            button.alignment = .center
-            button.setAccessibilityLabel(title)
-            button.toolTip = AppLanguage.english ? "Enable or disable this tool. Settings are kept." : "启用或停用此功能，保留原配置。"
-            button.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
-            button.cell?.representedObject = feature.rawValue
-            button.state = feature.isEnabled(in: defaults) ? .on : .off
-            button.selectedStyle = button.state == .on
-            button.image = NSImage(systemSymbolName: button.state == .on ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)
-            return button
+            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "cup.and.saucer"]
+            let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
+            row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
+            row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off
+            return row
         }
         let featureNote = NSTextField(wrappingLabelWithString: AppLanguage.english
             ? "Disabled tools disappear from menus and stop running. Their settings are kept."
             : "关闭后隐藏入口并停用功能，保留原配置。背景关闭后保留当前静态壁纸。")
         featureNote.textColor = .secondaryLabelColor
         let featureGrid = SettingsFeatureGrid(items: featureButtons)
-        let features = settingsCard(AppLanguage.english ? "Tools" : "功能开关", [featureGrid, featureNote])
+        let featureSearch = NSSearchField()
+        featureSearch.placeholderString = AppLanguage.english ? "Find a tool" : "搜索工具"
+        featureSearch.setAccessibilityLabel(featureSearch.placeholderString)
+        featureSearch.sendsSearchStringImmediately = true
+        featureSearch.delegate = featureGrid
+        featureSearch.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        let features = settingsCard(AppLanguage.english ? "Tools" : "工具管理", [featureGrid, featureNote], accessory: featureSearch)
+        featureSearch.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        featureNote.font = .systemFont(ofSize: 11)
         featureGrid.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
         featureNote.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
         return form([heading, features, language, lidBehavior, startup])
@@ -475,15 +471,23 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
 }
 
 @MainActor
-private func settingsCard(_ title: String, _ views: [NSView]) -> SettingsGroupCard {
+private func settingsCard(_ title: String, _ views: [NSView], accessory: NSView? = nil) -> SettingsGroupCard {
     let card = SettingsGroupCard()
     let heading = NSTextField(labelWithString: title)
     heading.font = .systemFont(ofSize: 12, weight: .semibold)
     heading.textColor = .secondaryLabelColor
-    let stack = NSStackView(views: [heading] + views)
+    let header: NSView
+    if let accessory {
+        let spacer = NSView()
+        let row = NSStackView(views: [heading, spacer, accessory])
+        row.orientation = .horizontal
+        header = row
+    } else { header = heading }
+    let stack = NSStackView(views: [header] + views)
     stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 9
     stack.translatesAutoresizingMaskIntoConstraints = false
     card.addSubview(stack)
+    if accessory != nil { header.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -32).isActive = true }
     NSLayoutConstraint.activate([
         stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
         stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
@@ -578,7 +582,18 @@ private final class SettingsFeedbackCell: NSButtonCell {
 
 /// Bounded three-column tool picker: additional tools scroll inside the section.
 @MainActor
-final class SettingsFeatureGrid: NSScrollView {
+final class SettingsFeatureGrid: NSScrollView, NSSearchFieldDelegate {
+    private var query = ""
+    private var visibleItems: [NSView] { items.filter { query.isEmpty || (($0 as? SettingsToolRow)?.title ?? ($0 as? NSButton)?.title ?? "").localizedCaseInsensitiveContains(query) } }
+    func filter(_ query: String) {
+        self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        contentView.scroll(to: .zero)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+    func controlTextDidChange(_ notification: Notification) {
+        if let field = notification.object as? NSSearchField { filter(field.stringValue) }
+    }
     private let items: [NSView]
     private let content = SettingsFeatureGridContent()
     init(items: [NSView]) {
@@ -593,19 +608,21 @@ final class SettingsFeatureGrid: NSScrollView {
         documentView = content
         for item in items { content.addSubview(item) }
         let rows = max(1, (items.count + 2) / 3)
-        heightAnchor.constraint(equalToConstant: CGFloat(min(2, rows) * 60 - 8)).isActive = true
+        heightAnchor.constraint(equalToConstant: CGFloat(min(3, rows) * 36)).isActive = true
         setAccessibilityLabel(AppLanguage.english ? "Tool switches" : "功能开关")
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     override func layout() {
         super.layout()
         let width = contentView.bounds.width
-        let rows = max(1, (items.count + 2) / 3)
-        content.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows * 60 - 8))
-        let cellWidth = max(0, (width - 16) / 3)
-        for (index, item) in items.enumerated() {
-            item.frame = NSRect(x: CGFloat(index % 3) * (cellWidth + 8),
-                                y: CGFloat(index / 3) * 60, width: cellWidth, height: 52)
+        let visible = visibleItems
+        let rows = max(1, (visible.count + 2) / 3)
+        content.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows * 36))
+        let cellWidth = max(0, (width - 24) / 3)
+        for item in items { item.isHidden = !visible.contains { $0 === item } }
+        for (index, item) in visible.enumerated() {
+            item.frame = NSRect(x: CGFloat(index % 3) * (cellWidth + 12),
+                                y: CGFloat(index / 3) * 36, width: cellWidth, height: 36)
         }
     }
 }
@@ -613,4 +630,41 @@ final class SettingsFeatureGrid: NSScrollView {
 @MainActor
 private final class SettingsFeatureGridContent: NSView {
     override var isFlipped: Bool { true }
+}
+
+@MainActor
+private final class SettingsToolRow: NSView {
+    let title: String
+    let toggle = NSSwitch()
+    private var tracking: NSTrackingArea?
+    init(title: String, symbol: String, target: AnyObject, action: Selector) {
+        self.title = title
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
+        icon.contentTintColor = .secondaryLabelColor
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.lineBreakMode = .byTruncatingTail
+        toggle.controlSize = .small
+        toggle.target = target; toggle.action = action
+        toggle.setAccessibilityLabel(title)
+        toggle.toolTip = AppLanguage.english ? "Enable or disable; settings are kept" : "启用或停用，保留原配置"
+        for view in [icon, label, toggle] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), icon.widthAnchor.constraint(equalToConstant: 18), icon.heightAnchor.constraint(equalToConstant: 18), icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8), label.centerYAnchor.constraint(equalTo: centerYAnchor), label.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8),
+            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), toggle.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor }
+    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = NSColor.clear.cgColor }
 }

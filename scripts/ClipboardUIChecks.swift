@@ -626,27 +626,31 @@ struct Preview {
             featureChanges += 1
             precondition(feature.isEnabled(in: switcherDefaults) == enabled)
         }
-        let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
+        let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSSwitch }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
         precondition(featureButtons.count == 5)
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
-        manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 112)
+        manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 108)
         manyTools.layoutSubtreeIfNeeded()
-        precondition(manyTools.documentView!.frame.height == 352)
-        precondition(manyTools.frame.height == 112, "Additional tools must not grow the settings page")
+        precondition(manyTools.documentView!.frame.height == 216)
+        precondition(manyTools.frame.height == 108, "Additional tools must not grow the settings page")
         let lastTool = manyTools.documentView!.subviews.last!
         precondition(lastTool.frame.maxX <= manyTools.contentView.bounds.width)
-        precondition(lastTool.frame.maxY == 352)
-        manyTools.contentView.scroll(to: NSPoint(x: 0, y: 240))
+        precondition(lastTool.frame.maxY == 216)
+        manyTools.contentView.scroll(to: NSPoint(x: 0, y: 108))
         manyTools.reflectScrolledClipView(manyTools.contentView)
         precondition(manyTools.documentVisibleRect.intersects(lastTool.frame), "Last tool must be reachable by scrolling")
-        print("PASS: 18 tool cards fit three columns with bounded height and reachable overflow")
+        manyTools.filter("Tool 17")
+        precondition(manyTools.documentView!.subviews.filter { !$0.isHidden }.count == 1)
+        manyTools.filter("")
+        precondition(manyTools.documentView!.subviews.allSatisfy { !$0.isHidden })
+        print("PASS: 18 compact tool rows fit three columns with bounded height and reachable overflow")
 
-        for button in featureButtons { button.performClick(nil) }
+        for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
         precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 5)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
-        for button in featureButtons { button.performClick(nil) }
+        for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
         precondition(tabs.numberOfTabViewItems == 6 && featureChanges == 10)
         print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {

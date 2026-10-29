@@ -21,7 +21,8 @@ fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mkdir -p .build
 xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -whole-module-optimization Sources/WallpaperCore/*.swift Sources/ToolCore/*.swift Sources/WallpaperApp/*.swift -o "$APP/Contents/MacOS/MacBGLive"
-xcrun swift scripts/icon.swift .build/AppIcon.iconset
+xcrun swiftc Sources/WallpaperApp/ToolIcon.swift scripts/icon.swift -o .build/icon-builder
+.build/icon-builder .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # Default designated requirement is certificate-bound for a real signing identity.
