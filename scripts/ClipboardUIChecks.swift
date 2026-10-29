@@ -9,6 +9,7 @@ struct Preview {
             print("SCAN start")
             let found = await Task.detached { AppSwitcher.discover() }.value
             print("SCAN found", found.count)
+            for id in ["com.apple.finder", "com.apple.Safari", "com.apple.Passwords"] { print(id, found.filter { $0.id == id }.map(\.path)) }
             return
         }
         if CommandLine.arguments.contains("--activation-check") {
@@ -50,7 +51,13 @@ struct Preview {
         for path in ["/System/Applications/Contacts.app", "/Applications/Cursor.app"] {
             if let bundle = Bundle(path: path) { precondition(AppSwitcher.hasApplicationIcon(bundle)) }
         }
-        print("PASS: automatic discovery excludes generic-icon system helpers and keeps normal app icons")
+        let systemInventory = AppSwitcher.discover()
+        for (id, path) in [("com.apple.finder", "/System/Library/CoreServices/Finder.app"),
+                           ("com.apple.Safari", "/Applications/Safari.app"),
+                           ("com.apple.Passwords", "/System/Applications/Passwords.app")] where FileManager.default.fileExists(atPath: path) {
+            precondition(systemInventory.filter { $0.id == id }.count == 1, "System app must be discovered exactly once: \(id)")
+        }
+        print("PASS: Finder, Safari and Passwords discovered once; generic-icon helpers remain excluded")
         var checks = 0
         var sends = 0
         let delayed = await ClipboardPasteDelivery.deliver(target: 2, own: 1,

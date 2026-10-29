@@ -91,15 +91,21 @@ final class AppSwitcher: NSObject {
             && bundle.url(forResource: "Assets", withExtension: "car") != nil
     }
     nonisolated static func discover() -> [SwitcherApp] {
-        let roots = ["/Applications", NSHomeDirectory() + "/Applications", "/System/Applications", "/System/Library/CoreServices"]
+        let roots = ["/Applications", NSHomeDirectory() + "/Applications", "/System/Applications", "/System/Library/CoreServices",
+                     "/System/Cryptexes/App/System/Applications"]
         var found: [String: SwitcherApp] = [:]
         for root in roots {
-            guard let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: root),
+            guard let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: root).resolvingSymlinksInPath(),
                 includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { continue }
             for case let url as URL in enumerator {
                 guard url.pathExtension.lowercased() == "app" else { continue }
                 enumerator.skipDescendants()
-                guard let bundle = Bundle(url: url), bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
+                guard let bundle = Bundle(url: url) else { continue }
+                let package = bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String
+                // These user-facing system apps use nonstandard package types.
+                let systemPackages = ["com.apple.finder": "FNDR", "com.apple.Passwords": "XPC!"]
+                let specialPackage = bundle.bundleIdentifier.flatMap { systemPackages[$0] }
+                guard (package == "APPL" || (specialPackage != nil && package == specialPackage)),
                       !(bundle.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool ?? false),
                       hasApplicationIcon(bundle) else { continue }
                 let id = bundle.bundleIdentifier ?? url.standardizedFileURL.path
