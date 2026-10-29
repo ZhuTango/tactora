@@ -274,6 +274,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private var selected: UUID?
     private var renderingCards = false
     private var keyMonitor: Any?
+    private var outsideClickMonitors: [Any] = []
     private var previousApp: NSRunningApplication?
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
@@ -380,6 +381,19 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(search)
         if let surface = window.contentView { ClipboardMotion.fade(surface, duration: 0.22) }
+        if outsideClickMonitors.isEmpty {
+            let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            if let monitor = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { [weak self] _ in
+                self?.dismissForOutsideClick(at: NSEvent.mouseLocation)
+            }) { outsideClickMonitors.append(monitor) }
+            if let monitor = NSEvent.addLocalMonitorForEvents(matching: clicks, handler: { [weak self] event in
+                // Popup menus and modal editors belong to the clipboard interaction.
+                if NSApp.modalWindow == nil, let target = event.window, target.level < .popUpMenu {
+                    self?.dismissForOutsideClick(at: target.convertPoint(toScreen: event.locationInWindow))
+                }
+                return event
+            }) { outsideClickMonitors.append(monitor) }
+        }
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self, event.window === self.window else { return event }
@@ -409,7 +423,15 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
             }
         }
     }
+    func dismissForOutsideClick(at point: NSPoint) {
+        guard let window, window.isVisible, !window.frame.contains(point), NSApp.modalWindow == nil else { return }
+        // Keep focus on the app the user clicked, rather than restoring the old paste target.
+        previousApp = nil
+        close()
+    }
     func windowWillClose(_ notification: Notification) {
+        for monitor in outsideClickMonitors { NSEvent.removeMonitor(monitor) }
+        outsideClickMonitors.removeAll()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
         previousApp?.activate(options: [])
         onClose?()

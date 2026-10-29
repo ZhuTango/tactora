@@ -73,7 +73,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         directPaste.target = self; directPaste.action = #selector(changeDirectPaste)
         permission.toolTip = Bundle.main.bundleURL.path
         permission.font = .systemFont(ofSize: 11); permission.textColor = .secondaryLabelColor
-        let capacity = NSTextField(wrappingLabelWithString: AppLanguage.text("缓存上限：100 条记录，图片共 256 MB。\n图片保存本地副本；文件仅保存引用，不复制原文件。\n固定项最多 20 条，不自动过期；容量优先保留固定项。"))
+        let capacity = NSTextField(wrappingLabelWithString: AppLanguage.text("缓存上限：1000 条记录，图片共 2560 MB。\n图片保存本地副本；文件仅保存引用，不复制原文件。\n固定项最多 200 条，不自动过期；容量优先保留固定项。"))
         capacity.font = .systemFont(ofSize: 12); capacity.textColor = .secondaryLabelColor
         let privacy = NSTextField(wrappingLabelWithString: AppLanguage.text("仅存储在本机。跳过系统标记为敏感的内容；没有敏感标记的内容仍可能被记录。"))
         privacy.font = .systemFont(ofSize: 11); privacy.textColor = .secondaryLabelColor

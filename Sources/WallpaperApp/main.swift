@@ -428,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func about() {
         let alert = NSAlert()
         alert.messageText = AppLanguage.text("轻工具") + " " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.8.0")
-        alert.informativeText = "剪贴板支持文字、图片与文件引用，搜索、复制与删除，保留 7 或 30 天。首次点击开启记录后工作。最多 100 条历史，图片缓存最多 256 MB，仅保存在本机。\n\n每块屏幕可多选图片和视频，自动识别类型并按间隔顺序轮换；列表和间隔自动保存。每块屏幕独立选择照片或视频，配置自动保存在本机。重启应用和屏幕重新连接后自动恢复，手动停止状态也会保存。\n\n照片由系统管理；同一视频共享播放器，不同视频分别播放。默认使用原画和低内存循环，可切换到低耗、均衡或无缝循环。原文件不会修改。\n\n桌面完全被遮挡时暂停，持续 20 秒后释放解码资源并保留静帧；重新可见时从暂停位置恢复，画面就绪后再替换静帧。低内存循环接缝可能短暂停顿。\n\n配置位置：\(DisplayConfigurationStore.applicationStore.url.path)\n\n不联网、不上传文件；可在通用设置中开启登录时启动。"
+        alert.informativeText = "剪贴板支持文字、图片与文件引用，搜索、复制与删除，保留 7 或 30 天。首次点击开启记录后工作。最多 1000 条历史，图片缓存最多 2560 MB，仅保存在本机。\n\n每块屏幕可多选图片和视频，自动识别类型并按间隔顺序轮换；列表和间隔自动保存。每块屏幕独立选择照片或视频，配置自动保存在本机。重启应用和屏幕重新连接后自动恢复，手动停止状态也会保存。\n\n照片由系统管理；同一视频共享播放器，不同视频分别播放。默认使用原画和低内存循环，可切换到低耗、均衡或无缝循环。原文件不会修改。\n\n桌面完全被遮挡时暂停，持续 20 秒后释放解码资源并保留静帧；重新可见时从暂停位置恢复，画面就绪后再替换静帧。低内存循环接缝可能短暂停顿。\n\n配置位置：\(DisplayConfigurationStore.applicationStore.url.path)\n\n不联网、不上传文件；可在通用设置中开启登录时启动。"
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }

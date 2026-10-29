@@ -137,25 +137,25 @@ func checkClipboard() throws {
     check(store.entries[0].isPinned)
     let pinnedRestore = ClipboardStore(url: url, pasteboard: pasteboard, now: { clock })
     check(pinnedRestore.entries[0].isPinned)
-    for index in 0..<105 { text("Entry \(index)") }
+    for index in 0..<1005 { text("Entry \(index)") }
     check(store.entries.contains { $0.id == pinnedID && $0.isPinned })
-    for entry in store.entries.filter({ !$0.isPinned }).prefix(19) { try store.setPinned(true, for: entry.id) }
+    for entry in store.entries.filter({ !$0.isPinned }).prefix(199) { try store.setPinned(true, for: entry.id) }
     let extra = store.entries.first { !$0.isPinned }!
     do { try store.setPinned(true, for: extra.id); fail("Pin cap must be enforced") } catch {}
-    checkEqual(store.entries.filter(\.isPinned).count, 20)
-    checkEqual(store.entries.count, 100)
-    checkEqual(store.entries.first?.text, "Entry 104")
+    checkEqual(store.entries.filter(\.isPinned).count, 200)
+    checkEqual(store.entries.count, 1000)
+    checkEqual(store.entries.first?.text, "Entry 1004")
     try store.remove(store.entries[0].id)
-    checkEqual(store.entries.count, 99)
+    checkEqual(store.entries.count, 999)
     try store.clear()
     store.stop()
     check(store.entries.isEmpty)
-    checkEqual(pasteboard.string(forType: .string), "Entry 104")
+    checkEqual(pasteboard.string(forType: .string), "Entry 1004")
 
     // Cache budget: sparse files avoid allocating hundreds of megabytes for the test.
     try FileManager.default.createDirectory(at: store.imageDirectory, withIntermediateDirectories: true)
     var images: [ClipboardEntry] = []
-    for index in 0..<14 {
+    for index in 0..<130 {
         let name = String(format: "%064x", index) + ".png"
         let imageURL = store.imageDirectory.appendingPathComponent(name)
         FileManager.default.createFile(atPath: imageURL.path, contents: nil)
@@ -170,8 +170,8 @@ func checkClipboard() throws {
     try JSONSerialization.data(withJSONObject: ["version": 1, "enabled": false, "retentionDays": 7, "entries": array]).write(to: url)
     let bounded = ClipboardStore(url: url, pasteboard: pasteboard, now: { clock })
     checkNil(bounded.error)
-    checkEqual(bounded.entries.count, 12)
-    checkEqual(try FileManager.default.contentsOfDirectory(atPath: store.imageDirectory.path).count, 12)
+    checkEqual(bounded.entries.count, 128)
+    checkEqual(try FileManager.default.contentsOfDirectory(atPath: store.imageDirectory.path).count, 128)
     try bounded.clear(); bounded.stop()
     checkEqual(try FileManager.default.contentsOfDirectory(atPath: store.imageDirectory.path).count, 0)
     try Data("broken-json".utf8).write(to: url)

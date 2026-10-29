@@ -95,6 +95,14 @@ struct Preview {
         let panel = ClipboardWindow(store: store)
         store.onChange = { [weak panel] in panel?.refresh() }
         panel.present()
+        let clickFrame = panel.window!.frame
+        panel.dismissForOutsideClick(at: NSPoint(x: clickFrame.midX, y: clickFrame.midY))
+        precondition(panel.window!.isVisible, "Clicks inside clipboard must keep it open")
+        panel.dismissForOutsideClick(at: NSPoint(x: clickFrame.minX - 1, y: clickFrame.midY))
+        precondition(!panel.window!.isVisible, "Clicks outside clipboard must close it")
+        panel.present()
+        precondition(panel.window!.firstResponder is NSTextView, "Search must work after reopening")
+        print("PASS: inside clicks preserve clipboard, outside clicks dismiss, reopen focuses search")
         if shortcut.register() {
             var event: EventRef?
             CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(kEventHotKeyPressed), 0, 0, &event)

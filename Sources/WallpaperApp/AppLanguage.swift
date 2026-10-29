@@ -53,7 +53,7 @@ enum AppLanguage {
         "直接粘贴需要 macOS 辅助功能授权。不开启也可复制后按 ⌘V。": "Direct paste requires Accessibility permission. Otherwise, copy and press ⌘V.",
         "辅助功能已授权。开启后可直接粘贴到原应用。": "Accessibility access is granted. Enable direct paste to paste into the previous app.",
         "已选择开启，等待辅助功能授权，暂时仅复制。若已授权仍无效，请退出本应用，在系统设置中移除旧条目，重新添加当前版本，再打开应用。": "Enabled, awaiting Accessibility permission; currently copies only. If access still fails, quit, remove the old entry in System Settings, and add this version again.",
-        "缓存上限：100 条记录，图片共 256 MB。\n图片保存本地副本；文件仅保存引用，不复制原文件。\n固定项最多 20 条，不自动过期；容量优先保留固定项。": "Limits: 100 entries and 256 MB of images.\nImages are stored locally; files are references, not copies.\nUp to 20 pins; pins do not expire and take priority.",
+        "缓存上限：1000 条记录，图片共 2560 MB。\n图片保存本地副本；文件仅保存引用，不复制原文件。\n固定项最多 200 条，不自动过期；容量优先保留固定项。": "Limits: 1000 entries and 2560 MB of images.\nImages are stored locally; files are references, not copies.\nUp to 200 pins; pins do not expire and take priority.",
         "仅存储在本机。跳过系统标记为敏感的内容；没有敏感标记的内容仍可能被记录。": "Stored only on this Mac. Sensitive-marked content is skipped; unmarked secrets may still be recorded.",
         "清空全部历史…": "Clear All History…", "清空全部剪贴板历史？": "Clear all clipboard history?",
         "删除所有历史（包括固定项）和缓存图片，原文件与系统当前剪贴板不受影响。": "Deletes history (including pins) and cached images. Original files and the current clipboard are unchanged.",
