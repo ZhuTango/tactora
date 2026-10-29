@@ -9,24 +9,23 @@ struct LidDisplayTarget {
     var mirrored: Bool
 }
 
-/// Static opaque surface: no video, animation, focus changes or power commands.
-@MainActor
-final class LidBlackoutPanel: NSPanel {
-    init(frame: CGRect) {
-        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        backgroundColor = .black
-        isOpaque = true
-        hasShadow = false
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        animationBehavior = .none
-        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        // Consume clicks on the covered display without taking keyboard focus.
-        ignoresMouseEvents = false
+/// DisplayServices targets one physical display, including in mirror mode.
+/// Resolve at runtime so unsupported systems fail without altering brightness.
+private enum BuiltInBrightness {
+    typealias Get = @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
+    typealias Set = @convention(c) (UInt32, Float) -> Int32
+    static let library = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY)
+    static func read(_ id: UInt32) -> Float? {
+        guard let library, let symbol = dlsym(library, "DisplayServicesGetBrightness") else { return nil }
+        var value: Float = 0
+        guard unsafeBitCast(symbol, to: Get.self)(id, &value) == 0,
+              value.isFinite, (0...1).contains(value) else { return nil }
+        return value
     }
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    static func write(_ id: UInt32, _ value: Float) -> Bool {
+        guard let library, let symbol = dlsym(library, "DisplayServicesSetBrightness") else { return false }
+        return unsafeBitCast(symbol, to: Set.self)(id, value) == 0
+    }
 }
 
 @MainActor
@@ -34,21 +33,24 @@ final class LidDisplaySleep {
     private let defaults: UserDefaults
     private let lidStateOverride: (() -> Bool?)?
     private let displaysOverride: (() -> [LidDisplayTarget])?
-    private let coverOverride: (([LidDisplayTarget]) -> Void)?
+    private let readBrightness: (UInt32) -> Float?
+    private let writeBrightness: (UInt32, Float) -> Bool
+    private static let savedKey = "lidOriginalBuiltInBrightness"
     private var port: IONotificationPortRef?
     private var notification: io_object_t = 0
     private var root: io_service_t = 0
     private var watchdog: Timer?
-    private var panels: [CGDirectDisplayID: LidBlackoutPanel] = [:]
     private(set) var error: String?
 
     init(defaults: UserDefaults = .standard, lidStateForTesting: (() -> Bool?)? = nil,
          displaysForTesting: (() -> [LidDisplayTarget])? = nil,
-         coverForTesting: (([LidDisplayTarget]) -> Void)? = nil) {
+         readBrightnessForTesting: ((UInt32) -> Float?)? = nil,
+         writeBrightnessForTesting: ((UInt32, Float) -> Bool)? = nil) {
         self.defaults = defaults
         lidStateOverride = lidStateForTesting
         displaysOverride = displaysForTesting
-        coverOverride = coverForTesting
+        readBrightness = readBrightnessForTesting ?? BuiltInBrightness.read
+        writeBrightness = writeBrightnessForTesting ?? BuiltInBrightness.write
     }
 
     func refresh() {
@@ -108,35 +110,41 @@ final class LidDisplaySleep {
     func displaysDidWake() { lidChanged() }
 
     private func lidChanged() {
-        guard defaults.bool(forKey: LidSleepPolicy.preferenceKey), closed() == true else {
-            apply([]); return
+        guard defaults.bool(forKey: LidSleepPolicy.preferenceKey) else { restore(); return }
+        guard let isClosed = closed() else { return }
+        guard isClosed else { restore(); return }
+        guard let target = displays().first(where: { $0.builtIn }) else { return }
+        guard let current = readBrightness(target.id) else {
+            error = "无法读取内屏亮度 / Cannot read built-in display brightness"; return
         }
-        let candidates = displays()
-        error = candidates.contains { $0.builtIn && $0.mirrored }
-            ? "镜像显示时无法单独遮黑内屏 / Cannot cover only the built-in display while mirroring" : nil
-        apply(candidates.filter { LidSleepPolicy.shouldCover(enabled: true, closed: true, builtIn: $0.builtIn, mirrored: $0.mirrored) })
+        if defaults.object(forKey: Self.savedKey) == nil {
+            // Persist before changing hardware so a crash/relaunch can recover.
+            defaults.set(current, forKey: Self.savedKey)
+            defaults.synchronize()
+        }
+        if current > 0.001 && !writeBrightness(target.id, 0) {
+            error = "无法降低内屏亮度 / Cannot dim built-in display"; return
+        }
+        error = nil
     }
 
-    private func apply(_ targets: [LidDisplayTarget]) {
-        if let coverOverride { coverOverride(targets); return }
-        let ids = Set(targets.map(\.id))
-        for id in Array(panels.keys) where !ids.contains(id) {
-            panels.removeValue(forKey: id)?.close()
+    private func restore() {
+        guard let saved = defaults.object(forKey: Self.savedKey) as? NSNumber,
+              let target = displays().first(where: { $0.builtIn }) else { return }
+        let value = saved.floatValue
+        guard value.isFinite, (0...1).contains(value), writeBrightness(target.id, value) else {
+            error = "无法恢复内屏亮度，将保留原值以便重试 / Brightness restore failed; original retained"; return
         }
-        for target in targets {
-            let panel = panels[target.id] ?? LidBlackoutPanel(frame: target.frame)
-            panels[target.id] = panel
-            if panel.frame != target.frame { panel.setFrame(target.frame, display: true) }
-            if !panel.isVisible { panel.orderFrontRegardless() }
-        }
+        defaults.removeObject(forKey: Self.savedKey)
+        defaults.synchronize()
+        error = nil
     }
 
     func stop() {
         watchdog?.invalidate(); watchdog = nil
-        apply([])
+        restore()
         if notification != 0 { IOObjectRelease(notification); notification = 0 }
         if let port { IONotificationPortDestroy(port); self.port = nil }
         if root != 0 { IOObjectRelease(root); root = 0 }
-        error = nil
     }
 }
