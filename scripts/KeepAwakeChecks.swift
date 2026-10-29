@@ -15,7 +15,7 @@ import IOKit.pwr_mgt
             do { try manager.addDuration(invalid); fatalError("Accepted invalid custom duration") } catch {}
         }
         try manager.start(minutes: 1)
-        precondition(manager.active && manager.deadline != nil)
+        precondition(manager.active && manager.deadline != nil && manager.selectedMinutes == 1)
         func ownAssertions() -> [[String: Any]] {
             var result: Unmanaged<CFDictionary>?
             precondition(IOPMCopyAssertionsByProcess(&result) == kIOReturnSuccess)
@@ -28,8 +28,8 @@ import IOKit.pwr_mgt
         do { try manager.start(minutes: -1); fatalError("Accepted invalid start") } catch {}
         precondition(manager.active && ours().count == 1)
         try manager.start(minutes: 0)
-        precondition(manager.deadline == nil && ours().count == 1)
-        manager.stop(); precondition(ours().isEmpty)
+        precondition(manager.deadline == nil && ours().count == 1 && manager.selectedMinutes == 0)
+        manager.stop(); precondition(ours().isEmpty && manager.selectedMinutes == nil)
         ToolFeature.awake.setEnabled(false, in: defaults)
         do { try manager.start(minutes: 1); fatalError("Started disabled tool") } catch {}
         ToolFeature.awake.setEnabled(true, in: defaults)

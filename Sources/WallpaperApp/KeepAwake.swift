@@ -10,6 +10,7 @@ final class KeepAwake {
     private var expiryTimer: Timer?
     private(set) var deadline: Date?
     private(set) var active = false
+    private(set) var selectedMinutes: Int?
     var onChange: (() -> Void)?
     var customMinutes: [Int] {
         (defaults.array(forKey: "keepAwakeDurations") as? [Int] ?? []).filter { (1...Self.maximumMinutes).contains($0) && !Self.presets.contains($0) }.sorted()
@@ -53,6 +54,7 @@ final class KeepAwake {
         stop(notify: false)
         assertion = replacement
         active = true
+        selectedMinutes = minutes
         deadline = minutes == 0 ? nil : Date().addingTimeInterval(Double(minutes * 60))
         if let deadline {
             let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
@@ -69,7 +71,7 @@ final class KeepAwake {
     func stop(notify: Bool = true) {
         expiryTimer?.invalidate(); expiryTimer = nil
         if active { IOPMAssertionRelease(assertion) }
-        assertion = 0; active = false; deadline = nil
+        assertion = 0; active = false; deadline = nil; selectedMinutes = nil
         if notify { onChange?() }
     }
     var status: String {

@@ -105,25 +105,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateMenu() {
         guard controller != nil, clipboard != nil else { return }
-        let menu = backgroundMenu
-        menu.removeAllItems()
-        menu.autoenablesItems = false
-        add("轻壁纸 · 每屏独立背景", to: menu)
-        add("配置自动保存，重启与重连后恢复", to: menu)
-        menu.addItem(.separator())
+        let awake = ToolFeature.awake.isEnabled() && keepAwake.active
+        statusItem?.button?.image = NSImage(systemSymbolName: awake ? "cup.and.saucer.fill" : "square.grid.2x2", accessibilityDescription: awake ? "轻工具 · 防休眠已开启" : "轻工具")
+        statusItem?.button?.toolTip = awake ? "轻工具 · " + keepAwake.status : "轻工具 · 防休眠未开启"
+        statusItem?.button?.setAccessibilityLabel(awake ? "轻工具 · 防休眠已开启" : "轻工具 · 防休眠未开启")
+        backgroundMenu.removeAllItems()
+        backgroundMenu.autoenablesItems = false
+        add("轻壁纸 · 每屏独立背景", to: backgroundMenu)
+        add("配置自动保存，重启与重连后恢复", to: backgroundMenu)
+        backgroundMenu.addItem(.separator())
         let connected = DisplayTarget.connected()
         for (index, display) in connected.enumerated() {
             addDisplay(id: display.id, title: "屏幕 \(index + 1) · \(display.name)", online: true)
         }
-        if connected.isEmpty { add("未检测到可配置的屏幕", to: menu) }
-        menu.addItem(.separator())
+        if connected.isEmpty { add("未检测到可配置的屏幕", to: backgroundMenu) }
+        backgroundMenu.addItem(.separator())
         let hasVideo = controller.configurations.values.contains { $0.kind == .video || $0.playlist != nil }
-        let stop = add("停止全部视频与轮换", to: menu, action: #selector(stopAll))
+        let stop = add("停止全部视频与轮换", to: backgroundMenu, action: #selector(stopAll))
         stop.isEnabled = hasVideo || !selections.isEmpty
-        add("休眠 / 低电量模式自动停播", to: menu)
-        let pause = add("桌面被遮挡时自动暂停", to: menu, action: #selector(toggleAutomaticPause))
+        add("休眠 / 低电量模式自动停播", to: backgroundMenu)
+        let pause = add("桌面被遮挡时自动暂停", to: backgroundMenu, action: #selector(toggleAutomaticPause))
         pause.state = (UserDefaults.standard.object(forKey: "pauseWhenCovered") as? Bool ?? true) ? .on : .off
-        let preferences = add("背景通用配置", to: menu)
+        let preferences = add("背景通用配置", to: backgroundMenu)
         preferences.isEnabled = true
         preferences.identifier = NSUserInterfaceItemIdentifier("wallpaperPreferences")
         let options = NSMenu()
@@ -142,13 +145,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         options.addItem(.separator())
         options.addItem(pause.copy() as! NSMenuItem)
-        menu.addItem(.separator())
+        backgroundMenu.addItem(.separator())
         self.menu.removeAllItems()
         self.menu.autoenablesItems = false
         if ToolFeature.clipboard.isEnabled() {
         add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") + "  " + ClipboardShortcut.saved().label : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
         self.menu.addItem(.separator())
         }
+        if ToolFeature.awake.isEnabled() {
+            let entry = NSMenuItem(title: keepAwake.active ? (AppLanguage.english ? "Keep Awake · On" : "防休眠 · 已开启") : (AppLanguage.english ? "Keep Awake · Off" : "防休眠 · 未开启"), action: nil, keyEquivalent: "")
+            entry.state = keepAwake.active ? .on : .off
+            entry.image = NSImage(systemSymbolName: keepAwake.active ? "cup.and.saucer.fill" : "cup.and.saucer", accessibilityDescription: nil)
+            let submenu = NSMenu(); submenu.autoenablesItems = false
+            entry.submenu = submenu; self.menu.addItem(entry)
+            add(keepAwake.status, to: submenu)
+            if keepAwake.active {
+                let summary = add(keepAwake.status, to: self.menu)
+                summary.indentationLevel = 1
+                add(AppLanguage.english ? "Stop Keep Awake" : "停止防休眠", to: self.menu, action: #selector(stopKeepAwake))
+            }
+            for minutes in keepAwake.durations + [0] {
+                let item = NSMenuItem(title: KeepAwake.label(minutes), action: #selector(startKeepAwake(_:)), keyEquivalent: "")
+                item.target = self; item.tag = minutes
+                item.state = keepAwake.active && keepAwake.selectedMinutes == minutes ? .on : .off
+                submenu.addItem(item)
+            }
+            submenu.addItem(.separator())
+            if keepAwake.active { add(AppLanguage.english ? "Stop" : "停止防休眠", to: submenu, action: #selector(stopKeepAwake)) }
+            add(AppLanguage.english ? "Custom durations…" : "自定义时长…", to: submenu, action: #selector(showKeepAwakeSettings))
+        }
+        if ToolFeature.awake.isEnabled() { self.menu.addItem(.separator()) }
         let quickActions: Set<Selector> = [#selector(chooseFiles(_:)), #selector(nextBackground(_:)),
             #selector(toggleRotation(_:)), #selector(stop(_:)), #selector(resume(_:)), #selector(clear(_:))]
         for display in backgroundMenu.items where ToolFeature.wallpaper.isEnabled() && display.submenu != nil && display.identifier == nil {
@@ -179,19 +205,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.menu.addItem(.separator())
         if ToolFeature.apps.isEnabled() { add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings)) }
         if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
-        if ToolFeature.awake.isEnabled() {
-            let entry = NSMenuItem(title: AppLanguage.english ? "Keep Awake" : "防止休眠", action: nil, keyEquivalent: "")
-            entry.state = keepAwake.active ? .on : .off
-            let submenu = NSMenu(); entry.submenu = submenu; menu.addItem(entry)
-            add(keepAwake.status, to: submenu)
-            for minutes in keepAwake.durations + [0] {
-                let item = NSMenuItem(title: KeepAwake.label(minutes), action: #selector(startKeepAwake(_:)), keyEquivalent: "")
-                item.target = self; item.tag = minutes; submenu.addItem(item)
-            }
-            submenu.addItem(.separator())
-            if keepAwake.active { add(AppLanguage.english ? "Stop" : "停止防休眠", to: submenu, action: #selector(stopKeepAwake)) }
-            add(AppLanguage.english ? "Custom durations…" : "自定义时长…", to: submenu, action: #selector(showKeepAwakeSettings))
-        }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
         add("关于轻工具", to: self.menu, action: #selector(about))
