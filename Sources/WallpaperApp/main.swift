@@ -155,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.awake.isEnabled() {
             let entry = NSMenuItem(title: keepAwake.active ? (AppLanguage.english ? "Keep Awake · On" : "防休眠 · 已开启") : (AppLanguage.english ? "Keep Awake · Off" : "防休眠 · 未开启"), action: nil, keyEquivalent: "")
             entry.state = keepAwake.active ? .on : .off
-            entry.image = ToolIcon.featureImage(symbol: "cup.and.saucer")
+            entry.image = ToolIcon.featureImage(symbol: "display.sun")
             let submenu = NSMenu(); submenu.autoenablesItems = false
             entry.submenu = submenu; self.menu.addItem(entry)
             add(keepAwake.status, to: submenu)

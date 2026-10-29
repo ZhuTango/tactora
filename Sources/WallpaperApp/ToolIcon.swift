@@ -58,18 +58,23 @@ enum ToolIcon {
         NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
     }
 
-    private static func cup(_ rect: NSRect) {
+    private static func awakeDisplay(_ rect: NSRect) {
         canvas(rect) {
-            let handle = rounded(NSRect(x: 63, y: 39, width: 33, height: 39), radius: 17)
-            handle.append(rounded(NSRect(x: 70, y: 49, width: 16, height: 19), radius: 8))
-            handle.windingRule = .evenOdd; handle.fill()
-            // The steam is deliberately shorter than in the presentation artwork.
-            let steam = NSBezierPath()
-            steam.move(to: NSPoint(x: 46, y: 5))
-            steam.curve(to: NSPoint(x: 37, y: 24), controlPoint1: NSPoint(x: 51, y: 15), controlPoint2: NSPoint(x: 33, y: 13))
-            steam.lineWidth = 7; steam.lineCapStyle = .round; NSColor.black.setStroke(); steam.stroke()
+            let screen = rounded(NSRect(x: 3, y: 12, width: 94, height: 60), radius: 9)
+            screen.append(rounded(NSRect(x: 11, y: 20, width: 78, height: 44), radius: 3))
+            screen.windingRule = .evenOdd; screen.fill()
+            rounded(NSRect(x: 45, y: 69, width: 10, height: 16), radius: 2).fill()
+            rounded(NSRect(x: 30, y: 82, width: 40, height: 7), radius: 3.5).fill()
+            let sun = NSBezierPath()
+            sun.move(to: NSPoint(x: 34, y: 64))
+            sun.curve(to: NSPoint(x: 66, y: 64), controlPoint1: NSPoint(x: 34, y: 43), controlPoint2: NSPoint(x: 66, y: 43))
+            sun.lineWidth = 6; NSColor.black.setStroke(); sun.stroke()
+            let rays = NSBezierPath()
+            rays.move(to: NSPoint(x: 50, y: 31)); rays.line(to: NSPoint(x: 50, y: 37))
+            rays.move(to: NSPoint(x: 28, y: 40)); rays.line(to: NSPoint(x: 32, y: 44))
+            rays.move(to: NSPoint(x: 72, y: 40)); rays.line(to: NSPoint(x: 68, y: 44))
+            rays.lineWidth = 5; rays.lineCapStyle = .round; rays.stroke()
         }
-        mark(NSRect(x: rect.minX, y: rect.minY, width: rect.width * 0.80, height: rect.height * 0.70))
     }
 
     static func appImage(size: CGFloat) -> NSImage {
@@ -101,7 +106,7 @@ enum ToolIcon {
                     lower.fill()
                 }
             }
-            else if symbol.hasPrefix("cup.and.saucer") { cup(rect) }
+            else if symbol == "display.sun" { awakeDisplay(rect) }
             else {
                 canvas(rect) {
                     switch symbol {
@@ -165,15 +170,7 @@ enum ToolIcon {
     private static func makeStatusImage(awake: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: awake ? 40 : 18, height: 18), flipped: false) { _ in
             mark(NSRect(x: 1, y: 1, width: 16, height: 16))
-            if awake {
-                // Menu-bar optical variant: no floating steam at this scale.
-                // Align the paired body with the main mark instead of its baseline.
-                NSColor.black.setFill()
-                let handle = rounded(NSRect(x: 33, y: 5.5, width: 6, height: 7), radius: 3)
-                handle.append(rounded(NSRect(x: 34, y: 7, width: 3.5, height: 4), radius: 1.75))
-                handle.windingRule = .evenOdd; handle.fill()
-                mark(NSRect(x: 23, y: 2.5, width: 12.5, height: 13))
-            }
+            if awake { awakeDisplay(NSRect(x: 23, y: 1, width: 16, height: 16)) }
             return true
         }
         image.isTemplate = true
