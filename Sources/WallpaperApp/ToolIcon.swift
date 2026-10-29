@@ -165,7 +165,15 @@ enum ToolIcon {
     private static func makeStatusImage(awake: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: awake ? 40 : 18, height: 18), flipped: false) { _ in
             mark(NSRect(x: 1, y: 1, width: 16, height: 16))
-            if awake { cup(NSRect(x: 23, y: 1, width: 16, height: 16)) }
+            if awake {
+                // Menu-bar optical variant: no floating steam at this scale.
+                // Align the paired body with the main mark instead of its baseline.
+                NSColor.black.setFill()
+                let handle = rounded(NSRect(x: 33, y: 5.5, width: 6, height: 7), radius: 3)
+                handle.append(rounded(NSRect(x: 34, y: 7, width: 3.5, height: 4), radius: 1.75))
+                handle.windingRule = .evenOdd; handle.fill()
+                mark(NSRect(x: 23, y: 2.5, width: 12.5, height: 13))
+            }
             return true
         }
         image.isTemplate = true
