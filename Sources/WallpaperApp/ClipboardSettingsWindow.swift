@@ -326,13 +326,13 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             ? "Changes are saved automatically. Wallpaper and clipboard preferences are in the tabs above."
             : AppLanguage.text("设置自动保存。桌面背景与剪贴板设置统一在上方分页中，后续工具也会加入这里。"))
         note.textColor = .secondaryLabelColor
-        lidSleepToggle.title = AppLanguage.english ? "Turn off built-in display when lid closes" : "合盖关闭内屏"
+        lidSleepToggle.title = AppLanguage.english ? "Black out built-in display when lid closes" : "合盖遮黑内屏"
         lidSleepToggle.identifier = NSUserInterfaceItemIdentifier(LidSleepPolicy.preferenceKey)
         lidSleepToggle.target = self
         lidSleepToggle.action = #selector(changeLidSleep)
         let lidNote = NSTextField(wrappingLabelWithString: AppLanguage.english
-            ? "Without an external display, turn off the built-in screen only. With external displays, macOS handles the lid. System sleep settings are unchanged."
-            : "无外屏时主动息屏；连接外屏时由系统处理内屏，不关闭外屏。不修改系统休眠设置。")
+            ? "Cover the built-in screen with black while closed; uncover on opening. External screens and system sleep settings stay unchanged. Backlight may remain on. Mirrored displays are excluded."
+            : "合盖时用纯黑遮住内屏，开盖恢复；不影响外屏、不主动休眠。黑色画面不等于关闭背光；镜像显示时不启用遮罩。")
         lidNote.textColor = .secondaryLabelColor
         lidNote.font = .systemFont(ofSize: 11)
         let language = settingsCard(AppLanguage.english ? "Language" : "语言", [row])

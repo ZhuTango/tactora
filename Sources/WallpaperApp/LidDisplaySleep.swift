@@ -2,27 +2,54 @@ import AppKit
 import IOKit
 import IOKit.pwr_mgt
 
-/// Event-driven lid monitoring. No timer or persistent child process.
+struct LidDisplayTarget {
+    let id: CGDirectDisplayID
+    let frame: CGRect
+    let builtIn: Bool
+    var mirrored: Bool
+}
+
+/// Static opaque surface: no video, animation, focus changes or power commands.
+@MainActor
+final class LidBlackoutPanel: NSPanel {
+    init(frame: CGRect) {
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        backgroundColor = .black
+        isOpaque = true
+        hasShadow = false
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        animationBehavior = .none
+        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // Consume clicks on the covered display without taking keyboard focus.
+        ignoresMouseEvents = false
+    }
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class LidDisplaySleep {
     private let defaults: UserDefaults
     private let lidStateOverride: (() -> Bool?)?
-    private let displaysOverride: (() -> [Bool]?)?
-    private let testSleep: (() -> Void)?
-    init(defaults: UserDefaults = .standard, sleepForTesting: (() -> Void)? = nil,
-         lidStateForTesting: (() -> Bool?)? = nil, displaysForTesting: (() -> [Bool]?)? = nil) {
-        self.defaults = defaults
-        self.lidStateOverride = lidStateForTesting
-        self.displaysOverride = displaysForTesting
-        self.testSleep = sleepForTesting
-    }
+    private let displaysOverride: (() -> [LidDisplayTarget])?
+    private let coverOverride: (([LidDisplayTarget]) -> Void)?
     private var port: IONotificationPortRef?
     private var notification: io_object_t = 0
     private var root: io_service_t = 0
-    private var policy = LidSleepPolicy()
-    private var pending: DispatchWorkItem?
-    private var process: Process?
+    private var watchdog: Timer?
+    private var panels: [CGDirectDisplayID: LidBlackoutPanel] = [:]
     private(set) var error: String?
+
+    init(defaults: UserDefaults = .standard, lidStateForTesting: (() -> Bool?)? = nil,
+         displaysForTesting: (() -> [LidDisplayTarget])? = nil,
+         coverForTesting: (([LidDisplayTarget]) -> Void)? = nil) {
+        self.defaults = defaults
+        lidStateOverride = lidStateForTesting
+        displaysOverride = displaysForTesting
+        coverOverride = coverForTesting
+    }
 
     func refresh() {
         stop()
@@ -50,6 +77,14 @@ final class LidDisplaySleep {
         }
         error = nil
         lidChanged()
+        // IOKit notifications are primary; a cheap read catches missed transitions.
+        // Enabled only with this feature, no subprocess and no display rendering loop.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.lidChanged() }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
     }
 
     private func closed() -> Bool? {
@@ -59,67 +94,49 @@ final class LidDisplaySleep {
                                               kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool
     }
 
-    private func canSleepInternalDisplay() -> Bool {
-        if let displaysOverride {
-            return LidSleepPolicy.canSleepDisplays(onlineDisplaysBuiltIn: displaysOverride())
+    private func displays() -> [LidDisplayTarget] {
+        if let displaysOverride { return displaysOverride() }
+        return NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            let id = number.uint32Value
+            return LidDisplayTarget(id: id, frame: screen.frame, builtIn: CGDisplayIsBuiltin(id) != 0,
+                                    mirrored: CGDisplayIsInMirrorSet(id) != 0)
         }
-        var count: UInt32 = 0
-        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetOnlineDisplayList(count, &displays, &count) == .success else { return false }
-        return LidSleepPolicy.canSleepDisplays(onlineDisplaysBuiltIn:
-            displays.prefix(Int(count)).map { CGDisplayIsBuiltin($0) != 0 })
     }
 
-    func displaysChanged() {
-        pending?.cancel(); pending = nil
-        policy = LidSleepPolicy()
-        lidChanged()
-    }
+    func displaysChanged() { lidChanged() }
+    func displaysDidWake() { lidChanged() }
 
     private func lidChanged() {
-        let state = closed()
-        if state != true { pending?.cancel(); pending = nil }
-        if policy.update(enabled: defaults.bool(forKey: LidSleepPolicy.preferenceKey) && canSleepInternalDisplay(), closed: state) {
-            scheduleSleep()
+        guard defaults.bool(forKey: LidSleepPolicy.preferenceKey), closed() == true else {
+            apply([]); return
         }
+        let candidates = displays()
+        error = candidates.contains { $0.builtIn && $0.mirrored }
+            ? "镜像显示时无法单独遮黑内屏 / Cannot cover only the built-in display while mirroring" : nil
+        apply(candidates.filter { LidSleepPolicy.shouldCover(enabled: true, closed: true, builtIn: $0.builtIn, mirrored: $0.mirrored) })
     }
 
-    /// Reapply only with the lid closed and no online external display.
-    func displaysDidWake() {
-        guard closed() == true, canSleepInternalDisplay(), defaults.bool(forKey: LidSleepPolicy.preferenceKey) else { return }
-        scheduleSleep()
-    }
-
-    private func scheduleSleep() {
-        pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.closed() == true, self.canSleepInternalDisplay(),
-                      self.defaults.bool(forKey: LidSleepPolicy.preferenceKey),
-                      self.process?.isRunning != true else { return }
-                if let testSleep = self.testSleep { testSleep(); return }
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-                task.arguments = ["displaysleepnow"]
-                task.terminationHandler = { task in
-                    if task.terminationStatus != 0 { NSLog("Display sleep command exited: %d", task.terminationStatus) }
-                }
-                task.standardOutput = FileHandle.nullDevice
-                task.standardError = FileHandle.nullDevice
-                do { try task.run(); self.process = task }
-                catch { self.error = error.localizedDescription; NSLog("Display sleep failed: %@", error.localizedDescription) }
-            }
+    private func apply(_ targets: [LidDisplayTarget]) {
+        if let coverOverride { coverOverride(targets); return }
+        let ids = Set(targets.map(\.id))
+        for id in Array(panels.keys) where !ids.contains(id) {
+            panels.removeValue(forKey: id)?.close()
         }
-        pending = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        for target in targets {
+            let panel = panels[target.id] ?? LidBlackoutPanel(frame: target.frame)
+            panels[target.id] = panel
+            if panel.frame != target.frame { panel.setFrame(target.frame, display: true) }
+            if !panel.isVisible { panel.orderFrontRegardless() }
+        }
     }
 
     func stop() {
-        pending?.cancel(); pending = nil
+        watchdog?.invalidate(); watchdog = nil
+        apply([])
         if notification != 0 { IOObjectRelease(notification); notification = 0 }
         if let port { IONotificationPortDestroy(port); self.port = nil }
         if root != 0 { IOObjectRelease(root); root = 0 }
-        policy = LidSleepPolicy()
+        error = nil
     }
 }

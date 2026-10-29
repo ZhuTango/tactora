@@ -1,48 +1,41 @@
 import AppKit
 @main struct LidMonitorChecks {
     @MainActor static func main() {
+        _ = NSApplication.shared
         let name = "local.tango.lid-checks." + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
-        var calls = 0
-        let monitor = LidDisplaySleep(defaults: defaults, sleepForTesting: { calls += 1 })
+        var lid: Bool? = true
+        var displays = [LidDisplayTarget(id: 1, frame: CGRect(x: 0, y: 0, width: 800, height: 600), builtIn: true, mirrored: false),
+                        LidDisplayTarget(id: 2, frame: CGRect(x: 800, y: 0, width: 800, height: 600), builtIn: false, mirrored: false)]
+        var shown: [LidDisplayTarget] = []
+        let monitor = LidDisplaySleep(defaults: defaults, lidStateForTesting: { lid },
+            displaysForTesting: { displays }, coverForTesting: { shown = $0 })
         defaults.set(true, forKey: LidSleepPolicy.preferenceKey)
         monitor.refresh()
-        precondition(monitor.error == nil, monitor.error ?? "")
-        monitor.stop()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 0, "Stopping cancels pending display sleep")
-        defaults.set(false, forKey: LidSleepPolicy.preferenceKey)
-        monitor.refresh()
-        monitor.displaysDidWake()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 0)
-        defaults.set(true, forKey: LidSleepPolicy.preferenceKey)
-        var lid = true
-        var displays: [Bool]? = [true]
-        let guarded = LidDisplaySleep(defaults: defaults, sleepForTesting: { calls += 1 },
-            lidStateForTesting: { lid }, displaysForTesting: { displays })
-        guarded.refresh()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 1, "Internal-only closed lid must sleep display")
-        guarded.displaysDidWake()
-        displays = [true, false]
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 1, "External connected during delay must block sleep")
-        guarded.displaysChanged()
-        guarded.displaysDidWake()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 1, "External display must stay untouched")
-        displays = [true]
-        guarded.displaysChanged()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 2, "Disconnecting external while closed must recheck")
-        guarded.displaysDidWake()
+        precondition(monitor.error == nil)
+        precondition(shown.map(\.id) == [1], "Cover internal even when external is connected")
         lid = false
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        precondition(calls == 2, "Opening lid before action must cancel sleep")
-        guarded.stop()
-        print("PASS: internal-only sleep, hotplug guard, disconnect recheck and open-lid cancellation")
-        print("PASS: real IOKit registration, cleanup and disabled wake; actuator mocked")
+        RunLoop.main.run(until: Date().addingTimeInterval(1.4))
+        precondition(shown.isEmpty, "Watchdog uncovers if the open notification was missed")
+        lid = true; monitor.displaysDidWake()
+        precondition(shown.map(\.id) == [1], "Wake while closed reapplies")
+        displays[0].mirrored = true; monitor.displaysChanged()
+        precondition(shown.isEmpty, "Never black out a mirrored external screen")
+        displays.removeFirst(); monitor.displaysChanged()
+        precondition(shown.isEmpty, "Never relocate cover onto external display")
+        displays = [LidDisplayTarget(id: 1, frame: .zero, builtIn: true, mirrored: false)]
+        monitor.displaysChanged(); precondition(shown.count == 1)
+        lid = nil; monitor.displaysChanged(); precondition(shown.isEmpty)
+        lid = true; monitor.displaysChanged()
+        defaults.set(false, forKey: LidSleepPolicy.preferenceKey); monitor.refresh()
+        precondition(shown.isEmpty)
+        monitor.stop()
+        let panel = LidBlackoutPanel(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        precondition(panel.backgroundColor == .black && panel.isOpaque && !panel.hasShadow)
+        precondition(!panel.canBecomeKey && !panel.canBecomeMain && !panel.hidesOnDeactivate)
+        precondition(panel.level.rawValue > NSWindow.Level.screenSaver.rawValue)
+        precondition(panel.collectionBehavior.contains(.fullScreenAuxiliary))
+        print("PASS: internal-only blackout, external/mirror exclusion, wake/hotplug, open/unknown/disable cleanup and black panel configuration")
     }
 }
