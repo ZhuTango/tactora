@@ -2,7 +2,7 @@
 
 项目仓库：[ZhuTango/light-tools](https://github.com/ZhuTango/light-tools)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.1**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.2**，支持 macOS 13 及以上。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
@@ -53,11 +53,14 @@
 
 ```sh
 xcode-select --install
+# 首次准备本地固定签名（--install 会导入钥匙串并仅信任代码签名）
+bash scripts/setup-local-signing.sh --prepare
+bash scripts/setup-local-signing.sh --install
 bash scripts/build.sh
 open 'dist/轻工具.app'
 ```
 
-构建脚本使用本机 Swift 编译器和 ad-hoc 签名，不下载第三方依赖。默认输出 `dist/轻工具.app`；可用 `OUTPUT_APP` 指定输出路径。运行新版前先退出旧版。
+构建脚本使用本机 Swift 编译器和固定证书签名，不下载第三方依赖。也可通过 `SIGNING_IDENTITY` 指定现有签名身份；首次签名迁移需要重新授权辅助功能，后续更新须复用同一证书。详见 [发布规则](RELEASING.md)。默认输出 `dist/轻工具.app`；可用 `OUTPUT_APP` 指定输出路径。运行新版前先退出旧版。
 
 ```sh
 OUTPUT_APP='.build/release/轻工具.app' bash scripts/build.sh

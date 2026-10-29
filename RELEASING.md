@@ -36,7 +36,9 @@
 
 ## macOS 分发
 
-当前构建使用 ad-hoc 签名，重新编译可能导致辅助功能授权需要重新添加。正式面向其他用户分发时使用稳定的 Developer ID 签名与公证；未完成时必须在发布说明中标明，不把自签名包描述为已公证。
+本机构建默认要求固定签名身份，使用 `SIGNING_IDENTITY` 或 `~/Library/Application Support/Light Tools Signing/identity.sha1` 中的证书。缺少身份时构建失败，不再静默退回 ad-hoc；临时测试包须显式设置 `ALLOW_ADHOC_SIGNING=1`，不得用这种包替换已授权安装版。
+
+本地专用证书可先运行 `bash scripts/setup-local-signing.sh --prepare` 准备并检查；经用户同意后运行 `--install` 导入登录钥匙串，并仅为代码签名设置信任。证书私钥只留在本机钥匙串，不入仓库、不上传。首次从旧 ad-hoc 身份迁移到该证书仍需系统重新授权，之后保持同一证书与安装路径。此本地身份不是 Developer ID，不能宣称已公证。正式面向其他用户分发时使用稳定的 Developer ID 签名与公证；未完成时必须在发布说明中标明，不把自签名包描述为已公证。
 
 ## 发布说明模板
 
