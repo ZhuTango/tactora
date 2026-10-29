@@ -257,13 +257,21 @@ final class AppSwitcher: NSObject {
         hold.suppress(); hidePanelIfVisible()
         let url = URL(fileURLWithPath: binding.path)
         guard FileManager.default.fileExists(atPath: url.path) else { failures[id] = "应用已移动或卸载，请刷新列表重新配置"; onChange?(); return }
-        // Finder stays running even with no windows. Reopen it like a Dock click:
-        // macOS raises an existing window or creates one using Finder preferences.
-        // Ordinary activation would only focus its desktop/menu bar.
-        if id != "com.apple.finder", let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
-            if running.isActive && !running.isHidden { running.hide() }
-            else { running.unhide(); running.activate(options: []) }
-            return
+        if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
+            if id == "com.apple.finder" {
+                // Finder can be active with only its desktop. Hide only actual visible windows;
+                // otherwise send reopen below so a missing window is created or restored.
+                let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                let hasWindow = windows.contains {
+                    ($0[kCGWindowOwnerPID as String] as? Int) == Int(running.processIdentifier)
+                        && ($0[kCGWindowLayer as String] as? Int) == 0
+                }
+                if running.isActive && !running.isHidden && hasWindow { running.hide(); return }
+            } else {
+                if running.isActive && !running.isHidden { running.hide() }
+                else { running.unhide(); running.activate(options: []) }
+                return
+            }
         }
         let config = NSWorkspace.OpenConfiguration(); config.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, error in

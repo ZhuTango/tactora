@@ -33,6 +33,12 @@ struct Preview {
                 })
             }
             let initial = visibleFinderWindows()
+            // Establish the background/hidden starting condition without closing user windows.
+            if runningFinder.isActive && !initial.isEmpty {
+                manager.activate(finder.id)
+                try await Task.sleep(nanoseconds: 500_000_000)
+                precondition(runningFinder.isHidden)
+            }
             manager.activate(finder.id)
             for _ in 0..<30 {
                 if runningFinder.isActive && !runningFinder.isHidden && !visibleFinderWindows().isEmpty { break }
@@ -43,9 +49,12 @@ struct Preview {
             precondition(!opened.isEmpty, "Finder activation must show a window")
             manager.activate(finder.id)
             try await Task.sleep(nanoseconds: 500_000_000)
-            precondition(runningFinder.isActive && !runningFinder.isHidden, "Finder shortcut must not hide its window")
+            precondition(runningFinder.isHidden, "Frontmost Finder with a window must hide")
+            manager.activate(finder.id)
+            try await Task.sleep(nanoseconds: 500_000_000)
+            precondition(runningFinder.isActive && !runningFinder.isHidden, "Hidden Finder must restore")
             precondition(visibleFinderWindows() == opened, "Repeating Finder shortcut must reuse existing windows")
-            print("PASS: Finder reopen shows a window, repeats reuse it without hiding; initial visible windows: \(initial.count)")
+            print("PASS: Finder opens/restores windows, hides when frontmost, then restores the same windows; initial visible windows: \(initial.count)")
             return
         }
         for path in ["/System/Library/CoreServices/CoreLocationAgent.app", "/System/Library/CoreServices/Coverage Details.app", "/System/Library/CoreServices/Database Events.app"] {
