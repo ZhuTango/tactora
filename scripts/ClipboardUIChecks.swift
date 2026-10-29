@@ -606,11 +606,12 @@ struct Preview {
         let arrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option, .command], timestamp: 0, windowNumber: 0, context: nil, characters: "\u{f702}", charactersIgnoringModifiers: "\u{f702}", isARepeat: false, keyCode: 123)!
         precondition(ClipboardShortcut.from(arrow)?.label == "⌃⌥⌘←")
         print("PASS: window shortcut defaults, arrow recording, persistence, clearing and conflict preservation")
-        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager)
+        let awakeManager = KeepAwake(defaults: switcherDefaults)
+        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager)
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
-        precondition(tabs.numberOfTabViewItems == 5)
+        precondition(tabs.numberOfTabViewItems == 6)
         precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) })
         var featureChanges = 0
         unified.onFeatureChange = { feature, enabled in
@@ -618,7 +619,7 @@ struct Preview {
             precondition(feature.isEnabled(in: switcherDefaults) == enabled)
         }
         let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
-        precondition(featureButtons.count == 4)
+        precondition(featureButtons.count == 5)
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
         manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 112)
         manyTools.layoutSubtreeIfNeeded()
@@ -633,12 +634,12 @@ struct Preview {
         print("PASS: 18 tool cards fit three columns with bounded height and reachable overflow")
 
         for button in featureButtons { button.performClick(nil) }
-        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 4)
+        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 5)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
         for button in featureButtons { button.performClick(nil) }
-        precondition(tabs.numberOfTabViewItems == 5 && featureChanges == 8)
+        precondition(tabs.numberOfTabViewItems == 6 && featureChanges == 10)
         print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
@@ -695,6 +696,15 @@ struct Preview {
         windowScroll.reflectScrolledClipView(windowScroll.contentView)
         precondition(windowScroll.documentVisibleRect.intersects(lastWindowRow.frame), "System fullscreen action must be reachable")
         print("PASS: window action settings scroll to the final action")
+        unified.selectSection("awake"); try settingsSnapshot("settings-awake")
+        let awakeViews = allViews(tabs.selectedTabViewItem!.view!)
+        let awakeInput = awakeViews.compactMap { $0 as? NSTextField }.first { $0.placeholderString == "输入正整数" }!
+        awakeInput.stringValue = "45"
+        awakeViews.compactMap { $0 as? NSButton }.first { $0.title == "添加时长" }!.performClick(nil)
+        precondition(awakeManager.customMinutes.contains(45) && !awakeManager.active)
+        awakeViews.compactMap { $0 as? NSButton }.first { $0.title == "删除所选时长" }!.performClick(nil)
+        precondition(!awakeManager.customMinutes.contains(45))
+        print("PASS: Keep Awake custom duration add/remove UI without starting session")
         unified.selectSection("general")
         let lidButton = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == LidSleepPolicy.preferenceKey }!
         precondition(lidButton.state == .off)

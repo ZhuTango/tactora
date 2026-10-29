@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var appSwitcher: AppSwitcher!
     private let windowManager = WindowManager()
     private let lidDisplaySleep = LidDisplaySleep()
+    private let keepAwake = KeepAwake()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
             return
         }
+        keepAwake.onChange = { [weak self] in self?.updateMenu() }
         lidDisplaySleep.refresh()
         clipboard = ClipboardStore()
         clipboard.onChange = { [weak self] in self?.clipboardWindow?.refresh(); self?.clipboardSettings?.refresh(); self?.updateMenu() }
@@ -62,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidSleepNotification) { $0.controller.policy.displayAsleep = true }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification) { $0.controller.policy.displayAsleep = false; $0.lidDisplaySleep.displaysDidWake() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification) { $0.controller.policy.systemAsleep = true }
-        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification) { $0.controller.policy.systemAsleep = false }
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification) { $0.controller.policy.systemAsleep = false; $0.keepAwake.expireIfNeeded() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidResignActiveNotification) { $0.controller.policy.sessionInactive = true }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidBecomeActiveNotification) { $0.controller.policy.sessionInactive = false }
         observe(.default, .NSProcessInfoPowerStateDidChange) {
@@ -177,6 +179,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.menu.addItem(.separator())
         if ToolFeature.apps.isEnabled() { add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings)) }
         if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
+        if ToolFeature.awake.isEnabled() {
+            let entry = NSMenuItem(title: AppLanguage.english ? "Keep Awake" : "防止休眠", action: nil, keyEquivalent: "")
+            entry.state = keepAwake.active ? .on : .off
+            let submenu = NSMenu(); entry.submenu = submenu; menu.addItem(entry)
+            add(keepAwake.status, to: submenu)
+            for minutes in keepAwake.durations + [0] {
+                let item = NSMenuItem(title: KeepAwake.label(minutes), action: #selector(startKeepAwake(_:)), keyEquivalent: "")
+                item.target = self; item.tag = minutes; submenu.addItem(item)
+            }
+            submenu.addItem(.separator())
+            if keepAwake.active { add(AppLanguage.english ? "Stop" : "停止防休眠", to: submenu, action: #selector(stopKeepAwake)) }
+            add(AppLanguage.english ? "Custom durations…" : "自定义时长…", to: submenu, action: #selector(showKeepAwakeSettings))
+        }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
         add("关于轻工具", to: self.menu, action: #selector(about))
@@ -469,12 +484,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showWindowSettings() { guard ToolFeature.windows.isEnabled() else { return }; showClipboardSettings(); clipboardSettings?.selectSection("windows") }
 
+    @objc private func startKeepAwake(_ sender: NSMenuItem) {
+        do { try keepAwake.start(minutes: sender.tag) } catch { showError(error) }
+    }
+    @objc private func stopKeepAwake() { keepAwake.stop() }
+    @objc private func showKeepAwakeSettings() {
+        guard ToolFeature.awake.isEnabled() else { return }
+        showClipboardSettings(); clipboardSettings?.selectSection("awake")
+    }
+
     @objc private func showSettings() { showClipboardSettings(); clipboardSettings?.selectSection("general") }
 
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -513,6 +537,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else { clipboardShortcut.unregister(); shortcutRegistered = false }
         case .apps:
             appSwitcher.setFeatureEnabled(enabled)
+        case .awake:
+            if !enabled { keepAwake.stop() }
         case .windows:
             windowManager.setEnabled(enabled)
         case .wallpaper:
@@ -531,6 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTask?.cancel()
         windowManager.setEnabled(false)
         lidDisplaySleep.stop()
+        keepAwake.stop(notify: false)
         clipboard?.stop()
         clipboardWindow?.close()
         clipboardSettings?.close()
