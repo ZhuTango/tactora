@@ -642,7 +642,7 @@ private final class SettingsToolRow: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 7
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
+        let icon = NSImageView(image: ToolIcon.featureImage(symbol: symbol))
         icon.contentTintColor = .secondaryLabelColor
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 12, weight: .medium)
