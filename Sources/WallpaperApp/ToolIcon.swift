@@ -38,6 +38,22 @@ enum ToolIcon {
         }
     }
 
+    /// Normalized closed contours: move, line, and cubic curve coordinates.
+    private static func contour(_ segments: [[CGFloat]]) -> NSBezierPath {
+        let path = NSBezierPath()
+        for s in segments {
+            switch s[0] {
+            case 0: path.move(to: NSPoint(x: s[1], y: s[2]))
+            case 1: path.line(to: NSPoint(x: s[1], y: s[2]))
+            default: path.curve(to: NSPoint(x: s[5], y: s[6]),
+                                controlPoint1: NSPoint(x: s[1], y: s[2]),
+                                controlPoint2: NSPoint(x: s[3], y: s[4]))
+            }
+        }
+        path.close()
+        return path
+    }
+
     private static func rounded(_ rect: NSRect, radius: CGFloat) -> NSBezierPath {
         NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
     }
@@ -70,31 +86,69 @@ enum ToolIcon {
         if let cached = featureCache[symbol] { return cached }
         let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
             let rect = NSRect(x: 1, y: 1, width: 18, height: 18)
-            if symbol == "square.stack.3d.up" { mark(rect) }
+            if symbol == "square.stack.3d.up" {
+                canvas(rect) {
+                    let upper = contour([
+                        [0, 30, 8], [2, 8, 8, 4, 20, 4, 36], [1, 4, 55],
+                        [2, 4, 64, 12, 68, 26, 68], [1, 41, 68],
+                        [2, 51, 68, 51, 53, 41, 53], [1, 34, 53],
+                        [2, 18, 53, 18, 26, 37, 26], [1, 53, 26],
+                        [2, 67, 26, 67, 8, 53, 8]
+                    ])
+                    upper.fill()
+                    let lower = upper.copy() as! NSBezierPath
+                    lower.transform(using: AffineTransform(m11: -1, m12: 0, m21: 0, m22: -1, tX: 100, tY: 100))
+                    lower.fill()
+                }
+            }
             else if symbol.hasPrefix("cup.and.saucer") { cup(rect) }
             else {
                 canvas(rect) {
                     switch symbol {
                     case "doc.on.clipboard":
-                        let body = rounded(NSRect(x: 12, y: 16, width: 76, height: 80), radius: 18)
-                        body.append(rounded(NSRect(x: 25, y: 29, width: 50, height: 54), radius: 10))
-                        body.windingRule = .evenOdd; body.fill()
-                        rounded(NSRect(x: 30, y: 4, width: 40, height: 28), radius: 10).fill()
+                        // Open shoulders and the asymmetric page corner follow the approved artwork.
+                        contour([
+                            [0, 27, 17], [2, 12, 17, 7, 25, 7, 39], [1, 7, 84],
+                            [2, 7, 96, 15, 99, 28, 99], [1, 76, 99],
+                            [2, 90, 99, 93, 90, 93, 78], [1, 93, 36],
+                            [2, 93, 22, 87, 17, 76, 17], [1, 76, 29],
+                            [2, 82, 31, 82, 35, 82, 41], [1, 82, 49],
+                            [2, 82, 59, 73, 62, 66, 62], [1, 62, 62],
+                            [2, 56, 62, 58, 72, 58, 77],
+                            [2, 58, 85, 52, 88, 45, 88], [1, 30, 88],
+                            [2, 21, 88, 20, 82, 20, 75], [1, 20, 45],
+                            [2, 20, 38, 24, 35, 29, 34]
+                        ]).fill()
+                        contour([
+                            [0, 42, 4], [2, 36, 4, 35, 8, 35, 13],
+                            [2, 24, 16, 27, 30, 36, 30], [1, 64, 30],
+                            [2, 74, 30, 76, 16, 65, 13],
+                            [2, 65, 7, 61, 4, 56, 4]
+                        ]).fill()
                     case "photo":
-                        let frame = rounded(NSRect(x: 4, y: 9, width: 92, height: 82), radius: 20)
-                        frame.append(rounded(NSRect(x: 17, y: 22, width: 66, height: 56), radius: 10))
-                        frame.windingRule = .evenOdd; frame.fill()
-                        NSBezierPath(ovalIn: NSRect(x: 61, y: 30, width: 14, height: 14)).fill()
-                        let hill = NSBezierPath(); hill.move(to: NSPoint(x: 12, y: 76))
-                        hill.curve(to: NSPoint(x: 52, y: 59), controlPoint1: NSPoint(x: 28, y: 77), controlPoint2: NSPoint(x: 31, y: 40))
-                        hill.curve(to: NSPoint(x: 88, y: 72), controlPoint1: NSPoint(x: 71, y: 78), controlPoint2: NSPoint(x: 73, y: 72))
-                        hill.line(to: NSPoint(x: 88, y: 85)); hill.line(to: NSPoint(x: 12, y: 85)); hill.close(); hill.fill()
+                        contour([
+                            [0, 23, 9], [2, 9, 9, 4, 19, 4, 32], [1, 4, 60],
+                            [2, 11, 57, 16, 52, 16, 44], [1, 16, 32],
+                            [2, 16, 24, 22, 21, 29, 21], [1, 72, 21],
+                            [2, 81, 21, 84, 26, 84, 34], [1, 84, 57],
+                            [2, 84, 72, 65, 66, 53, 55],
+                            [2, 35, 37, 24, 62, 4, 68], [1, 4, 75],
+                            [2, 4, 89, 13, 91, 25, 91], [1, 76, 91],
+                            [2, 91, 91, 96, 84, 96, 72], [1, 96, 31],
+                            [2, 96, 16, 90, 9, 76, 9]
+                        ]).fill()
+                        NSBezierPath(ovalIn: NSRect(x: 57, y: 30, width: 17, height: 17)).fill()
                     default:
-                        let frame = rounded(NSRect(x: 4, y: 10, width: 92, height: 80), radius: 18)
-                        frame.append(rounded(NSRect(x: 17, y: 24, width: 66, height: 52), radius: 8))
+                        let frame = rounded(NSRect(x: 4, y: 10, width: 92, height: 80), radius: 17)
+                        frame.append(contour([
+                            [0, 25, 24], [2, 18, 24, 16, 29, 16, 35], [1, 16, 66],
+                            [2, 16, 75, 20, 78, 28, 78], [1, 52, 78],
+                            [2, 60, 78, 61, 73, 61, 66], [1, 61, 49],
+                            [2, 61, 42, 64, 39, 71, 39], [1, 77, 39],
+                            [2, 88, 39, 88, 24, 77, 24]
+                        ]))
                         frame.windingRule = .evenOdd; frame.fill()
-                        rounded(NSRect(x: 24, y: 31, width: 24, height: 38), radius: 7).fill()
-                        rounded(NSRect(x: 55, y: 31, width: 21, height: 12), radius: 6).fill()
+                        rounded(NSRect(x: 25, y: 33, width: 28, height: 37), radius: 8).fill()
                     }
                 }
             }
