@@ -236,6 +236,30 @@ struct Preview {
         switcher.moveConfigured(fixtureApp.id, before: fixtureApp.id)
         precondition(switcher.panelItems.first?.id == fixtureApp.id)
         print("PASS: direct insertion, move-to-top and end-of-list ordering")
+        switcher.recordActivation(extraApp.id)
+        switcher.recordActivation(extraApp.id)
+        switcher.recordActivation(fixtureApp.id)
+        switcher.recordActivation(extraApp.id)
+        precondition(switcher.switchCount(for: extraApp.id) == 2 && switcher.switchCount(for: fixtureApp.id) == 1)
+        switcher.frequencySorting = true
+        precondition(switcher.panelItems.map(\.id) == [extraApp.id, fixtureApp.id])
+        precondition(switcher.configuredApps.first?.id == fixtureApp.id, "Frequency order must not overwrite manual order")
+        let frequencyRestored = AppSwitcher(defaults: switcherDefaults, start: false)
+        precondition(frequencyRestored.frequencySorting && frequencyRestored.switchCount(for: extraApp.id) == 2)
+        precondition(frequencyRestored.panelItems.first?.id == extraApp.id)
+        switcher.recordActivation(fixtureApp.id)
+        precondition(switcher.panelItems.first?.id == fixtureApp.id, "Ties must follow manual order")
+        switcher.recordActivation("local.tango.macbglive")
+        switcher.recordActivation("system.helper", isRegular: false)
+        precondition(switcher.switchCount(for: "local.tango.macbglive") == 0 && switcher.switchCount(for: "system.helper") == 0)
+        switcher.setFeatureEnabled(false)
+        switcher.recordActivation(extraApp.id)
+        precondition(switcher.switchCount(for: extraApp.id) == 2)
+        switcher.setFeatureEnabled(true)
+        switcher.frequencySorting = false
+        precondition(switcher.panelItems.first?.id == fixtureApp.id)
+        print("PASS: activation counts, deduplication, persistence, frequency/tie ordering and disabled tracking")
+
         precondition(AppSwitcher(defaults: switcherDefaults, start: false).panelItems.map(\.id) == [fixtureApp.id, extraApp.id])
         try switcher.setVisibility(fixtureApp, show: false)
         precondition(switcher.orderedApps([extraApp, fixtureApp]).first?.id == fixtureApp.id)
@@ -670,6 +694,12 @@ struct Preview {
         // AppKit modal checks stop the command-line async main runloop; keep this final UI phase synchronous.
         let switcherView = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? AppSwitcherSettingsView }.first!
         switcherView.applyInventory(AppSwitcher.discover())
+        let frequencyOption = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "appSwitcherFrequencySorting" }!
+        precondition(frequencyOption.state == .off)
+        frequencyOption.performClick(nil)
+        precondition(switcher.frequencySorting)
+        frequencyOption.performClick(nil)
+        precondition(!switcher.frequencySorting)
         let appsTable = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTableView }.first!
         precondition(appsTable.numberOfRows > 1)
         precondition(appsTable.tableColumns.map { $0.identifier.rawValue } == ["app", "alias", "shortcut", "show"])

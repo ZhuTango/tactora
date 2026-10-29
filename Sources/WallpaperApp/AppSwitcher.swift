@@ -43,6 +43,40 @@ final class AppSwitcher: NSObject {
     private var hold = OptionHoldState()
     private var panel: NSPanel?
     private var panelScreenWidth: CGFloat?
+    private var activationObserver: NSObjectProtocol?
+    private var lastActiveID: String?
+    private var switchCounts: [String: Int] = [:]
+    private var panelOrderDirty = false
+    var frequencySorting: Bool {
+        get { defaults.bool(forKey: "appSwitcherFrequencySorting") }
+        set {
+            defaults.set(newValue, forKey: "appSwitcherFrequencySorting")
+            hidePanelIfVisible(); panel = nil; onChange?()
+        }
+    }
+    func switchCount(for id: String) -> Int { switchCounts[id] ?? 0 }
+    // Called only for actual workspace activation events, never shortcut requests.
+    func recordActivation(_ id: String, isRegular: Bool = true) {
+        guard featureEnabled, id != lastActiveID else { return }
+        lastActiveID = id
+        guard isRegular, id != "local.tango.macbglive" else { return }
+        let count = switchCount(for: id)
+        switchCounts[id] = count < Int.max ? count + 1 : count
+        defaults.set(switchCounts, forKey: "appSwitcherActivationCounts")
+        if frequencySorting { panelOrderDirty = true }
+    }
+    private func observeActivations() {
+        guard activationObserver == nil, featureEnabled else { return }
+        lastActiveID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let id = app.bundleIdentifier else { return }
+            let regular = app.activationPolicy == .regular
+            Task { @MainActor [weak self] in self?.recordActivation(id, isRegular: regular) }
+        }
+    }
     private var configurationOpen = false
     private(set) var featureEnabled = true
     var onChange: (() -> Void)?
@@ -63,18 +97,23 @@ final class AppSwitcher: NSObject {
     init(defaults: UserDefaults = .standard, start: Bool = true) {
         self.defaults = defaults
         super.init()
+        switchCounts = (defaults.dictionary(forKey: "appSwitcherActivationCounts") as? [String: Int] ?? [:]).filter { $0.value >= 0 }
         if let data = defaults.data(forKey: "appSwitcherBindings") {
             do { bindings = try JSONDecoder().decode([String: SwitcherBinding].self, from: data) }
             catch { loadError = "应用切换配置无法读取，原数据已保留。" }
         }
         if start {
+            observeActivations()
             for (id, binding) in bindings {
                 if let value = binding.shortcut { install(value, id: id) }
             }
             updateTimer()
         }
     }
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+    }
     // Check declared application resources rather than loading hundreds of icon bitmaps.
     // Manual additions intentionally bypass this automatic-inventory filter.
     nonisolated static func hasApplicationIcon(_ bundle: Bundle) -> Bool {
@@ -140,7 +179,14 @@ final class AppSwitcher: NSObject {
     var configuredApps: [SwitcherApp] {
         orderedApps(bindings.map { SwitcherApp(id: $0.key, name: $0.value.name, path: $0.value.path) }).filter { isConfigured($0.id) }
     }
-    var panelItems: [SwitcherApp] { configuredApps.filter { bindings[$0.id]?.showInPanel == true } }
+    var panelItems: [SwitcherApp] {
+        let manual = configuredApps.filter { bindings[$0.id]?.showInPanel == true }
+        guard frequencySorting else { return manual }
+        return manual.enumerated().sorted {
+            let a = switchCount(for: $0.element.id), b = switchCount(for: $1.element.id)
+            return a == b ? $0.offset < $1.offset : a > b
+        }.map(\.element)
+    }
     func moveConfigured(_ id: String, offset: Int) {
         guard loadError == nil, offset == -1 || offset == 1 else { return }
         var ids = configuredApps.map(\.id)
@@ -225,8 +271,13 @@ final class AppSwitcher: NSObject {
         guard featureEnabled != enabled else { return }
         featureEnabled = enabled
         if enabled {
+            observeActivations()
             for (id, binding) in bindings { if let key = binding.shortcut { install(key, id: id) } }
-        } else { shortcuts.removeAll(); hidePanelIfVisible(); panel = nil }
+        } else {
+            shortcuts.removeAll(); hidePanelIfVisible(); panel = nil
+            if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver); self.activationObserver = nil }
+            lastActiveID = nil
+        }
         updateTimer()
     }
     func pausePanel(_ value: Bool) { configurationOpen = value; hold.suppress(); hidePanelIfVisible() }
@@ -249,10 +300,11 @@ final class AppSwitcher: NSObject {
         guard featureEnabled, visible, !configurationOpen else { hidePanelIfVisible(); return }
         let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
         let screenWidth = screen?.visibleFrame.width ?? 1120
-        if panel == nil || panelScreenWidth != screenWidth {
+        if panel == nil || panelScreenWidth != screenWidth || (panelOrderDirty && panel?.isVisible != true) {
             hidePanelIfVisible()
             panel = makePanel(availableWidth: screenWidth)
             panelScreenWidth = screenWidth
+            panelOrderDirty = false
         }
         guard let panel, !panel.isVisible else { return }
         if let frame = screen?.visibleFrame {
@@ -284,7 +336,7 @@ final class AppSwitcher: NSObject {
             button.title = displayName(for: app); button.image = NSWorkspace.shared.icon(forFile: app.path)
             button.shortcutText = bindings[app.id]?.shortcut?.label ?? "—"
             button.target = self; button.action = #selector(panelClick(_:)); button.cell?.representedObject = app.id
-            button.toolTip = failures[app.id] ?? displayName(for: app) + " · " + button.shortcutText
+            button.toolTip = failures[app.id] ?? displayName(for: app) + " · " + button.shortcutText + " · \(switchCount(for: app.id))"
             button.setAccessibilityLabel(displayName(for: app) + " · " + button.shortcutText)
             button.activeApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.id
             root.addSubview(button)
@@ -332,6 +384,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private let search = NSSearchField()
     private let table = NSTableView()
     private let status = NSTextField(wrappingLabelWithString: "")
+    private let frequency = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let enabled = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private var apps: [SwitcherApp] = []
     private var filtered: [SwitcherApp] = []
@@ -354,6 +407,11 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         enabled.title = AppLanguage.english ? "Show app panel when holding Option" : "长按 Option 显示应用切换面板"
         enabled.state = manager.panelEnabled ? .on : .off
         enabled.target = self; enabled.action = #selector(togglePanel)
+        frequency.title = AppLanguage.english ? "Sort Option panel by switch frequency" : "按切换频次排列 Option 面板"
+        frequency.state = manager.frequencySorting ? .on : .off
+        frequency.identifier = NSUserInterfaceItemIdentifier("appSwitcherFrequencySorting")
+        frequency.target = self; frequency.action = #selector(toggleFrequency)
+        frequency.toolTip = AppLanguage.english ? "Counts actual foreground switches locally. Ties use manual order. Hover an app to see its count." : "统计实际切到前台的次数，仅保存在本机；同频次使用手动顺序。悬停应用可查看次数。"
         search.placeholderString = AppLanguage.english ? "Search apps, paths or pinyin" : "搜索应用、路径、拼音或首字母"
         search.delegate = self
         refreshButton.title = AppLanguage.english ? "Refresh apps" : "刷新应用"
@@ -386,7 +444,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         refreshButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
         addApp.widthAnchor.constraint(equalToConstant: 88).isActive = true
         search.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        let top = NSStackView(views: [heading, hint, enabled, delayRow, row, orderRow]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
+        let top = NSStackView(views: [heading, hint, enabled, frequency, delayRow, row, orderRow]); top.orientation = .vertical; top.alignment = .leading; top.spacing = 12
         top.translatesAutoresizingMaskIntoConstraints = false; addSubview(top)
         orderRow.widthAnchor.constraint(equalTo: top.widthAnchor).isActive = true
         row.widthAnchor.constraint(equalTo: top.widthAnchor).isActive = true
@@ -533,6 +591,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         delaySlider.doubleValue = manager.holdDelay
         updateDelayLabel()
     }
+    @objc private func toggleFrequency() { manager.frequencySorting = frequency.state == .on }
     @objc private func togglePanel() { manager.panelEnabled = enabled.state == .on }
     func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { AppSwitcherRowView() }
@@ -563,6 +622,7 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             cell.textField?.stringValue = app.displayName
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: app.path)
             cell.toolTip = cell.draggable ? (AppLanguage.english ? "Drag to reorder · " : "拖拽调整顺序 · ") + app.path : (canReorder ? app.path : (AppLanguage.english ? "Clear search to drag" : "清空搜索后可拖拽排序"))
+            cell.toolTip = (cell.toolTip ?? "") + (AppLanguage.english ? " · Switches: " : " · 切换次数：") + String(manager.switchCount(for: app.id))
             return cell
         }
         if key.rawValue == "alias" {
