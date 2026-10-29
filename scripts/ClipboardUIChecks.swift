@@ -23,26 +23,29 @@ struct Preview {
             manager.panelEnabled = false
             let finder = SwitcherApp(id: "com.apple.finder", name: "Finder", path: "/System/Library/CoreServices/Finder.app")
             try manager.configure(finder, shortcut: nil, show: true)
-            manager.activate(finder.id)
-            for _ in 0..<30 {
-                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finder.id { break }
-                try await Task.sleep(nanoseconds: 100_000_000)
-            }
-            precondition(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finder.id)
             let runningFinder = NSRunningApplication.runningApplications(withBundleIdentifier: finder.id).first!
-            manager.activate(finder.id)
-            for _ in 0..<30 {
-                if runningFinder.isHidden { break }
-                try await Task.sleep(nanoseconds: 100_000_000)
+            func visibleFinderWindows() -> Set<Int> {
+                let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+                return Set(windows.compactMap { info in
+                    guard (info[kCGWindowOwnerPID as String] as? Int) == Int(runningFinder.processIdentifier),
+                          (info[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+                    return info[kCGWindowNumber as String] as? Int
+                })
             }
-            guard runningFinder.isHidden else { throw NSError(domain: "AppToggleTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "Second shortcut must hide the frontmost app"]) }
+            let initial = visibleFinderWindows()
             manager.activate(finder.id)
             for _ in 0..<30 {
-                if runningFinder.isActive && !runningFinder.isHidden { break }
+                if runningFinder.isActive && !runningFinder.isHidden && !visibleFinderWindows().isEmpty { break }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             precondition(runningFinder.isActive && !runningFinder.isHidden)
-            print("PASS: activates, hides and restores Finder without minimization or accessibility permissions")
+            let opened = visibleFinderWindows()
+            precondition(!opened.isEmpty, "Finder activation must show a window")
+            manager.activate(finder.id)
+            try await Task.sleep(nanoseconds: 500_000_000)
+            precondition(runningFinder.isActive && !runningFinder.isHidden, "Finder shortcut must not hide its window")
+            precondition(visibleFinderWindows() == opened, "Repeating Finder shortcut must reuse existing windows")
+            print("PASS: Finder reopen shows a window, repeats reuse it without hiding; initial visible windows: \(initial.count)")
             return
         }
         for path in ["/System/Library/CoreServices/CoreLocationAgent.app", "/System/Library/CoreServices/Coverage Details.app", "/System/Library/CoreServices/Database Events.app"] {

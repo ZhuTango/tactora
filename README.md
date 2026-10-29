@@ -2,7 +2,7 @@
 
 项目仓库：[ZhuTango/light-tools](https://github.com/ZhuTango/light-tools)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.7**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.8**，支持 macOS 13 及以上。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
