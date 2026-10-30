@@ -355,11 +355,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .clipboard: title = AppLanguage.text("剪贴板")
             case .wallpaper: title = AppLanguage.text("桌面背景")
             case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
+            case .text: title = AppLanguage.english ? "Text Tools" : "文本快捷处理"
             case .ocr: title = AppLanguage.english ? "OCR" : "截图识字"
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder"]
+            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
             let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
             row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off

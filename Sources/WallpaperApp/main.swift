@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let lidDisplaySleep = LidDisplaySleep()
     private let keepAwake = KeepAwake()
     private var ocr: OCRManager!
+    private var textWindow: TextProcessingWindow?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
@@ -87,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshDisplays()
         if let url = pendingOpenURLs.last { openFile(url); pendingOpenURLs.removeAll() }
         if CommandLine.arguments.contains("--settings") { showSettings() }
+        if CommandLine.arguments.contains("--text-tools") { showTextTools() }
         if CommandLine.arguments.contains("--request-accessibility") {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
@@ -232,6 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.ocr.isEnabled() {
             let item = add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
             if let shortcut = ocr.shortcut { applyShortcut(shortcut, to: item) }
+        }
+        if ToolFeature.text.isEnabled() {
+            add(AppLanguage.english ? "Text Tools…" : "文本快捷处理…", to: self.menu, action: #selector(showTextTools))
         }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
@@ -558,6 +563,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showClipboardSettings(); clipboardSettings?.selectSection("awake")
     }
 
+    @objc private func showTextTools() {
+        guard ToolFeature.text.isEnabled() else { return }
+        if textWindow == nil {
+            let panel = TextProcessingWindow()
+            panel.onClose = { [weak self] in self?.textWindow = nil }
+            textWindow = panel
+        }
+        textWindow?.present()
+    }
+
     @objc private func captureText() { ocr.capture() }
 
     @objc private func showSettings() { showClipboardSettings(); clipboardSettings?.selectSection("general") }
@@ -604,6 +619,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else { clipboardShortcut.unregister(); shortcutRegistered = false }
         case .apps:
             appSwitcher.setFeatureEnabled(enabled)
+        case .text:
+            if !enabled { textWindow?.close(); textWindow = nil }
         case .ocr:
             ocr.refreshEnabled()
             clipboardWindow?.close(); clipboardWindow = nil
@@ -627,6 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTask?.cancel()
         windowManager.setEnabled(false)
         ocr?.stop()
+        textWindow?.close()
         lidDisplaySleep.stop()
         keepAwake.stop(notify: false)
         clipboard?.stop()

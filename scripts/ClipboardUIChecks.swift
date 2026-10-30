@@ -729,7 +729,7 @@ struct Preview {
             precondition(feature.isEnabled(in: switcherDefaults) == enabled)
         }
         let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSSwitch }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
-        precondition(featureButtons.count == 6)
+        precondition(featureButtons.count == 7)
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
         manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 108)
         manyTools.layoutSubtreeIfNeeded()
@@ -748,12 +748,12 @@ struct Preview {
         print("PASS: 18 compact tool rows fit adaptive columns with bounded height and reachable overflow")
 
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 6)
+        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 7)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 7 && featureChanges == 12)
+        precondition(tabs.numberOfTabViewItems == 7 && featureChanges == 14)
         print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()

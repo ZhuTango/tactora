@@ -2,7 +2,7 @@
 
 项目仓库：[ZhuTango/tactora](https://github.com/ZhuTango/tactora)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.16.4**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.17.0**，支持 macOS 13 及以上。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
@@ -32,6 +32,14 @@
 - 可配置全局呼出快捷键；打开后直接输入搜索。
 - 回车或双击复制，可选自动粘贴到原应用；自动粘贴需要辅助功能权限。
 - 横向滚动与懒加载，非文字编辑状态下可按 Backspace 删除。
+
+### 文本快捷处理
+
+- 从菜单栏打开独立面板，左侧粘贴/输入原文，右侧预览结果；只在点击“复制结果”时写入剪贴板。
+- 支持去整段文字首尾空白、用空格合并换行、去除空行、按行精确去重（保留首次顺序）、转大写和转小写。
+- 每次处理一种操作，切换操作始终基于原文，不叠加修改；支持 Unicode、CRLF / CR / LF 换行。
+- 全部本地处理，输入上限 1 MB，编辑时延迟更新预览；关闭或停用后清空面板内容，不保存文本。
+- 通用设置中可独立停用；停用后隐藏菜单入口并关闭面板。可用 `--text-tools` 启动参数直接打开。
 
 ### 截图识字 OCR
 
@@ -87,6 +95,10 @@ bash scripts/test.sh --wallpaper-preferences-only
 
 # AppKit 界面与交互检查，需要桌面会话
 bash scripts/test-clipboard-ui.sh
+
+# 文本处理与独立面板
+bash scripts/test-text-processing.sh
+bash scripts/test-text-processing-ui.sh
 
 # OCR 中英文实图、存储与异步交付
 bash scripts/test-ocr.sh
