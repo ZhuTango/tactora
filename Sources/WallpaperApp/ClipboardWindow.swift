@@ -422,11 +422,9 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                     self.pinSelected(); return nil
                 }
                 if event.keyCode == 36 { self.copySelected(); return nil }
-                // Empty search has no caret movement to preserve; retain typing focus while navigating.
+                // Bare arrows always select results; modified arrows retain search caret editing.
                 if self.handleDeleteKey(event) { return nil }
-                let editing = self.window?.firstResponder is NSTextView
-                if (!editing || self.search.stringValue.isEmpty),
-                   event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
+                if event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
                    [123, 124].contains(event.keyCode) {
                     self.moveSelection(event.keyCode == 124 ? 1 : -1); return nil
                 }

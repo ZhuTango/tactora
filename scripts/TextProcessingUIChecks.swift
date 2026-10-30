@@ -18,6 +18,62 @@ import AppKit
         }
         preconditionFailure("Preview timed out")
     }
+    struct CheckFailure: Error { let message: String }
+    static func require(_ value: Bool, _ message: String) throws {
+        if !value { throw CheckFailure(message: message) }
+    }
+    @MainActor static func checkEditingKeys(_ panel: TextProcessingWindow, window: NSWindow) async throws {
+        let general = NSPasteboard.general
+        let originalBoard: [NSPasteboardItem] = general.pasteboardItems?.map { item in
+            let saved = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { saved.setData(data, forType: type) } }
+            return saved
+        } ?? []
+        defer { general.clearContents(); general.writeObjects(originalBoard) }
+        func editingKey(_ key: String, code: UInt16, shift: Bool = false, editor: NSTextView) async throws {
+            window.makeFirstResponder(editor)
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: shift ? [.command, .shift] : [.command], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: key,
+                charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+            try require(window.performKeyEquivalent(with: event), "Text editor must handle Command-\(key)")
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        general.clearContents(); general.setString("快捷粘贴", forType: .string)
+        try await editingKey("v", code: 9, editor: panel.input)
+        try require(panel.input.string == "快捷粘贴", "Command-V must paste into editor")
+        try await editingKey("a", code: 0, editor: panel.input)
+        try await editingKey("c", code: 8, editor: panel.input)
+        try require(general.string(forType: .string) == "快捷粘贴", "Copy selected text")
+        try await editingKey("x", code: 7, editor: panel.input)
+        try require(panel.input.string.isEmpty, "Cut selected text")
+        try await editingKey("z", code: 6, editor: panel.input)
+        try require(panel.input.string == "快捷粘贴", "Undo cut")
+        try await editingKey("z", code: 6, shift: true, editor: panel.input)
+        try require(panel.input.string.isEmpty, "Redo cut")
+        let mode = views(window.contentView!).compactMap { $0 as? NSSegmentedControl }.first { $0.identifier?.rawValue == "text.mode" }!
+        mode.selectedSegment = TextToolMode.compare.rawValue
+        NSApp.sendAction(mode.action!, to: mode.target, from: mode)
+        panel.setInput("原文")
+        panel.comparison.string = ""
+        general.clearContents(); general.setString("新文", forType: .string)
+        try await editingKey("v", code: 9, editor: panel.comparison)
+        try await ready(panel)
+        try require(panel.comparison.string == "新文" && panel.output.string.contains("+ 新文"), "Paste comparison updates diff")
+        mode.selectedSegment = 0
+        NSApp.sendAction(mode.action!, to: mode.target, from: mode)
+        try await ready(panel)
+        panel.comparison.string = ""
+        // Read-only output accepts selection/copy but must ignore a paste.
+        panel.output.string = "只读结果"
+        try await editingKey("a", code: 0, editor: panel.output)
+        try await editingKey("c", code: 8, editor: panel.output)
+        try require(general.string(forType: .string) == "只读结果", "Copy output")
+        general.clearContents(); general.setString("不可覆盖", forType: .string)
+        try await editingKey("v", code: 9, editor: panel.output)
+        try require(panel.output.string == "只读结果", "Output remains read-only")
+        panel.setInput("")
+    }
     @MainActor static func check() async throws {
         let suite = "text-ui-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
@@ -27,6 +83,7 @@ import AppKit
         let panel = TextProcessingWindow(defaults: defaults, pasteboard: board)
         panel.present()
         let window = panel.window!, root = window.contentView!
+        try await checkEditingKeys(panel, window: window)
         let descendants = views(root)
         let copy = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.copy" }!
         let clear = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.clear" }!

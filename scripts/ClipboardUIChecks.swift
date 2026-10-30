@@ -98,7 +98,7 @@ struct Preview {
         let store = ClipboardStore(url: root.appendingPathComponent("history.json"), pasteboard: board)
         defer { store.stop(); board.releaseGlobally(); try? FileManager.default.removeItem(at: root) }
         try store.setEnabled(true); store.stop()
-        for text in ["周会记录：先确认需求范围，再完成实现与验证。", "https://developer.apple.com/documentation/appkit", "一段可以反复使用的文字\n支持中文搜索与多行内容。"] {
+        for text in ["周会记录：先确认需求文档，再完成实现与验证。", "https://developer.apple.com/documentation/appkit", "一段可以反复使用的文字\n支持中文搜索与多行内容。"] {
             board.clearContents(); board.setString(text, forType: .string); store.poll()
         }
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
@@ -389,7 +389,16 @@ struct Preview {
         precondition(input.stringValue == "设计", "Typing immediately after opening must search")
         let textSelection = panel.selected
         NSApp.sendEvent(rightArrow)
-        precondition(panel.selected == textSelection, "Nonempty search keeps bare arrows for caret editing")
+        precondition(panel.selected == textSelection, "One matching result stays selected at the edge")
+        input.stringValue = "文"
+        panel.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: input))
+        precondition(store.search("文").count > 1, "Navigation fixture needs multiple matches")
+        let filteredSelection = panel.selected
+        NSApp.sendEvent(rightArrow)
+        precondition(panel.selected != filteredSelection, "Nonempty search must allow result navigation")
+        precondition(window.firstResponder === editor && input.stringValue == "文", "Navigation preserves query and typing focus")
+        input.stringValue = "设计"
+        panel.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: input))
         let searchScroll = allViews(view).compactMap { $0 as? ClipboardHorizontalScrollView }.first!
         let searchCard = searchScroll.documentView!.subviews.first!
         input.stringValue = "设计说"

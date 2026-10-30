@@ -1,10 +1,34 @@
 import AppKit
 
+/// Accessory apps have no standard Edit menu to dispatch these key equivalents.
+@MainActor
+final class TextToolsEditor: NSTextView {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self, !hasMarkedText() else { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard modifiers == .command || modifiers == [.command, .shift] else { return super.performKeyEquivalent(with: event) }
+        if modifiers == [.command, .shift] {
+            guard event.keyCode == 6 else { return super.performKeyEquivalent(with: event) }
+            if isEditable, undoManager?.canRedo == true { undoManager?.redo() }
+            return true
+        }
+        switch event.keyCode {
+        case 0: selectAll(nil)
+        case 8: copy(nil)
+        case 7: if isEditable { cut(nil) }
+        case 9: if isEditable { paste(nil) }
+        case 6: if isEditable, undoManager?.canUndo == true { undoManager?.undo() }
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+}
+
 @MainActor
 final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
-    let input = NSTextView()
-    let output = NSTextView()
-    let comparison = NSTextView()
+    let input = TextToolsEditor()
+    let output = TextToolsEditor()
+    let comparison = TextToolsEditor()
     private let mode = NSSegmentedControl(labels: AppLanguage.english ? ["Auto", "JSON", "Timestamp", "Compare", "Cleanup"] : ["自动识别", "JSON", "时间戳", "文本对比", "基础整理"], trackingMode: .selectOne, target: nil, action: nil)
     private var comparisonPane: NSView!
     private let detection = NSTextField(labelWithString: "")
