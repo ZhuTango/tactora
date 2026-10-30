@@ -88,10 +88,9 @@ import AppKit
         let descendants = views(root)
         let copy = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.copy" }!
         let clear = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.clear" }!
-        let paste = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.paste" }!
         let operation = descendants.compactMap { $0 as? NSPopUpButton }.first!
         precondition(panel.input.string.isEmpty, "Opening must not read the clipboard automatically")
-        NSApp.sendAction(paste.action!, to: paste.target, from: paste)
+        panel.setInput("clipboard sentinel")
         try await ready(panel)
         precondition(panel.input.string == "clipboard sentinel" && panel.output.string == "clipboard sentinel")
         func choose(_ value: TextToolMode) { Self.choose(value, in: root) }
@@ -128,21 +127,14 @@ import AppKit
         let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
         root.cacheDisplay(in: root.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/text-tools-preview.png"))
-        let reuse = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.continue" }!
-        NSApp.sendAction(reuse.action!, to: reuse.target, from: reuse)
-        try await ready(panel)
-        precondition(panel.input.string == "方寸\nTactora\n文本快捷处理", "Result can be reused")
-        panel.input.undoManager?.undo()
-        precondition(panel.input.string == "方寸\nTactora\n方寸\n文本快捷处理", "Reusing result is undoable")
         let sample = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.example" }!
         NSApp.sendAction(sample.action!, to: sample.target, from: sample)
         precondition(panel.input.string == "方寸\nTactora\n方寸\n文本快捷处理", "Examples cannot overwrite existing input")
         choose(.json); choose(.basic)
         precondition(operation.indexOfSelectedItem == 3, "Each tool remembers its operation")
         choose(.compare)
-        let pasteComparison = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.pasteComparison" }!
-        board.clearContents(); board.setString("不同的版本", forType: .string)
-        NSApp.sendAction(pasteComparison.action!, to: pasteComparison.target, from: pasteComparison)
+        panel.comparison.string = "不同的版本"
+        panel.textDidChange(Notification(name: NSText.didChangeNotification, object: panel.comparison))
         try await ready(panel)
         precondition(panel.comparison.string == "不同的版本" && panel.output.string.contains("+ 不同的版本"))
         window.setContentSize(NSSize(width: 900, height: 500)); root.layoutSubtreeIfNeeded()

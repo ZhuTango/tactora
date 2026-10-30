@@ -34,7 +34,6 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
     private let toolTitle = NSTextField(labelWithString: "")
     private let panes = NSStackView()
     private let inputPair = NSStackView()
-    private let continueButton = NSButton()
     private var comparisonPane: NSView!
     private let detection = NSTextField(labelWithString: "")
     private let operation = NSPopUpButton()
@@ -144,17 +143,11 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
             copyButton.title = AppLanguage.english ? "Copy" : "复制结果"
             copyButton.target = self; copyButton.action = #selector(copyResult); copyButton.bezelStyle = .rounded
             copyButton.identifier = NSUserInterfaceItemIdentifier("text.copy"); copyButton.isEnabled = false
-            continueButton.title = AppLanguage.english ? "Use as Input" : "继续处理"
-            continueButton.target = self; continueButton.action = #selector(useResult); continueButton.bezelStyle = .rounded
-            continueButton.identifier = NSUserInterfaceItemIdentifier("text.continue")
-            continueButton.toolTip = AppLanguage.english ? "Use result as input; undo with Command-Z" : "把结果放入输入框，可用 ⌘Z 撤销"
-            actions = [continueButton, copyButton]
+            actions = [copyButton]
         } else {
-            let paste = button(AppLanguage.english ? "Paste" : "粘贴", editor === input ? #selector(pasteInput) : #selector(pasteComparison))
-            paste.identifier = NSUserInterfaceItemIdentifier(editor === input ? "text.paste" : "text.pasteComparison")
             let clear = button(AppLanguage.english ? "Clear" : "清空", editor === input ? #selector(clearOriginal) : #selector(clearComparison))
             clear.identifier = NSUserInterfaceItemIdentifier(editor === input ? "text.clear" : "text.clearComparison")
-            actions = [paste, clear]
+            actions = [clear]
         }
         let bar = NSStackView(views: [heading, NSView()] + actions); bar.spacing = 6
         let stack = NSStackView(views: [bar, scroll]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
@@ -181,33 +174,21 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
         return true
     }
     func textDidChange(_ notification: Notification) { schedule() }
-    @objc private func pasteInput() {
-        guard let text = pasteboard.string(forType: .string) else { setStatus(AppLanguage.english ? "Clipboard has no text." : "剪贴板中没有文字。"); return }
-        replaceEditable(input, with: text)
-    }
     @objc private func clearInput() {
         task?.cancel(); revision = UUID(); processing = false
         input.string = ""; comparison.string = ""; output.string = ""; input.undoManager?.removeAllActions(); comparison.undoManager?.removeAllActions()
-        output.isSelectable = true; copyButton.isEnabled = false; continueButton.isEnabled = false; detection.stringValue = ""
+        output.isSelectable = true; copyButton.isEnabled = false; detection.stringValue = ""
         setStatus(AppLanguage.english ? "Paste or type text on the left." : "在左侧粘贴或输入文字。")
     }
     @objc private func selectTool(_ sender: NSButton) {
         selectedMode = TextToolMode(rawValue: sender.tag) ?? .automatic
         modeChanged()
     }
-    @objc private func pasteComparison() {
-        guard let value = pasteboard.string(forType: .string), value.utf8.count <= TextProcessor.maximumBytes else { setStatus(AppLanguage.english ? "No text, or text exceeds 1 MB." : "剪贴板无文字，或超过 1 MB。"); return }
-        replaceEditable(comparison, with: value)
-    }
     @objc private func clearOriginal() { replaceEditable(input, with: "") }
     @objc private func clearComparison() { replaceEditable(comparison, with: "") }
     private func replaceEditable(_ editor: NSTextView, with text: String) {
         window?.makeFirstResponder(editor)
         editor.insertText(text, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
-    }
-    @objc private func useResult() {
-        guard !processing, !output.string.isEmpty, selectedMode != .compare else { return }
-        replaceEditable(input, with: output.string)
     }
     @objc private func loadExample() {
         guard input.string.isEmpty && (selectedMode != .compare || comparison.string.isEmpty) else {
@@ -225,7 +206,6 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
         for item in toolButtons { item.state = item.tag == selectedMode.rawValue ? .on : .off }
         toolTitle.stringValue = toolButtons[selectedMode.rawValue].title
         panes.orientation = selectedMode == .compare ? .vertical : .horizontal
-        continueButton.isHidden = selectedMode == .compare
         operation.removeAllItems()
         switch selectedMode {
         case .json:
@@ -257,7 +237,7 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
     }
     private func schedule() {
         task?.cancel(); revision = UUID(); let token = revision
-        copyButton.isEnabled = false; continueButton.isEnabled = false; output.isSelectable = false; output.textColor = .tertiaryLabelColor
+        copyButton.isEnabled = false; output.isSelectable = false; output.textColor = .tertiaryLabelColor
         guard ToolFeature.text.isEnabled(in: defaults) else { clearInput(); return }
         guard !input.string.isEmpty || (selectedMode == .compare && !comparison.string.isEmpty) else {
             processing = false; output.string = ""; output.isSelectable = true; detection.stringValue = ""
@@ -292,7 +272,6 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
                 if selected == .compare { self.highlightDiff(text) }
                 self.output.scrollRangeToVisible(NSRange(location: 0, length: 0))
                 self.copyButton.isEnabled = !text.isEmpty
-                self.continueButton.isEnabled = !text.isEmpty && text.utf8.count <= TextProcessor.maximumBytes
                 self.setStatus(AppLanguage.english ? "Original: \(source.count) characters · Result: \(text.count)" : "原文 \(source.count) 字 · 结果 \(text.count) 字")
             case .failure(let error):
                 self.output.string = ""; self.setStatus(error.localizedDescription)
