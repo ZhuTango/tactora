@@ -369,7 +369,11 @@ struct Preview {
         NSApp.sendEvent(rightArrow)
         precondition(panel.selected != initialChoice, "Empty focused search must allow bare arrow card navigation")
         precondition(window.firstResponder === editor, "Navigation must preserve immediate typing")
-        print("PASS: arrows navigate with empty search focused")
+        let selectionBeforeOption = panel.selected
+        let optionArrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{f703}", charactersIgnoringModifiers: "\u{f703}", isARepeat: false, keyCode: 124)!
+        NSApp.sendEvent(optionArrow)
+        precondition(panel.selected == selectionBeforeOption, "Option-arrow must no longer select clipboard cards")
+        print("PASS: bare arrows navigate; Option-arrow does not select cards")
         editor.setMarkedText("fangshi", selectedRange: NSRange(location: 7, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         precondition(panel.isComposingSearchText, "IME candidate confirmation must bypass clipboard shortcuts")
         let markedSelection = panel.selected
@@ -543,11 +547,12 @@ struct Preview {
             window.setContentSize(NSSize(width: navigationWidth, height: 350))
             view.layoutSubtreeIfNeeded()
             panel.refresh()
+            window.makeFirstResponder(nil)
             let navigationEntries = store.search("lazy fixture")
             let typingFocus = window.firstResponder
             for (key, indices) in [(UInt16(124), Array(1..<60)), (UInt16(123), Array((0..<59).reversed()))] {
                 for index in indices {
-                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0,
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                         windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: true, keyCode: key)!
                     NSApp.sendEvent(event)
                     pumpNavigationRunLoop()

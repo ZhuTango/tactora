@@ -65,7 +65,7 @@ enum AppLanguage {
         "别名（可留空，不修改原内容）": "Alias (optional; original content is unchanged)",
         "选择或输入新分组，留空取消分组": "Choose or type a group; leave blank to remove",
         "关闭列表": "Close", "来源未记录": "Source unavailable", "取消固定": "Unpin", "固定此项": "Pin",
-        "直接输入搜索 · ⌥←→ 选择 · 回车复制 · ⌘P 固定 · ⌫ 删除": "Type to search · ⌥←→ select · Return copy · ⌘P pin · ⌫ delete",
+        "直接输入搜索 · ←→ 选择 · 回车复制 · ⌘P 固定 · ⌫ 删除": "Type to search · ←→ select · Return copy · ⌘P pin · ⌫ delete",
         "记录已暂停，可在设置中开启": "Recording paused. Enable it in Settings.",
         "没有匹配的历史。试试其他关键词或切换内容类型。": "No matches. Try another search or content type.",
         "请选择屏幕": "Select a display", "使用系统当前背景": "Using the system wallpaper",

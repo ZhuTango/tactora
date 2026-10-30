@@ -406,8 +406,8 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                 // Empty search has no caret movement to preserve; retain typing focus while navigating.
                 if self.handleDeleteKey(event) { return nil }
                 let editing = self.window?.firstResponder is NSTextView
-                if (!editing || self.search.stringValue.isEmpty || event.modifierFlags.contains(.option)),
-                   event.modifierFlags.intersection([.command, .control, .shift]).isEmpty,
+                if (!editing || self.search.stringValue.isEmpty),
+                   event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
                    [123, 124].contains(event.keyCode) {
                     self.moveSelection(event.keyCode == 124 ? 1 : -1); return nil
                 }
@@ -474,7 +474,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         deleteButton.isEnabled = selected != nil && store.error == nil
         organizeButton.isEnabled = deleteButton.isEnabled
         status.stringValue = store.error ?? store.notice ?? (store.enabled
-            ? AppLanguage.text("直接输入搜索 · ⌥←→ 选择 · 回车复制 · ⌘P 固定 · ⌫ 删除")
+            ? AppLanguage.text("直接输入搜索 · ←→ 选择 · 回车复制 · ⌘P 固定 · ⌫ 删除")
             : AppLanguage.text("记录已暂停，可在设置中开启"))
         status.toolTip = status.stringValue
         renderingCards = true
