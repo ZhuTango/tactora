@@ -1,6 +1,6 @@
 # 发布规则
 
-适用于轻工具（Light Tools）。区分正式版本发布与修订版本推送；两者都需要验证。
+适用于方寸（Tactora）。区分正式版本发布与修订版本推送；两者都需要验证。
 
 ## 分支与版本
 
@@ -39,6 +39,12 @@
 本机构建默认要求固定签名身份，使用 `SIGNING_IDENTITY` 或 `~/Library/Application Support/Light Tools Signing/identity.sha1` 中的证书。缺少身份时构建失败，不再静默退回 ad-hoc；临时测试包须显式设置 `ALLOW_ADHOC_SIGNING=1`，不得用这种包替换已授权安装版。
 
 本地专用证书可先运行 `bash scripts/setup-local-signing.sh --prepare` 准备并检查；经用户同意后运行 `--install` 导入登录钥匙串，并仅为代码签名设置信任。证书私钥只留在本机钥匙串，不入仓库、不上传。首次从旧 ad-hoc 身份迁移到该证书仍需系统重新授权，之后保持同一证书与安装路径。此本地身份不是 Developer ID，不能宣称已公证。正式面向其他用户分发时使用稳定的 Developer ID 签名与公证；未完成时必须在发布说明中标明，不把自签名包描述为已公证。
+
+## 品牌与安装路径
+
+产品中文名「方寸」、英文名「Tactora」，安装到 `~/Applications/方寸.app`，可执行文件为 `Contents/MacOS/Tactora`。从旧名称迁移时先退出旧版，保留备份后替换，避免两个安装副本同时注册快捷键与登录项。
+
+`local.tango.macbglive` bundle ID、配置目录和 `Light Tools Signing` 证书配置属于兼容身份，保持不变，不因改名重新生成证书。历史提交、标签和发布资产保留当时名称。
 
 ## 发布说明模板
 

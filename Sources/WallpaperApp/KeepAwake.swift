@@ -41,7 +41,7 @@ final class KeepAwake {
         var properties: [String: Any] = [
             kIOPMAssertionTypeKey: kIOPMAssertionTypeNoIdleSleep,
             kIOPMAssertionLevelKey: kIOPMAssertionLevelOn,
-            kIOPMAssertionNameKey: "Light Tools — Keep Awake"
+            kIOPMAssertionNameKey: "Tactora — Keep Awake"
         ]
         if minutes > 0 {
             properties[kIOPMAssertionTimeoutKey] = Double(minutes * 60)
@@ -100,8 +100,8 @@ final class KeepAwakeSettingsView: NSView {
         let title = NSTextField(labelWithString: AppLanguage.english ? "Keep Awake" : "防止休眠")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         let note = NSTextField(wrappingLabelWithString: AppLanguage.english
-            ? "Prevent idle system sleep while allowing display sleep and lid blackout. Closing the lid or choosing Sleep may still put the Mac to sleep. Sessions end when Light Tools quits."
-            : "阻止电脑因空闲休眠，仍允许屏幕息屏和合盖遮黑。合盖或主动选择休眠仍可能让电脑休眠；退出轻工具即解除防休眠，重启后不会自动开启。")
+            ? "Prevent idle system sleep while allowing display sleep and lid brightness control. Closing the lid or choosing Sleep may still put the Mac to sleep. Sessions end when Tactora quits."
+            : "阻止电脑因空闲休眠，仍允许屏幕息屏和合盖亮度控制。合盖或主动选择休眠仍可能让电脑休眠；退出方寸即解除防休眠，重启后不会自动开启。")
         note.textColor = .secondaryLabelColor
         status.font = .monospacedDigitSystemFont(ofSize: 22, weight: .medium)
         picker.setAccessibilityLabel(AppLanguage.english ? "Duration" : "防休眠时长")

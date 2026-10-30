@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-APP="${OUTPUT_APP:-dist/轻工具.app}"
+APP="${OUTPUT_APP:-dist/方寸.app}"
 # Refuse accidental identity changes before compiling or touching the output.
 identity_file="$HOME/Library/Application Support/Light Tools Signing/identity.sha1"
 if [[ -z "${SIGNING_IDENTITY:-}" && -f "$identity_file" ]]; then
@@ -20,7 +20,7 @@ if [[ "$SIGNING_IDENTITY" == '-' && "${ALLOW_ADHOC_SIGNING:-0}" != 1 ]]; then
 fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mkdir -p .build
-xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -whole-module-optimization Sources/WallpaperCore/*.swift Sources/ToolCore/*.swift Sources/WallpaperApp/*.swift -o "$APP/Contents/MacOS/MacBGLive"
+xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -whole-module-optimization Sources/WallpaperCore/*.swift Sources/ToolCore/*.swift Sources/WallpaperApp/*.swift -o "$APP/Contents/MacOS/Tactora"
 xcrun swiftc Sources/WallpaperApp/ToolIcon.swift scripts/icon.swift -o .build/icon-builder
 .build/icon-builder .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"

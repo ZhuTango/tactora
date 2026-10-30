@@ -271,7 +271,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         self.store = store
         let window = ClipboardListPanel(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 350),
                                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        window.title = AppLanguage.text("轻工具 · 剪贴板列表")
+        window.title = AppLanguage.text("方寸 · 剪贴板列表")
         window.minSize = NSSize(width: 680, height: 330)
         window.isReleasedWhenClosed = false
         window.level = .floating
@@ -654,7 +654,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
             let wantsPaste = allowPaste && UserDefaults.standard.bool(forKey: "clipboardDirectPaste")
             guard wantsPaste else { close(); return }
             guard AXIsProcessTrusted() else {
-                showPasteFailure(AppLanguage.text("当前版本尚未获得辅助功能权限。请在系统设置中授权正在运行的轻工具；内容已复制，也可以返回目标输入框按 ⌘V。"))
+                showPasteFailure(AppLanguage.text("当前版本尚未获得辅助功能权限。请在系统设置中授权正在运行的方寸；内容已复制，也可以返回目标输入框按 ⌘V。"))
                 return
             }
             guard let target = previousApp, !target.isTerminated else {

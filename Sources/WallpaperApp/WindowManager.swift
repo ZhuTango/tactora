@@ -244,8 +244,8 @@ final class WindowManagerSettingsView: NSView {
     static func permissionMessage(trusted: Bool, actionStatus: String) -> String {
         guard trusted else {
             return AppLanguage.english
-                ? "Accessibility permission is missing for this version. If already enabled, remove and re-add the installed Light Tools app."
-                : "当前版本未获辅助功能授权。若系统中已开启，请移除旧条目，重新添加 /Users/tango/Applications/轻工具.app。"
+                ? "Accessibility permission is missing for this version. If already enabled, remove and re-add the installed Tactora app."
+                : "当前版本未获辅助功能授权。若系统中已开启，请移除旧条目，重新添加 /Users/tango/Applications/方寸.app。"
         }
         return actionStatus.isEmpty ? (AppLanguage.english ? "Accessibility permission granted" : "辅助功能已授权") : actionStatus
     }

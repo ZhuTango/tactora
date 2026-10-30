@@ -199,7 +199,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
         clipboardView.layer?.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 1).cgColor
-        window.title = AppLanguage.text("设置") + " · " + AppLanguage.text("轻工具")
+        window.title = AppLanguage.text("设置") + " · " + AppLanguage.text("方寸")
         window.setContentSize(NSSize(width: 820, height: 680))
         let root = NSView()
         root.wantsLayer = true
@@ -392,7 +392,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         loginToggle.allowsMixedState = true
         switch status {
         case .enabled: loginStatus.stringValue = AppLanguage.english ? "Enabled in macOS Login Items." : AppLanguage.text("已启用，将在登录 Mac 时启动。")
-        case .requiresApproval: loginStatus.stringValue = AppLanguage.english ? "Waiting for approval in System Settings → Login Items." : AppLanguage.text("等待系统批准，请在系统设置 → 登录项中允许轻工具。")
+        case .requiresApproval: loginStatus.stringValue = AppLanguage.english ? "Waiting for approval in System Settings → Login Items." : AppLanguage.text("等待系统批准，请在系统设置 → 登录项中允许方寸。")
         case .notRegistered: loginStatus.stringValue = AppLanguage.english ? "Disabled." : AppLanguage.text("未启用开机启动。")
         case .notFound: loginStatus.stringValue = AppLanguage.english ? "App not available to the login service. Keep the app in its installed location." : AppLanguage.text("登录项服务未找到此应用，请保留应用的安装位置。")
         @unknown default: loginStatus.stringValue = AppLanguage.english ? "Unknown system status." : AppLanguage.text("无法确定系统状态。")

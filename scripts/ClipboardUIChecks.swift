@@ -845,7 +845,7 @@ struct Preview {
         let englishSettings = ClipboardSettingsWindow(store: store)
         englishSettings.configureUnified(backgroundMenu: backgroundMenu)
         englishSettings.present()
-        precondition(englishSettings.window!.title == "Settings · Light Tools")
+        precondition(englishSettings.window!.title == "Settings · Tactora")
         englishSettings.selectSection("clipboard")
         let englishView = englishSettings.window!.contentView!
         precondition(allViews(englishView).compactMap { $0 as? NSButton }.contains { $0.title == "Record new clipboard content" })

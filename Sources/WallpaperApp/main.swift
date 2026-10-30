@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
             return
         }
+        NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         lidDisplaySleep.refresh()
         clipboard = ClipboardStore()
@@ -56,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = ToolIcon.statusImage(awake: false)
-        statusItem.button?.toolTip = "轻工具 · 背景与剪贴板"
+        statusItem.button?.toolTip = "方寸 · 背景与剪贴板"
         menu.delegate = self
         statusItem.menu = menu
         controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -107,11 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard controller != nil, clipboard != nil else { return }
         let awake = ToolFeature.awake.isEnabled() && keepAwake.active
         statusItem?.button?.image = ToolIcon.statusImage(awake: awake)
-        statusItem?.button?.toolTip = awake ? "轻工具 · " + keepAwake.status : "轻工具 · 防休眠未开启"
-        statusItem?.button?.setAccessibilityLabel(awake ? "轻工具 · 防休眠已开启" : "轻工具 · 防休眠未开启")
+        statusItem?.button?.toolTip = awake ? "方寸 · " + keepAwake.status : "方寸 · 防休眠未开启"
+        statusItem?.button?.setAccessibilityLabel(awake ? "方寸 · 防休眠已开启" : "方寸 · 防休眠未开启")
         backgroundMenu.removeAllItems()
         backgroundMenu.autoenablesItems = false
-        add("轻壁纸 · 每屏独立背景", to: backgroundMenu)
+        add("桌面背景 · 每屏独立配置", to: backgroundMenu)
         add("配置自动保存，重启与重连后恢复", to: backgroundMenu)
         backgroundMenu.addItem(.separator())
         let connected = DisplayTarget.connected()
@@ -207,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
-        add("关于轻工具", to: self.menu, action: #selector(about))
+        add("关于方寸", to: self.menu, action: #selector(about))
         add("退出", to: self.menu, action: #selector(quit), key: "q")
         clipboardSettings?.refreshBackground(backgroundMenu)
     }
@@ -427,7 +428,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func about() {
         let alert = NSAlert()
-        alert.messageText = AppLanguage.text("轻工具") + " " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.8.0")
+        alert.icon = ToolIcon.appImage(size: 128)
+        alert.messageText = AppLanguage.text("方寸") + " " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.8.0")
         alert.informativeText = "剪贴板支持文字、图片与文件引用，搜索、复制与删除，保留 7 或 30 天。首次点击开启记录后工作。最多 1000 条历史，图片缓存最多 2560 MB，仅保存在本机。\n\n每块屏幕可多选图片和视频，自动识别类型并按间隔顺序轮换；列表和间隔自动保存。每块屏幕独立选择照片或视频，配置自动保存在本机。重启应用和屏幕重新连接后自动恢复，手动停止状态也会保存。\n\n照片由系统管理；同一视频共享播放器，不同视频分别播放。默认使用原画和低内存循环，可切换到低耗、均衡或无缝循环。原文件不会修改。\n\n桌面完全被遮挡时暂停，持续 20 秒后释放解码资源并保留静帧；重新可见时从暂停位置恢复，画面就绪后再替换静帧。低内存循环接缝可能短暂停顿。\n\n配置位置：\(DisplayConfigurationStore.applicationStore.url.path)\n\n不联网、不上传文件；可在通用设置中开启登录时启动。"
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()

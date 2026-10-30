@@ -22,7 +22,7 @@ import IOKit.pwr_mgt
             let dictionary = result!.takeRetainedValue() as NSDictionary
             return dictionary[NSNumber(value: ProcessInfo.processInfo.processIdentifier)] as? [[String: Any]] ?? []
         }
-        func ours() -> [[String: Any]] { ownAssertions().filter { $0[kIOPMAssertionNameKey] as? String == "Light Tools — Keep Awake" } }
+        func ours() -> [[String: Any]] { ownAssertions().filter { $0[kIOPMAssertionNameKey] as? String == "Tactora — Keep Awake" } }
         precondition(ours().count == 1)
         precondition(ours()[0][kIOPMAssertionTypeKey] as? String == kIOPMAssertionTypeNoIdleSleep)
         do { try manager.start(minutes: -1); fatalError("Accepted invalid start") } catch {}

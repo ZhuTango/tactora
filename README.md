@@ -1,8 +1,8 @@
-# 轻工具 · Light Tools
+# 方寸 · Tactora
 
-项目仓库：[ZhuTango/light-tools](https://github.com/ZhuTango/light-tools)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
+项目仓库：[ZhuTango/tactora](https://github.com/ZhuTango/tactora)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.16**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.14.17**，支持 macOS 13 及以上。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
@@ -57,13 +57,13 @@ xcode-select --install
 bash scripts/setup-local-signing.sh --prepare
 bash scripts/setup-local-signing.sh --install
 bash scripts/build.sh
-open 'dist/轻工具.app'
+open 'dist/方寸.app'
 ```
 
-构建脚本使用本机 Swift 编译器和固定证书签名，不下载第三方依赖。也可通过 `SIGNING_IDENTITY` 指定现有签名身份；首次签名迁移需要重新授权辅助功能，后续更新须复用同一证书。详见 [发布规则](RELEASING.md)。默认输出 `dist/轻工具.app`；可用 `OUTPUT_APP` 指定输出路径。运行新版前先退出旧版。
+构建脚本使用本机 Swift 编译器和固定证书签名，不下载第三方依赖。也可通过 `SIGNING_IDENTITY` 指定现有签名身份；首次签名迁移需要重新授权辅助功能，后续更新须复用同一证书。详见 [发布规则](RELEASING.md)。默认输出 `dist/方寸.app`；可用 `OUTPUT_APP` 指定输出路径。运行新版前先退出旧版。
 
 ```sh
-OUTPUT_APP='.build/release/轻工具.app' bash scripts/build.sh
+OUTPUT_APP='.build/release/方寸.app' bash scripts/build.sh
 ```
 
 ## 验证
@@ -83,6 +83,10 @@ bash scripts/test.sh
 ```
 
 自动化界面检查使用隔离数据与测试剪贴板，不等同于真实应用中的粘贴验收。测试截图、日志与构建产物不提交到仓库。
+
+## 名称迁移
+
+中文名称「方寸」，英文名称「Tactora」。安装路径为 `~/Applications/方寸.app`，可执行文件为 `Tactora`。沿用原 bundle ID、数据目录和固定签名身份，已有剪贴板、背景和快捷键配置继续使用。历史发布包与提交记录保留原名称。
 
 ## 数据与权限
 
@@ -123,7 +127,7 @@ Option 面板采用横向大图标、应用名和快捷键布局。已配置展�
 
 需要系统辅助功能权限；只操作当前应用的焦点窗口。最大化保留菜单栏和 Dock，不等同于创建系统全屏空间。部分应用有最小尺寸或不支持调整，操作结果受其限制。恢复记录仅存当前会话，最多 32 个窗口。
 
-窗口权限排查：授权按钮会以当前 App 身份请求辅助功能权限。若更新后系统仍显示已开启但无法控制，需移除旧条目并重新添加固定安装路径。构建支持 `SIGNING_IDENTITY` 指定已有有效代码签名证书；未配置时仍使用 ad-hoc，不能保证跨版本授权保留。`bash scripts/test-window-manager.sh --installed` 验证实际安装 App 的默认快捷键，不使用测试进程代替 App 执行窗口操作。
+窗口权限排查：授权按钮会以当前 App 身份请求辅助功能权限。若更新后系统仍显示已开启但无法控制，需移除旧条目并重新添加固定安装路径。构建支持 `SIGNING_IDENTITY` 指定已有有效代码签名证书；未配置固定身份时构建会失败，避免跨版本授权失配。`bash scripts/test-window-manager.sh --installed` 验证实际安装 App 的默认快捷键，不使用测试进程代替 App 执行窗口操作。
 
 窗口操作默认均使用 ⌃⌥⌘：M 最大化、方向键四向半屏、U/I/J/K 四角、C 居中、R 恢复、F 系统全屏、[/] 上一屏/下一屏。屏幕按桌面位置从左到右、同列从上到下排列并循环切换。跨屏保留大小和相对位置，较小屏幕会限制尺寸。每行包含布局示意与恢复默认键按钮；旧版已保存的绑定及清除状态保留，缺失的旧操作可逐项恢复默认。
 
@@ -133,4 +137,4 @@ Option 面板采用横向大图标、应用名和快捷键布局。已配置展�
 
 使用 macOS NoIdleSleep 电源断言，允许显示器息屏，不修改 pmset 系统配置、不影响合盖亮度控制。限时会话同时设置系统断言超时；到时、退出应用或停用功能时解除。重启应用不会恢复会话。该功能阻止空闲休眠，不承诺阻止合盖、手动休眠、低电量等系统强制休眠。
 
-应用切换会在功能启用时统计普通应用进入前台的次数（包括 Dock、⌘Tab 和轻工具），仅保存本机累计次数。可在应用切换设置中启用“按切换频次排列 Option 面板”；同频次沿用手动顺序，关闭恢复手动排列。悬停应用可查看次数。
+应用切换会在功能启用时统计普通应用进入前台的次数（包括 Dock、⌘Tab 和方寸），仅保存本机累计次数。可在应用切换设置中启用“按切换频次排列 Option 面板”；同频次沿用手动顺序，关闭恢复手动排列。悬停应用可查看次数。
