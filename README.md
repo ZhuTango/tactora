@@ -2,7 +2,7 @@
 
 项目仓库：[ZhuTango/tactora](https://github.com/ZhuTango/tactora)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.16.0**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史和统一设置。当前版本 **1.16.1**，支持 macOS 13 及以上。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
@@ -35,6 +35,7 @@
 
 ### 截图识字 OCR
 
+- 针对常见字体的 `⌘`、`⇧` 快捷键符号补充图形识别；仅对高匹配且与按键相邻的符号修正，特殊字体、模糊图片仍可能识别不准。
 - 独立工具开关，默认快捷键 `⌘⇧D`，可在「设置 → 截图识字」录制、清除或恢复默认。
 - 框选后通过系统 Vision 在本地识别中英文并复制，默认保留换行；可关闭换行或选择识别后打开剪贴板列表。
 - 只有剪贴板记录开启时才保存历史并标记「截图识字」；关闭记录仍能识字复制，不自动启用历史。
@@ -89,6 +90,7 @@ bash scripts/test-clipboard-ui.sh
 
 # OCR 中英文实图、存储与异步交付
 bash scripts/test-ocr.sh
+bash scripts/test-ocr-shortcuts.sh
 bash scripts/test-ocr-flow.sh
 
 # 完整背景检查：会临时操作桌面背景与播放窗口

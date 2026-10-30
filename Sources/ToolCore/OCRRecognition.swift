@@ -19,7 +19,10 @@ enum OCRRecognition {
             request.usesLanguageCorrection = true
             request.recognitionLanguages = ["zh-Hans", "en-US"]
             try VNImageRequestHandler(cgImage: image).perform([request])
-            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            return (request.results ?? []).compactMap { observation -> String? in
+                guard let text = observation.topCandidates(1).first else { return nil }
+                return OCRShortcutSymbols.repair(text, bounds: observation.boundingBox, image: image)
+            }
                 .joined(separator: keepLineBreaks ? "\n" : " ").trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
