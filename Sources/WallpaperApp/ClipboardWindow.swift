@@ -264,6 +264,9 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private var keyMonitor: Any?
     private var outsideClickMonitors: [Any] = []
     private var previousApp: NSRunningApplication?
+    private weak var internalWindow: NSWindow?
+    private weak var internalEditor: NSTextView?
+    private var internalSelection = NSRange(location: NSNotFound, length: 0)
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
     var onRecognizeImage: ((URL) -> Void)?
@@ -363,10 +366,25 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
             window.setFrame(NSRect(x: frame.midX - width / 2, y: frame.minY + 8, width: width,
                                    height: min(350, frame.height - 16)), display: true)
         }
-        refresh()
-        if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            previousApp = front
+        // A repeated present must not replace the original destination with our search field.
+        if !window.isVisible {
+            previousApp = nil
+            internalWindow = nil
+            internalEditor = nil
+            internalSelection = NSRange(location: NSNotFound, length: 0)
+            if let front = NSWorkspace.shared.frontmostApplication {
+                if front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                    previousApp = front
+                } else if let target = NSApp.keyWindow, target !== window,
+                          let editor = target.firstResponder as? NSTextView,
+                          editor.isEditable, !editor.isFieldEditor {
+                    internalWindow = target
+                    internalEditor = editor
+                    internalSelection = editor.selectedRange()
+                }
+            }
         }
+        refresh()
         // Take keyboard focus only; activating the app also raises its settings window.
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(search)
@@ -426,6 +444,10 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         outsideClickMonitors.removeAll()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
         previousApp?.activate(options: [])
+        previousApp = nil
+        internalWindow = nil
+        internalEditor = nil
+        internalSelection = NSRange(location: NSNotFound, length: 0)
         onClose?()
     }
     var isComposingSearchText: Bool {
@@ -680,6 +702,23 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
             try store.copy(selected)
             let wantsPaste = allowPaste && UserDefaults.standard.bool(forKey: "clipboardDirectPaste")
             guard wantsPaste else { close(); return }
+            // Native in-process editing needs no Accessibility permission or global keystroke.
+            if let target = internalWindow, let editor = internalEditor,
+               target.isVisible, editor.window === target, editor.isEditable,
+               let entry = store.entries.first(where: { $0.id == selected }), entry.kind == .text {
+                let selection = internalSelection
+                let length = (editor.string as NSString).length
+                guard selection.location != NSNotFound, selection.location <= length,
+                      selection.length <= length - selection.location else {
+                    showPasteFailure(AppLanguage.text("原输入位置已改变，内容已复制，请返回输入框按 ⌘V。"))
+                    return
+                }
+                close()
+                target.makeKeyAndOrderFront(nil)
+                target.makeFirstResponder(editor)
+                editor.insertText(entry.text, replacementRange: selection)
+                return
+            }
             guard AXIsProcessTrusted() else {
                 showPasteFailure(AppLanguage.text("当前版本尚未获得辅助功能权限。请在系统设置中授权正在运行的方寸；内容已复制，也可以返回目标输入框按 ⌘V。"))
                 return
@@ -716,7 +755,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         alert.addButton(withTitle: AppLanguage.text("知道了"))
         alert.runModal()
     }
-    private var directPasteEnabled: Bool { UserDefaults.standard.bool(forKey: "clipboardDirectPaste") && AXIsProcessTrusted() }
+    private var directPasteEnabled: Bool { UserDefaults.standard.bool(forKey: "clipboardDirectPaste") && (internalEditor != nil || AXIsProcessTrusted()) }
     @objc private func openSettings() { onSettings?() }
     @objc private func dismissList() { close() }
 

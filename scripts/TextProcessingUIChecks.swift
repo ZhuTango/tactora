@@ -3,6 +3,7 @@ import AppKit
 @main struct TextProcessingUIChecks {
     @MainActor static func main() {
         let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
         Task { @MainActor in
             do { try await check(); app.stop(nil); exit(0) }
             catch { FileHandle.standardError.write(Data("FAIL: \(error)\n".utf8)); exit(1) }
@@ -66,6 +67,42 @@ import AppKit
         precondition(panel.input.undoManager?.canUndo == true, "Deleting all input must remain undoable")
         panel.input.undoManager?.undo()
         precondition(panel.input.string == "keep undo", "Undo must restore accidentally deleted original")
+        let oldDirectPaste = UserDefaults.standard.object(forKey: "clipboardDirectPaste")
+        UserDefaults.standard.set(true, forKey: "clipboardDirectPaste")
+        defer {
+            if let oldDirectPaste { UserDefaults.standard.set(oldDirectPaste, forKey: "clipboardDirectPaste") }
+            else { UserDefaults.standard.removeObject(forKey: "clipboardDirectPaste") }
+        }
+        let historyURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("history.json")
+        defer { try? FileManager.default.removeItem(at: historyURL.deletingLastPathComponent()) }
+        let history = ClipboardStore(url: historyURL, pasteboard: board)
+        try history.setEnabled(true)
+        try history.copyOCRText("方寸")
+        panel.setInput("before old after")
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(panel.input)
+        panel.input.setSelectedRange(NSRange(location: 7, length: 3))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(panel.input)
+        precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier, "Harness must be frontmost")
+        precondition(NSApp.keyWindow === window, "Harness editor must be key")
+        let clipboard = ClipboardWindow(store: history)
+        clipboard.present()
+        // Dismiss a failure alert so this regression fails unattended on the old implementation.
+        let alertTimeout = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { _ in
+            MainActor.assumeIsolated { if NSApp.modalWindow != nil { NSApp.abortModal() } }
+        }
+        RunLoop.main.add(alertTimeout, forMode: .modalPanel)
+        NSApp.sendAction(NSSelectorFromString("copySelected"), to: clipboard, from: nil)
+        alertTimeout.invalidate()
+        precondition(panel.input.string == "before 方寸 after", "Clipboard must paste back into the original internal editor and selection")
+        try await ready(panel)
+        precondition(panel.output.string == "before 方寸 after", "Internal paste must notify preview")
+        precondition(window.firstResponder === panel.input, "Internal paste must restore editor focus")
+        panel.input.undoManager?.undo()
+        precondition(panel.input.string == "before old after", "Internal paste must support undo")
         panel.setInput("do not deliver after close")
         panel.close()
         try await Task.sleep(nanoseconds: 300_000_000)
