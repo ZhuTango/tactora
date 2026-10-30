@@ -127,31 +127,61 @@ final class OCRManager {
                 guard !text.isEmpty else { self.notify("未识别到文字，原剪贴板已保留", "No text found; clipboard unchanged"); return }
                 do {
                     let recorded = try self.store.copyOCRText(text)
-                    self.notify("已识别并复制 \(text.count) 字", "Copied \(text.count) characters")
+                    self.notify("已复制 · \(text.count) 字", "Copied · \(text.count) characters", success: true)
                     if self.showHistory && recorded { self.onShowHistory?() }
                 } catch { self.notify(error.localizedDescription, error.localizedDescription) }
             case .failure(let error): self.notify("识别失败：" + error.localizedDescription, "Recognition failed: " + error.localizedDescription)
             }
         }
     }
-    private func notify(_ chinese: String, _ english: String) {
+    private func notify(_ chinese: String, _ english: String, success: Bool = false) {
         status = AppLanguage.english ? english : chinese; onChange?()
         toastTask?.cancel(); toast?.orderOut(nil)
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 370, height: 64), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let view = OCRToastView(message: status, success: success)
+        let panel = NSPanel(contentRect: view.bounds, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false; panel.level = .floating; panel.ignoresMouseEvents = true
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
-        let view = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
-        view.material = .hudWindow; view.state = .active; view.wantsLayer = true; view.layer?.cornerRadius = 14
-        let label = NSTextField(wrappingLabelWithString: status); label.frame = NSRect(x: 18, y: 12, width: 334, height: 40)
-        label.font = .systemFont(ofSize: 13, weight: .medium); view.addSubview(label); panel.contentView = view
+        panel.contentView = view
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        if let screen { panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 185, y: screen.visibleFrame.minY + 70)) }
+        if let screen { panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - view.bounds.width / 2, y: screen.visibleFrame.minY + 48)) }
         panel.orderFrontRegardless(); toast = panel
-        toastTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            guard !Task.isCancelled else { return }; self?.toast?.orderOut(nil); self?.toast = nil
+        toastTask = Task { [weak self, weak panel] in
+            try? await Task.sleep(nanoseconds: success ? 2_000_000_000 : 4_000_000_000)
+            guard !Task.isCancelled, let panel else { return }
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                await NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.16
+                    panel.animator().alphaValue = 0
+                }
+            }
+            guard !Task.isCancelled else { return }
+            panel.orderOut(nil); self?.toast = nil
         }
     }
+
+}
+
+/// Compact, non-interactive feedback; size follows the message instead of a fixed empty box.
+@MainActor
+final class OCRToastView: NSVisualEffectView {
+    init(message: String, success: Bool) {
+        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let textWidth = min(320, ceil((message as NSString).size(withAttributes: [.font: font]).width) + 2)
+        let textHeight = max(18, ceil((message as NSString).boundingRect(with: NSSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height))
+        let width = max(166, textWidth + 62), height = max(44, textHeight + 24)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        material = .hudWindow; state = .active; blendingMode = .behindWindow
+        wantsLayer = true; layer?.cornerRadius = 14; layer?.masksToBounds = true
+        let icon = NSImageView(frame: NSRect(x: 15, y: (height - 18) / 2, width: 18, height: 18))
+        icon.image = NSImage(systemSymbolName: success ? "checkmark.circle.fill" : "info.circle", accessibilityDescription: nil)
+        icon.contentTintColor = success ? .systemGreen : .secondaryLabelColor
+        let label = NSTextField(wrappingLabelWithString: message)
+        label.font = font; label.textColor = .labelColor
+        label.frame = NSRect(x: 42, y: (height - textHeight) / 2, width: width - 58, height: textHeight)
+        addSubview(icon); addSubview(label)
+        setAccessibilityLabel(message)
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
 }
 
 @MainActor

@@ -215,10 +215,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if ToolFeature.wallpaper.isEnabled() && connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
         self.menu.addItem(.separator())
-        if ToolFeature.apps.isEnabled() { add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings)) }
+        if ToolFeature.apps.isEnabled() {
+            let hint = appSwitcher.panelEnabled
+                ? (AppLanguage.english ? "Hold ⌥" : "长按 ⌥")
+                : (AppLanguage.english ? "Hold ⌥ off" : "长按 ⌥ 已关闭")
+            add((AppLanguage.english ? "App Switcher…" : "应用切换…") + "  " + hint, to: self.menu, action: #selector(showAppSwitcherSettings))
+        }
         if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
         if ToolFeature.ocr.isEnabled() {
-            add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
+            let hint = ocr.shortcut?.label ?? (AppLanguage.english ? "No shortcut" : "未设置快捷键")
+            add((AppLanguage.english ? "Capture Text…" : "截图识字…") + "  " + hint, to: self.menu, action: #selector(captureText))
         }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
