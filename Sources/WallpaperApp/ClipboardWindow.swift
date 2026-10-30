@@ -643,8 +643,23 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         let index = results.firstIndex(where: { $0.id == selected }) ?? 0
         let next = min(results.count - 1, max(0, index + delta))
         selected = results[next].id
-        cards.scrollToVisible(NSRect(x: CGFloat(next) * 234, y: 0, width: 226, height: 238))
         refresh()
+        revealCard(at: next)
+    }
+    private func revealCard(at index: Int) {
+        // Move the clip view explicitly after layout; do not rely on AppKit's
+        // scrollToVisible policy for a horizontal list with hidden scrollers.
+        window?.contentView?.layoutSubtreeIfNeeded()
+        let viewport = scroll.contentView.bounds
+        let left = CGFloat(index) * 234
+        let right = left + 226
+        var x = viewport.minX
+        if left < x { x = left }
+        else if right > viewport.maxX { x = right - viewport.width }
+        let limit = max(0, cards.frame.width - viewport.width)
+        scroll.contentView.scroll(to: NSPoint(x: min(limit, max(0, x)), y: 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        renderVisibleCards()
     }
     @objc private func copySelected() { performCopy(allowPaste: true) }
     private func performCopy(allowPaste: Bool) {
@@ -740,7 +755,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                 selectedGroup = nil; filter.selectedSegment = 0; search.stringValue = ""
                 refresh()
                 if let index = results.firstIndex(where: { $0.id == id }) {
-                    cards.scrollToVisible(NSRect(x: CGFloat(index) * 234, y: 0, width: 226, height: 238))
+                    revealCard(at: index)
                 }
             }
         } catch { showError(error) }

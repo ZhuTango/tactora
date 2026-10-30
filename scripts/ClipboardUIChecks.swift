@@ -531,6 +531,32 @@ struct Preview {
         let document = strip.documentView!
         precondition(document.frame.width == 60 * 234)
         precondition(document.subviews.count <= 6, "Only viewport plus overscan cards should be loaded")
+        for navigationWidth: CGFloat in [680, 1050, 1712] {
+            window.setContentSize(NSSize(width: navigationWidth, height: 350))
+            view.layoutSubtreeIfNeeded()
+            panel.refresh()
+            let navigationEntries = store.search("lazy fixture")
+            let typingFocus = window.firstResponder
+            for (key, indices) in [(UInt16(124), Array(1..<60)), (UInt16(123), Array((0..<59).reversed()))] {
+                for index in indices {
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0,
+                        windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: true, keyCode: key)!
+                    NSApp.sendEvent(event)
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+                    precondition(panel.selected == navigationEntries[index].id)
+                    let target = NSRect(x: CGFloat(index) * 234 + 3, y: 3, width: 220, height: 232)
+                    precondition(strip.contentView.bounds.minX <= target.minX && strip.contentView.bounds.maxX >= target.maxX,
+                                 "Keyboard selection must stay fully visible at index \(index); viewport \(strip.contentView.bounds)")
+                    precondition(document.subviews.contains { $0.identifier?.rawValue == String(index) })
+                    precondition(document.subviews.count <= Int(ceil(strip.contentSize.width / 234)) + 3, "Keyboard navigation must preserve lazy loading")
+                    precondition(window.firstResponder === typingFocus)
+                }
+            }
+        }
+        window.setContentSize(NSSize(width: 680, height: 350))
+        view.layoutSubtreeIfNeeded()
+        panel.refresh()
+        print("PASS: keyboard navigation scrolls both edges across all 60 cards, preserving focus and lazy loading")
         let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: -10, wheel2: 0, wheel3: 0)!
         strip.scrollWheel(with: NSEvent(cgEvent: wheel)!)
         precondition(strip.contentView.bounds.minX > 0, "Vertical mouse wheel must move horizontally")
