@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var controller: WallpaperController!
     private var statusItem: NSStatusItem!
-    private let menu = NSMenu()
+    private let menu = ToolStatusMenu()
     private let backgroundMenu = NSMenu()
     private var clipboard: ClipboardStore!
     private var clipboardWindow: ClipboardWindow?
@@ -174,10 +174,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.menu.removeAllItems()
         self.menu.autoenablesItems = false
         if ToolFeature.clipboard.isEnabled() {
-        let item = add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
-        if shortcutRegistered { applyShortcut(ClipboardShortcut.saved(), to: item) }
-        self.menu.addItem(.separator())
+            let item = add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
+            if shortcutRegistered { applyShortcut(ClipboardShortcut.saved(), to: item) }
         }
+        if ToolFeature.ocr.isEnabled() {
+            let item = add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
+            if let shortcut = ocr.shortcut { applyShortcut(shortcut, to: item) }
+        }
+        if ToolFeature.text.isEnabled() {
+            let item = add(AppLanguage.english ? "Text Tools…" : "文本快捷处理…", to: self.menu, action: #selector(showTextTools))
+            if let shortcut = textShortcut.shortcut { applyShortcut(shortcut, to: item) }
+        }
+        self.menu.addItem(.separator())
+        if ToolFeature.apps.isEnabled() {
+            let item = add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings))
+            if appSwitcher.panelEnabled {
+                // Option-hold has no key-down equivalent; this glyph is a display hint.
+                item.keyEquivalent = "⌥"
+                item.keyEquivalentModifierMask = []
+            }
+            item.toolTip = appSwitcher.panelEnabled
+                ? (AppLanguage.english ? "Hold Option to show apps" : "长按 Option 显示应用列表")
+                : (AppLanguage.english ? "Option-hold is disabled" : "长按 Option 显示应用列表已关闭")
+        }
+        if ToolFeature.windows.isEnabled() {
+            let item = add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings))
+            item.identifier = ToolStatusMenu.shortcutHintIdentifier
+            if let shortcut = windowManager.shortcut(.maximize) { applyShortcut(shortcut, to: item) }
+            item.toolTip = AppLanguage.english ? "Click to configure window actions; shortcut maximizes the current window" : "点击配置窗口操作；右侧快捷键用于最大化当前窗口"
+        }
+
+        self.menu.addItem(.separator())
         if ToolFeature.awake.isEnabled() {
             let entry = NSMenuItem(title: keepAwake.active ? (AppLanguage.english ? "Keep Awake · On" : "防休眠 · 已开启") : (AppLanguage.english ? "Keep Awake · Off" : "防休眠 · 未开启"), action: nil, keyEquivalent: "")
             entry.state = keepAwake.active ? .on : .off
@@ -215,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let summary = add(status.title, to: self.menu)
                 summary.indentationLevel = 1
                 summary.toolTip = status.title
-                summary.title = status.title.count > 72 ? String(status.title.prefix(69)) + "…" : status.title
+                summary.title = status.title.count > 48 ? String(status.title.prefix(45)) + "…" : status.title
                 quick.addItem(status.copy() as! NSMenuItem)
                 quick.addItem(.separator())
             }
@@ -229,30 +256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if ToolFeature.wallpaper.isEnabled() && connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
         self.menu.addItem(.separator())
-        if ToolFeature.apps.isEnabled() {
-            let item = add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings))
-            if appSwitcher.panelEnabled {
-                // Option-hold has no key-down equivalent; this glyph is a display hint.
-                item.keyEquivalent = "⌥"
-                item.keyEquivalentModifierMask = []
-            }
-            item.toolTip = appSwitcher.panelEnabled
-                ? (AppLanguage.english ? "Hold Option to show apps" : "长按 Option 显示应用列表")
-                : (AppLanguage.english ? "Option-hold is disabled" : "长按 Option 显示应用列表已关闭")
-        }
-        if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
-        if ToolFeature.ocr.isEnabled() {
-            let item = add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
-            if let shortcut = ocr.shortcut { applyShortcut(shortcut, to: item) }
-        }
-        if ToolFeature.text.isEnabled() {
-            let item = add(AppLanguage.english ? "Text Tools…" : "文本快捷处理…", to: self.menu, action: #selector(showTextTools))
-            if let shortcut = textShortcut.shortcut { applyShortcut(shortcut, to: item) }
-        }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
-        self.menu.addItem(.separator())
         add("关于方寸", to: self.menu, action: #selector(about))
         add("退出", to: self.menu, action: #selector(quit), key: "q")
+        ToolStatusMenu.removeEmptySeparators(from: self.menu)
         clipboardSettings?.refreshBackground(backgroundMenu)
     }
 
