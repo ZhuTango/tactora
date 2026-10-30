@@ -220,7 +220,7 @@ final class AppSwitcher: NSObject {
         if let shortcut {
             guard shortcut.isValid else { throw error("请选择包含 ⌥、⌃ 或 ⌘ 的快捷键。") }
             let same: (ClipboardShortcut) -> Bool = { $0.keyCode == shortcut.keyCode && $0.modifiers == shortcut.modifiers }
-            guard !same(.saved()), !OCRManager.savedContains(shortcut, defaults: defaults), !WindowManager.savedContains(shortcut, defaults: defaults), !bindings.contains(where: { $0.key != app.id && $0.value.shortcut.map(same) == true }) else {
+            guard !same(.saved()), !OCRManager.savedContains(shortcut, defaults: defaults), !TextToolsShortcut.savedContains(shortcut, defaults: defaults), !WindowManager.savedContains(shortcut, defaults: defaults), !bindings.contains(where: { $0.key != app.id && $0.value.shortcut.map(same) == true }) else {
                 throw error("此快捷键已用于剪贴板或其他应用，原配置已保留。")
             }
             guard !featureEnabled || install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }

@@ -717,11 +717,12 @@ struct Preview {
         print("PASS: window shortcut defaults, arrow recording, persistence, clearing and conflict preservation")
         let awakeManager = KeepAwake(defaults: switcherDefaults)
         let ocrManager = OCRManager(store: store, defaults: switcherDefaults)
-        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager, ocr: ocrManager)
+        let textShortcut = TextToolsShortcut(defaults: switcherDefaults)
+        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager, ocr: ocrManager, textShortcut: textShortcut)
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
-        precondition(tabs.numberOfTabViewItems == 7)
+        precondition(tabs.numberOfTabViewItems == 8)
         precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) })
         var featureChanges = 0
         unified.onFeatureChange = { feature, enabled in
@@ -753,7 +754,7 @@ struct Preview {
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 7 && featureChanges == 14)
+        precondition(tabs.numberOfTabViewItems == 8 && featureChanges == 14)
         print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
@@ -761,6 +762,17 @@ struct Preview {
             unifiedView.cacheDisplay(in: unifiedView.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
         }
+        unified.selectSection("text")
+        precondition(tabs.selectedTabViewItem?.view is TextToolsSettingsView)
+        let textRecorder = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? SwitcherShortcutRecorder }.first!
+        precondition(textRecorder.title == "⌃⌥⌘T")
+        ToolFeature.text.setEnabled(false, in: switcherDefaults)
+        textRecorder.onRecord?(nil)
+        precondition(textShortcut.shortcut == nil)
+        textRecorder.onRecord?(TextToolsShortcut.defaultShortcut)
+        precondition(textShortcut.shortcut == TextToolsShortcut.defaultShortcut)
+        ToolFeature.text.setEnabled(true, in: switcherDefaults)
+        try settingsSnapshot("settings-text")
         unified.selectSection("ocr")
         precondition(tabs.selectedTabViewItem?.view is OCRSettingsView)
         precondition(ocrManager.keepLineBreaks && !ocrManager.showHistory)

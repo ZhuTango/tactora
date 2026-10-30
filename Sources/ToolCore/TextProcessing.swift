@@ -4,7 +4,10 @@ enum TextOperation: String, CaseIterable {
     case trim, joinLines, removeEmptyLines, deduplicateLines, uppercase, lowercase
 }
 
-enum TextProcessingError: Error { case tooLarge }
+enum TextProcessingError: LocalizedError {
+    case tooLarge
+    var errorDescription: String? { "内容超过处理上限，请缩短输入 / Content exceeds the processing limit." }
+}
 
 enum TextProcessor {
     static let maximumBytes = 1_048_576

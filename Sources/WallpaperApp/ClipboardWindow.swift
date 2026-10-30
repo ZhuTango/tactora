@@ -269,6 +269,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private var internalSelection = NSRange(location: NSNotFound, length: 0)
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
+    var onProcessText: ((String) -> Void)?
     var onRecognizeImage: ((URL) -> Void)?
 
     init(store: ClipboardStore) {
@@ -662,6 +663,12 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                 extract.target = self; extract.representedObject = entry.id
                 menu.addItem(extract); card.menu = menu
             }
+            if entry.kind == .text, ToolFeature.text.isEnabled(), onProcessText != nil {
+                let menu = NSMenu()
+                let process = NSMenuItem(title: AppLanguage.english ? "Process Text…" : "处理文本…", action: #selector(processText(_:)), keyEquivalent: "")
+                process.target = self; process.representedObject = entry.id
+                menu.addItem(process); card.menu = menu
+            }
             card.copyItem = { [weak self] in self?.copySelected() }
             updateHighlights(in: card)
             cards.addSubview(card)
@@ -671,6 +678,13 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         guard ToolFeature.ocr.isEnabled(), let id = sender.representedObject as? UUID,
               let entry = store.entries.first(where: { $0.id == id }), let url = store.imageURL(for: entry) else { return }
         onRecognizeImage?(url)
+    }
+    @objc private func processText(_ sender: NSMenuItem) {
+        guard ToolFeature.text.isEnabled(), let id = sender.representedObject as? UUID,
+              let entry = store.entries.first(where: { $0.id == id }), entry.kind == .text else { return }
+        let action = onProcessText
+        close()
+        action?(entry.text)
     }
     private func moveSelection(_ delta: Int) {
         guard !results.isEmpty else { return }

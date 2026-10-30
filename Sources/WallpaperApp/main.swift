@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let keepAwake = KeepAwake()
     private var ocr: OCRManager!
     private var textWindow: TextProcessingWindow?
+    private let textShortcut = TextToolsShortcut()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
@@ -55,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ocr.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
             return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+                || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.containsShortcut(value) == true || self?.windowManager.contains(value) == true
         }
         ocr.onCapture = { [weak self] in self?.clipboardWindow?.close(); self?.clipboardSettings?.window?.orderOut(nil) }
@@ -62,11 +64,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowManager.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
             return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
-                || OCRManager.savedContains(value)
+                || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.bindings.values.contains(where: { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }) == true
         }
         windowManager.setEnabled(ToolFeature.windows.isEnabled())
         ocr.refreshEnabled()
+        textShortcut.conflicts = { [weak self] value in
+            let clipboard = ClipboardShortcut.saved()
+            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+                || OCRManager.savedContains(value) || self?.windowManager.contains(value) == true
+                || self?.appSwitcher.containsShortcut(value) == true
+        }
+        textShortcut.onOpen = { [weak self] in self?.showTextTools() }
+        textShortcut.refreshEnabled()
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = ToolIcon.statusImage(awake: false)
@@ -236,7 +246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let shortcut = ocr.shortcut { applyShortcut(shortcut, to: item) }
         }
         if ToolFeature.text.isEnabled() {
-            add(AppLanguage.english ? "Text Tools…" : "文本快捷处理…", to: self.menu, action: #selector(showTextTools))
+            let item = add(AppLanguage.english ? "Text Tools…" : "文本快捷处理…", to: self.menu, action: #selector(showTextTools))
+            if let shortcut = textShortcut.shortcut { applyShortcut(shortcut, to: item) }
         }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
@@ -531,6 +542,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard ToolFeature.clipboard.isEnabled() else { return }
         if clipboardWindow == nil {
             let panel = ClipboardWindow(store: clipboard)
+            panel.onProcessText = { [weak self] text in
+                guard let self, ToolFeature.text.isEnabled() else { return }
+                self.showTextTools()
+                self.textWindow?.setInput(text)
+            }
             panel.onRecognizeImage = { [weak self] url in self?.ocr.recognizeImage(at: url) }
             panel.onSettings = { [weak self] in self?.clipboardWindow?.close(); self?.showClipboardSettings() }
             panel.onClose = { [weak self, weak panel] in
@@ -580,7 +596,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -592,7 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showSettings()
             }
             settings.onShortcutChange = { [weak self] value in
-                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), self.clipboardShortcut.register(value) else { return false }
+                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), !TextToolsShortcut.savedContains(value), self.clipboardShortcut.register(value) else { return false }
                 value.save()
                 self.shortcutRegistered = true
                 self.updateMenu()
@@ -620,6 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .apps:
             appSwitcher.setFeatureEnabled(enabled)
         case .text:
+            textShortcut.refreshEnabled()
             if !enabled { textWindow?.close(); textWindow = nil }
         case .ocr:
             ocr.refreshEnabled()
@@ -644,6 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTask?.cancel()
         windowManager.setEnabled(false)
         ocr?.stop()
+        textShortcut.stop()
         textWindow?.close()
         lidDisplaySleep.stop()
         keepAwake.stop(notify: false)

@@ -194,7 +194,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -254,6 +254,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             let item = NSTabViewItem(identifier: "ocr")
             item.label = AppLanguage.english ? "OCR" : "截图识字"
             item.view = OCRSettingsView(manager: ocr)
+            tabs.addTabViewItem(item)
+        }
+        if let textShortcut {
+            let item = NSTabViewItem(identifier: "text")
+            item.label = AppLanguage.english ? "Text" : "文本处理"
+            item.view = TextToolsSettingsView(manager: textShortcut)
             tabs.addTabViewItem(item)
         }
         window.contentView = root

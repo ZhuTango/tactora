@@ -36,6 +36,27 @@ import AppKit
         NSApp.sendAction(paste.action!, to: paste.target, from: paste)
         try await ready(panel)
         precondition(panel.input.string == "clipboard sentinel" && panel.output.string == "clipboard sentinel")
+        let mode = descendants.compactMap { $0 as? NSSegmentedControl }.first { $0.identifier?.rawValue == "text.mode" }!
+        func choose(_ value: TextToolMode) {
+            mode.selectedSegment = value.rawValue
+            NSApp.sendAction(mode.action!, to: mode.target, from: mode)
+        }
+        panel.setInput("{\"name\":\"方寸\"}")
+        try await ready(panel)
+        precondition(panel.output.string.contains("\n") && panel.output.string.contains("方寸"), "Auto formats JSON")
+        panel.setInput("1700000000000")
+        try await ready(panel)
+        precondition(panel.output.string.contains("2023-11-14 22:13:20"), "Auto timestamp includes UTC")
+        choose(.json); panel.setInput("{oops}")
+        try await ready(panel)
+        precondition(panel.output.string.isEmpty && !copy.isEnabled, "Invalid JSON cannot copy stale result")
+        choose(.compare)
+        panel.setInput("old\nkeep")
+        panel.comparison.string = "new\nkeep"
+        panel.textDidChange(Notification(name: NSText.didChangeNotification, object: panel.comparison))
+        try await ready(panel)
+        precondition(panel.output.string.contains("- old") && panel.output.string.contains("+ new"))
+        choose(.basic)
         panel.setInput("  原文\nTactora  ")
         precondition(!copy.isEnabled, "No stale copying while preview is pending")
         try await ready(panel)
@@ -75,6 +96,23 @@ import AppKit
         }
         let historyURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("history.json")
         defer { try? FileManager.default.removeItem(at: historyURL.deletingLastPathComponent()) }
+        // Persistence and conflicts must not require system permission or overwrite a prior binding.
+        ToolFeature.text.setEnabled(false, in: defaults)
+        let shortcut = TextToolsShortcut(defaults: defaults)
+        let custom = ClipboardShortcut(keyCode: 3, modifiers: 768, label: "⌘⇧F")
+        precondition(shortcut.setShortcut(custom))
+        precondition(TextToolsShortcut.savedContains(custom, defaults: defaults))
+        shortcut.conflicts = { _ in true }
+        precondition(!shortcut.setShortcut(TextToolsShortcut.defaultShortcut))
+        precondition(shortcut.shortcut == custom, "Conflicts must preserve the previous shortcut")
+        precondition(shortcut.setShortcut(nil))
+        precondition(TextToolsShortcut.savedShortcut(defaults: defaults) == nil)
+        shortcut.conflicts = nil
+        precondition(shortcut.setShortcut(TextToolsShortcut.defaultShortcut))
+        let reloaded = TextToolsShortcut(defaults: defaults)
+        precondition(reloaded.shortcut == TextToolsShortcut.defaultShortcut)
+        shortcut.stop(); reloaded.stop()
+        ToolFeature.text.setEnabled(true, in: defaults)
         let history = ClipboardStore(url: historyURL, pasteboard: board)
         try history.setEnabled(true)
         try history.copyOCRText("方寸")
@@ -88,6 +126,16 @@ import AppKit
         window.makeFirstResponder(panel.input)
         precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier, "Harness must be frontmost")
         precondition(NSApp.keyWindow === window, "Harness editor must be key")
+        let routed = ClipboardWindow(store: history)
+        var received: String?
+        routed.onProcessText = { received = $0 }
+        routed.present()
+        let processItem = views(routed.window!.contentView!).compactMap(\.menu).flatMap(\.items).first { $0.action == NSSelectorFromString("processText:") }!
+        NSApp.sendAction(processItem.action!, to: processItem.target, from: processItem)
+        precondition(received == "方寸" && routed.window?.isVisible == false, "Context action passes original text and closes history")
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(panel.input)
+        panel.input.setSelectedRange(NSRange(location: 7, length: 3))
         let clipboard = ClipboardWindow(store: history)
         clipboard.present()
         // Dismiss a failure alert so this regression fails unattended on the old implementation.
@@ -109,6 +157,6 @@ import AppKit
         precondition(panel.input.string.isEmpty && panel.output.string.isEmpty)
         ToolFeature.text.setEnabled(false, in: defaults)
         panel.present(); precondition(!window.isVisible)
-        print("PASS: explicit paste, non-destructive preview, explicit copy, operation change, stale-result cancellation, size guard, clear/close cleanup and feature disable")
+        print("PASS: auto JSON/timestamp, invalid JSON, diff preview, shortcut persistence/conflicts/clear, explicit paste, non-destructive preview, explicit copy, operation change, stale-result cancellation, size guard, clear/close cleanup and feature disable")
     }
 }
