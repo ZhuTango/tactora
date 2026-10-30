@@ -3,7 +3,7 @@ import Carbon
 
 @MainActor
 final class OCRManager {
-    static let defaultShortcut = ClipboardShortcut(keyCode: 31, modifiers: UInt32(controlKey | optionKey | cmdKey), label: "⌃⌥⌘O")
+    static let defaultShortcut = ClipboardShortcut(keyCode: 2, modifiers: UInt32(cmdKey | shiftKey), label: "⌘⇧D")
     static func savedShortcut(defaults: UserDefaults = .standard) -> ClipboardShortcut? {
         if defaults.bool(forKey: "ocrShortcutCleared") { return nil }
         guard let data = defaults.data(forKey: "ocrShortcut"), let value = try? JSONDecoder().decode(ClipboardShortcut.self, from: data), value.isValid else { return defaultShortcut }
