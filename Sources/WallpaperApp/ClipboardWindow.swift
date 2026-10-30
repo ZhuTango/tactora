@@ -271,7 +271,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private var selectedGroup: String?
     private let pageLabel = NSTextField(labelWithString: "")
     private var results: [ClipboardEntry] = []
-    private var selected: UUID?
+    private(set) var selected: UUID?
     private var renderingCards = false
     private var keyMonitor: Any?
     private var outsideClickMonitors: [Any] = []
@@ -366,6 +366,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     }
     func present() {
         guard let window else { return }
+        store.poll()
         let point = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main
         if let frame = screen?.visibleFrame {
@@ -413,10 +414,12 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                     self.pinSelected(); return nil
                 }
                 if event.keyCode == 36 { self.copySelected(); return nil }
-                // Option-arrows navigate while editing search; bare arrows navigate when cards have focus.
+                // Empty search has no caret movement to preserve; retain typing focus while navigating.
                 if self.handleDeleteKey(event) { return nil }
                 let editing = self.window?.firstResponder is NSTextView
-                if (!editing || event.modifierFlags.contains(.option)), [123, 124].contains(event.keyCode) {
+                if (!editing || self.search.stringValue.isEmpty || event.modifierFlags.contains(.option)),
+                   event.modifierFlags.intersection([.command, .control, .shift]).isEmpty,
+                   [123, 124].contains(event.keyCode) {
                     self.moveSelection(event.keyCode == 124 ? 1 : -1); return nil
                 }
                 return event

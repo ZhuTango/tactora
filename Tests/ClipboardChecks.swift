@@ -235,5 +235,21 @@ func checkClipboard() throws {
     organizationReload.stop()
     print("PASS: aliases/groups persistence, duplicate retention, original copy and text/image undo")
     print("PASS: pinyin full, initials, partial, accents, mixed tokens, filenames and cleared cache")
+    let recentBoard = NSPasteboard(name: NSPasteboard.Name("recent-" + UUID().uuidString))
+    defer { recentBoard.releaseGlobally() }
+    let recentURL = root.appendingPathComponent("recent.json")
+    let recent = ClipboardStore(url: recentURL, pasteboard: recentBoard, now: { clock })
+    try recent.setEnabled(true); recent.stop()
+    for value in ["older", "newer"] {
+        recentBoard.clearContents(); recentBoard.setString(value, forType: .string); recent.poll()
+    }
+    let older = recent.entries.last!.id
+    clock = clock.addingTimeInterval(10)
+    try recent.copy(older)
+    checkEqual(recent.entries.first?.id, older)
+    checkEqual(recent.entries.first?.date, clock)
+    let reloadedRecent = ClipboardStore(url: recentURL, pasteboard: recentBoard, now: { clock })
+    checkEqual(reloadedRecent.entries.first?.id, older)
+    print("PASS: copying history promotes original identity and persists recency")
     print("PASS: clipboard opt-in, sensitive markers, text dedup/search, file references, image round-trip, retention, cache budget, permissions and corrupt-storage protection")
 }

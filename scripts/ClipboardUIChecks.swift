@@ -111,6 +111,15 @@ struct Preview {
         let file = root.appendingPathComponent("设计说明.md").standardizedFileURL
         try Data("fixture".utf8).write(to: file)
         board.clearContents(); board.writeObjects([file as NSURL]); store.poll()
+        let immediateBoard = NSPasteboard(name: NSPasteboard.Name("immediate-" + UUID().uuidString))
+        let immediateStore = ClipboardStore(url: root.appendingPathComponent("immediate.json"), pasteboard: immediateBoard)
+        try immediateStore.setEnabled(true); immediateStore.stop()
+        immediateBoard.clearContents(); immediateBoard.setString("just copied", forType: .string)
+        let immediatePanel = ClipboardWindow(store: immediateStore)
+        immediatePanel.present()
+        precondition(immediateStore.entries.first?.text == "just copied", "Opening must sync before the timer fires")
+        immediatePanel.close(); immediateBoard.releaseGlobally()
+        print("PASS: immediate opening captures clipboard before polling interval")
         let panel = ClipboardWindow(store: store)
         store.onChange = { [weak panel] in panel?.refresh() }
         panel.present()
@@ -350,8 +359,17 @@ struct Preview {
         let filter = allViews(view).compactMap { $0 as? NSSegmentedControl }.first!
         precondition(window.firstResponder is NSTextView, "Opening the panel must focus search")
         let editor = window.firstResponder as! NSTextView
+        let initialChoice = panel.selected
+        let rightArrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{f703}", charactersIgnoringModifiers: "\u{f703}", isARepeat: false, keyCode: 124)!
+        NSApp.sendEvent(rightArrow)
+        precondition(panel.selected != initialChoice, "Empty focused search must allow bare arrow card navigation")
+        precondition(window.firstResponder === editor, "Navigation must preserve immediate typing")
+        print("PASS: arrows navigate with empty search focused")
         editor.setMarkedText("fangshi", selectedRange: NSRange(location: 7, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         precondition(panel.isComposingSearchText, "IME candidate confirmation must bypass clipboard shortcuts")
+        let markedSelection = panel.selected
+        NSApp.sendEvent(rightArrow)
+        precondition(panel.selected == markedSelection, "IME arrows must not navigate cards")
         editor.unmarkText()
         precondition(!panel.isComposingSearchText)
         editor.selectAll(nil); editor.insertText("", replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -360,6 +378,9 @@ struct Preview {
         try await Task.sleep(nanoseconds: 100_000_000)
         let input = allViews(view).compactMap { $0 as? NSSearchField }.first!
         precondition(input.stringValue == "设计", "Typing immediately after opening must search")
+        let textSelection = panel.selected
+        NSApp.sendEvent(rightArrow)
+        precondition(panel.selected == textSelection, "Nonempty search keeps bare arrows for caret editing")
         let searchScroll = allViews(view).compactMap { $0 as? ClipboardHorizontalScrollView }.first!
         let searchCard = searchScroll.documentView!.subviews.first!
         input.stringValue = "设计说"

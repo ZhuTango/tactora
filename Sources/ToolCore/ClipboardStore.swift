@@ -296,6 +296,14 @@ final class ClipboardStore {
         }
         lastChange = pasteboard.changeCount
         if !success { throw failure("无法写入系统剪贴板，请重试。") }
+        // Our own pasteboard write is intentionally skipped by poll, so record recency here.
+        if let index = entries.firstIndex(where: { $0.id == id }) {
+            var recent = entries.remove(at: index)
+            recent.date = now()
+            entries.insert(recent, at: 0)
+            saveOrPause()
+            onChange?()
+        }
     }
     func setPinned(_ pinned: Bool, for id: UUID) throws {
         guard error == nil else { throw failure(error!) }
