@@ -194,7 +194,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -248,6 +248,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             let item = NSTabViewItem(identifier: "awake")
             item.label = AppLanguage.english ? "Keep Awake" : "防止休眠"
             item.view = KeepAwakeSettingsView(manager: keepAwake)
+            tabs.addTabViewItem(item)
+        }
+        if let ocr {
+            let item = NSTabViewItem(identifier: "ocr")
+            item.label = AppLanguage.english ? "OCR" : "截图识字"
+            item.view = OCRSettingsView(manager: ocr)
             tabs.addTabViewItem(item)
         }
         window.contentView = root
@@ -349,10 +355,11 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .clipboard: title = AppLanguage.text("剪贴板")
             case .wallpaper: title = AppLanguage.text("桌面背景")
             case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
+            case .ocr: title = AppLanguage.english ? "OCR" : "截图识字"
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun"]
+            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder"]
             let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
             row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off

@@ -15,6 +15,7 @@ struct ClipboardEntry: Codable, Equatable, Identifiable {
     var group: String? = nil
     var pinned: Bool? = nil
     var isPinned: Bool { pinned == true }
+    var origin: String? = nil
     var sourceAppName: String? = nil
     var sourceBundleIdentifier: String? = nil
     var linkURL: URL? {
@@ -23,7 +24,7 @@ struct ClipboardEntry: Codable, Equatable, Identifiable {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).contains(where: { $0.isWhitespace }) else { return nil }
         return url
     }
-    var typeTitle: String { linkURL != nil ? "链接" : kind == .text ? "文字" : kind == .image ? "图片" : "文件" }
+    var typeTitle: String { if origin == "ocr" { return "截图识字" }; return linkURL != nil ? "链接" : kind == .text ? "文字" : kind == .image ? "图片" : "文件" }
     var relativeTime: String {
         let seconds = max(0, Int(Date().timeIntervalSince(date)))
         if seconds < 60 { return "刚刚" }
@@ -216,6 +217,19 @@ final class ClipboardStore {
         prune()
         saveOrPause()
         onChange?()
+    }
+    /// Copies independently of history recording; never enables recording implicitly.
+    @discardableResult func copyOCRText(_ text: String) throws -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf8.count <= Self.maximumTextBytes else { throw failure("识别结果为空或超过 64 KB，原剪贴板已保留。") }
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else { throw failure("无法复制识别结果。") }
+        lastChange = pasteboard.changeCount
+        guard enabled, !suspended, error == nil else { return false }
+        var entry = ClipboardEntry(id: UUID(), kind: .text, text: text, paths: [], date: now())
+        entry.origin = "ocr"
+        append(entry)
+        return error == nil
     }
     func search(_ query: String, kind: ClipboardEntry.Kind? = nil) -> [ClipboardEntry] {
         let liveIDs = Set(entries.map(\.id))

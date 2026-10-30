@@ -121,6 +121,8 @@ struct Preview {
         immediatePanel.close(); immediateBoard.releaseGlobally()
         print("PASS: immediate opening captures clipboard before polling interval")
         let panel = ClipboardWindow(store: store)
+        var extractedImageURL: URL?
+        panel.onRecognizeImage = { extractedImageURL = $0 }
         store.onChange = { [weak panel] in panel?.refresh() }
         panel.present()
         let clickFrame = panel.window!.frame
@@ -357,6 +359,11 @@ struct Preview {
         let filter = allViews(view).compactMap { $0 as? NSSegmentedControl }.first!
         precondition(window.firstResponder is NSTextView, "Opening the panel must focus search")
         let editor = window.firstResponder as! NSTextView
+        let imageMenu = allViews(view).compactMap(\.menu).first { $0.items.contains { $0.title == "提取文字" } }!
+        let extractItem = imageMenu.items.first { $0.title == "提取文字" }!
+        NSApp.sendAction(extractItem.action!, to: extractItem.target, from: extractItem)
+        precondition(extractedImageURL == store.imageURL(for: store.entries.first { $0.kind == .image }!))
+        print("PASS: image card context menu routes original cached image to OCR")
         let initialChoice = panel.selected
         let rightArrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{f703}", charactersIgnoringModifiers: "\u{f703}", isARepeat: false, keyCode: 124)!
         NSApp.sendEvent(rightArrow)
@@ -531,6 +538,7 @@ struct Preview {
         let document = strip.documentView!
         precondition(document.frame.width == 60 * 234)
         precondition(document.subviews.count <= 6, "Only viewport plus overscan cards should be loaded")
+        func pumpNavigationRunLoop() { RunLoop.current.run(until: Date().addingTimeInterval(0.03)) }
         for navigationWidth: CGFloat in [680, 1050, 1712] {
             window.setContentSize(NSSize(width: navigationWidth, height: 350))
             view.layoutSubtreeIfNeeded()
@@ -542,7 +550,7 @@ struct Preview {
                     let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0,
                         windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: true, keyCode: key)!
                     NSApp.sendEvent(event)
-                    RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+                    pumpNavigationRunLoop()
                     precondition(panel.selected == navigationEntries[index].id)
                     let target = NSRect(x: CGFloat(index) * 234 + 3, y: 3, width: 220, height: 232)
                     precondition(strip.contentView.bounds.minX <= target.minX && strip.contentView.bounds.maxX >= target.maxX,
@@ -703,11 +711,12 @@ struct Preview {
         precondition(ClipboardShortcut.from(arrow)?.label == "⌃⌥⌘←")
         print("PASS: window shortcut defaults, arrow recording, persistence, clearing and conflict preservation")
         let awakeManager = KeepAwake(defaults: switcherDefaults)
-        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager)
+        let ocrManager = OCRManager(store: store, defaults: switcherDefaults)
+        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager, ocr: ocrManager)
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
-        precondition(tabs.numberOfTabViewItems == 6)
+        precondition(tabs.numberOfTabViewItems == 7)
         precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) })
         var featureChanges = 0
         unified.onFeatureChange = { feature, enabled in
@@ -715,7 +724,7 @@ struct Preview {
             precondition(feature.isEnabled(in: switcherDefaults) == enabled)
         }
         let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSSwitch }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
-        precondition(featureButtons.count == 5)
+        precondition(featureButtons.count == 6)
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
         manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 108)
         manyTools.layoutSubtreeIfNeeded()
@@ -734,12 +743,12 @@ struct Preview {
         print("PASS: 18 compact tool rows fit adaptive columns with bounded height and reachable overflow")
 
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 5)
+        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 6)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 6 && featureChanges == 10)
+        precondition(tabs.numberOfTabViewItems == 7 && featureChanges == 12)
         print("PASS: default-on feature switches persist, hide settings and restore sections")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
@@ -747,6 +756,24 @@ struct Preview {
             unifiedView.cacheDisplay(in: unifiedView.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
         }
+        unified.selectSection("ocr")
+        precondition(tabs.selectedTabViewItem?.view is OCRSettingsView)
+        precondition(ocrManager.keepLineBreaks && !ocrManager.showHistory)
+        ocrManager.keepLineBreaks = false
+        ocrManager.showHistory = true
+        let restoredOCR = OCRManager(store: store, defaults: switcherDefaults)
+        precondition(!restoredOCR.keepLineBreaks && restoredOCR.showHistory)
+        precondition(ocrManager.setShortcut(nil) && OCRManager.savedShortcut(defaults: switcherDefaults) == nil)
+        ocrManager.conflicts = { _ in true }
+        precondition(!ocrManager.setShortcut(OCRManager.defaultShortcut) && ocrManager.shortcut == nil)
+        ocrManager.conflicts = nil
+        // Do not reserve the real app's global shortcut in the test process.
+        ToolFeature.ocr.setEnabled(false, in: switcherDefaults)
+        precondition(ocrManager.setShortcut(OCRManager.defaultShortcut))
+        precondition(OCRManager.savedContains(OCRManager.defaultShortcut, defaults: switcherDefaults))
+        ToolFeature.ocr.setEnabled(true, in: switcherDefaults)
+        try settingsSnapshot("settings-ocr")
+        print("PASS: independent OCR settings, saved options, clear shortcut and conflict preservation")
         unified.selectSection("apps")
         // AppKit modal checks stop the command-line async main runloop; keep this final UI phase synchronous.
         let switcherView = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? AppSwitcherSettingsView }.first!

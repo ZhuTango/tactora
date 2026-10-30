@@ -88,6 +88,7 @@ enum ToolIcon {
 
     private static var featureCache: [String: NSImage] = [:]
     static func featureImage(symbol: String) -> NSImage {
+        if symbol == "text.viewfinder" { return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)! }
         if let cached = featureCache[symbol] { return cached }
         let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
             let rect = NSRect(x: 1, y: 1, width: 18, height: 18)

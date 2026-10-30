@@ -43,7 +43,7 @@ enum AppLanguage {
         "背景详细设置…": "Wallpaper Settings…", "未检测到可配置的屏幕": "No displays available",
         "适用于所有屏幕和以后选择的背景。各屏幕的文件与播放操作请使用菜单栏。": "Applies to all displays and future backgrounds. Use the menu bar for each display’s files and playback.",
         "设置": "Settings", "通用": "General", "剪贴板": "Clipboard", "桌面背景": "Wallpaper",
-        "方寸": "Tactora", "剪贴板列表…": "Clipboard History…", "设置…": "Settings…",
+        "截图识字": "Screenshot OCR", "方寸": "Tactora", "剪贴板列表…": "Clipboard History…", "设置…": "Settings…",
         "剪贴板设置": "Clipboard Settings", "关于方寸": "About Tactora", "退出": "Quit",
         "记录新的剪贴板内容": "Record new clipboard content", "历史保留时间": "Keep history for",
         "7 天": "7 days", "30 天": "30 days", "呼出快捷键": "Global shortcut", "恢复默认": "Reset",

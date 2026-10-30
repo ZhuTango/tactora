@@ -266,6 +266,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private var previousApp: NSRunningApplication?
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
+    var onRecognizeImage: ((URL) -> Void)?
 
     init(store: ClipboardStore) {
         self.store = store
@@ -633,10 +634,21 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
                     if let card = view as? ClipboardCard { card.isChosen = active; card.style() }
                 }
             }
+            if entry.kind == .image, ToolFeature.ocr.isEnabled(), onRecognizeImage != nil {
+                let menu = NSMenu()
+                let extract = NSMenuItem(title: AppLanguage.english ? "Extract Text" : "提取文字", action: #selector(extractText(_:)), keyEquivalent: "")
+                extract.target = self; extract.representedObject = entry.id
+                menu.addItem(extract); card.menu = menu
+            }
             card.copyItem = { [weak self] in self?.copySelected() }
             updateHighlights(in: card)
             cards.addSubview(card)
         }
+    }
+    @objc private func extractText(_ sender: NSMenuItem) {
+        guard ToolFeature.ocr.isEnabled(), let id = sender.representedObject as? UUID,
+              let entry = store.entries.first(where: { $0.id == id }), let url = store.imageURL(for: entry) else { return }
+        onRecognizeImage?(url)
     }
     private func moveSelection(_ delta: Int) {
         guard !results.isEmpty else { return }
