@@ -22,6 +22,10 @@ import AppKit
     static func require(_ value: Bool, _ message: String) throws {
         if !value { throw CheckFailure(message: message) }
     }
+    @MainActor static func choose(_ value: TextToolMode, in root: NSView) {
+        let item = views(root).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.tool.\(value.rawValue)" }!
+        NSApp.sendAction(item.action!, to: item.target, from: item)
+    }
     @MainActor static func checkEditingKeys(_ panel: TextProcessingWindow, window: NSWindow) async throws {
         let general = NSPasteboard.general
         let originalBoard: [NSPasteboardItem] = general.pasteboardItems?.map { item in
@@ -51,17 +55,14 @@ import AppKit
         try require(panel.input.string == "快捷粘贴", "Undo cut")
         try await editingKey("z", code: 6, shift: true, editor: panel.input)
         try require(panel.input.string.isEmpty, "Redo cut")
-        let mode = views(window.contentView!).compactMap { $0 as? NSSegmentedControl }.first { $0.identifier?.rawValue == "text.mode" }!
-        mode.selectedSegment = TextToolMode.compare.rawValue
-        NSApp.sendAction(mode.action!, to: mode.target, from: mode)
+        choose(.compare, in: window.contentView!)
         panel.setInput("原文")
         panel.comparison.string = ""
         general.clearContents(); general.setString("新文", forType: .string)
         try await editingKey("v", code: 9, editor: panel.comparison)
         try await ready(panel)
-        try require(panel.comparison.string == "新文" && panel.output.string.contains("+ 新文"), "Paste comparison updates diff")
-        mode.selectedSegment = 0
-        NSApp.sendAction(mode.action!, to: mode.target, from: mode)
+        try require(panel.comparison.string == "新文" && panel.output.string.contains("+ 新文"), "Paste comparison updates diff: input=\(panel.comparison.string), output=\(panel.output.string)")
+        choose(.automatic, in: window.contentView!)
         try await ready(panel)
         panel.comparison.string = ""
         // Read-only output accepts selection/copy but must ignore a paste.
@@ -93,11 +94,7 @@ import AppKit
         NSApp.sendAction(paste.action!, to: paste.target, from: paste)
         try await ready(panel)
         precondition(panel.input.string == "clipboard sentinel" && panel.output.string == "clipboard sentinel")
-        let mode = descendants.compactMap { $0 as? NSSegmentedControl }.first { $0.identifier?.rawValue == "text.mode" }!
-        func choose(_ value: TextToolMode) {
-            mode.selectedSegment = value.rawValue
-            NSApp.sendAction(mode.action!, to: mode.target, from: mode)
-        }
+        func choose(_ value: TextToolMode) { Self.choose(value, in: root) }
         panel.setInput("{\"name\":\"方寸\"}")
         try await ready(panel)
         precondition(panel.output.string.contains("\n") && panel.output.string.contains("方寸"), "Auto formats JSON")
@@ -131,6 +128,31 @@ import AppKit
         let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
         root.cacheDisplay(in: root.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/text-tools-preview.png"))
+        let reuse = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.continue" }!
+        NSApp.sendAction(reuse.action!, to: reuse.target, from: reuse)
+        try await ready(panel)
+        precondition(panel.input.string == "方寸\nTactora\n文本快捷处理", "Result can be reused")
+        panel.input.undoManager?.undo()
+        precondition(panel.input.string == "方寸\nTactora\n方寸\n文本快捷处理", "Reusing result is undoable")
+        let sample = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.example" }!
+        NSApp.sendAction(sample.action!, to: sample.target, from: sample)
+        precondition(panel.input.string == "方寸\nTactora\n方寸\n文本快捷处理", "Examples cannot overwrite existing input")
+        choose(.json); choose(.basic)
+        precondition(operation.indexOfSelectedItem == 3, "Each tool remembers its operation")
+        choose(.compare)
+        let pasteComparison = descendants.compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "text.pasteComparison" }!
+        board.clearContents(); board.setString("不同的版本", forType: .string)
+        NSApp.sendAction(pasteComparison.action!, to: pasteComparison.target, from: pasteComparison)
+        try await ready(panel)
+        precondition(panel.comparison.string == "不同的版本" && panel.output.string.contains("+ 不同的版本"))
+        window.setContentSize(NSSize(width: 900, height: 500)); root.layoutSubtreeIfNeeded()
+        let left = panel.input.enclosingScrollView!, right = panel.comparison.enclosingScrollView!, result = panel.output.enclosingScrollView!
+        let l = left.convert(left.bounds, to: root), r = right.convert(right.bounds, to: root), o = result.convert(result.bounds, to: root)
+        precondition(l.width > 200 && r.width > 200 && o.width > 600 && l.minY >= o.maxY, "Compare uses two inputs above a full-width result")
+        let compareBitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
+        root.cacheDisplay(in: root.bounds, to: compareBitmap)
+        try compareBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/text-tools-compare.png"))
+        choose(.basic)
         panel.setInput("first"); panel.setInput("latest")
         try await ready(panel); precondition(panel.output.string == "latest")
         precondition(!panel.textView(panel.input, shouldChangeTextIn: NSRange(location: 0, length: 0), replacementString: String(repeating: "字", count: TextProcessor.maximumBytes)), "Direct paste must obey the same byte limit")
