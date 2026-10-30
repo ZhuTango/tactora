@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import UniformTypeIdentifiers
 
 @MainActor
@@ -161,7 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.menu.removeAllItems()
         self.menu.autoenablesItems = false
         if ToolFeature.clipboard.isEnabled() {
-        add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") + "  " + ClipboardShortcut.saved().label : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
+        let item = add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
+        if shortcutRegistered { applyShortcut(ClipboardShortcut.saved(), to: item) }
         self.menu.addItem(.separator())
         }
         if ToolFeature.awake.isEnabled() {
@@ -216,15 +218,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.wallpaper.isEnabled() && connected.isEmpty { add("未检测到可配置的屏幕", to: self.menu) }
         self.menu.addItem(.separator())
         if ToolFeature.apps.isEnabled() {
-            let hint = appSwitcher.panelEnabled
-                ? (AppLanguage.english ? "Hold ⌥" : "长按 ⌥")
-                : (AppLanguage.english ? "Hold ⌥ off" : "长按 ⌥ 已关闭")
-            add((AppLanguage.english ? "App Switcher…" : "应用切换…") + "  " + hint, to: self.menu, action: #selector(showAppSwitcherSettings))
+            let item = add(AppLanguage.english ? "App Switcher…" : "应用切换…", to: self.menu, action: #selector(showAppSwitcherSettings))
+            if appSwitcher.panelEnabled {
+                // Option-hold has no key-down equivalent; this glyph is a display hint.
+                item.keyEquivalent = "⌥"
+                item.keyEquivalentModifierMask = []
+            }
+            item.toolTip = appSwitcher.panelEnabled
+                ? (AppLanguage.english ? "Hold Option to show apps" : "长按 Option 显示应用列表")
+                : (AppLanguage.english ? "Option-hold is disabled" : "长按 Option 显示应用列表已关闭")
         }
         if ToolFeature.windows.isEnabled() { add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings)) }
         if ToolFeature.ocr.isEnabled() {
-            let hint = ocr.shortcut?.label ?? (AppLanguage.english ? "No shortcut" : "未设置快捷键")
-            add((AppLanguage.english ? "Capture Text…" : "截图识字…") + "  " + hint, to: self.menu, action: #selector(captureText))
+            let item = add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
+            if let shortcut = ocr.shortcut { applyShortcut(shortcut, to: item) }
         }
         add("设置…", to: self.menu, action: #selector(showSettings), key: ",")
         self.menu.addItem(.separator())
@@ -305,6 +312,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             submenu.addItem(.separator())
             add("清除此屏配置（保留系统壁纸）", to: submenu, action: #selector(clear(_:)), id: id)
         }
+    }
+
+    /// Use AppKit's shortcut column so hints align with Settings and Quit.
+    private func applyShortcut(_ shortcut: ClipboardShortcut, to item: NSMenuItem) {
+        let key = String(shortcut.label.drop(while: { "⌃⌥⇧⌘".contains($0) }))
+        let special: [UInt32: String] = [
+            49: " ", 123: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
+            124: String(UnicodeScalar(NSRightArrowFunctionKey)!),
+            125: String(UnicodeScalar(NSDownArrowFunctionKey)!),
+            126: String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        ]
+        item.keyEquivalent = special[shortcut.keyCode] ?? key.lowercased()
+        var flags: NSEvent.ModifierFlags = []
+        for (carbon, flag): (Int, NSEvent.ModifierFlags) in [(cmdKey, .command), (shiftKey, .shift), (optionKey, .option), (controlKey, .control)] {
+            if shortcut.modifiers & UInt32(carbon) != 0 { flags.insert(flag) }
+        }
+        item.keyEquivalentModifierMask = flags
     }
 
     @discardableResult
