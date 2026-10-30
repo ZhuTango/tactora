@@ -139,14 +139,7 @@ enum ClipboardMotion {
         animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
         layer.add(animation, forKey: "reveal")
     }
-    static func pulse(_ view: NSView) {
-        guard !reduced, let layer = view.layer else { return }
-        let animation = CAKeyframeAnimation(keyPath: "transform.scale")
-        animation.values = [1, 0.94, 1.025, 1]
-        animation.keyTimes = [0, 0.25, 0.7, 1]
-        animation.duration = 0.22
-        layer.add(animation, forKey: "press")
-    }
+
 }
 
 @MainActor
@@ -195,10 +188,6 @@ private final class ClipboardActionButton: NSButton {
     }
     override func mouseEntered(with event: NSEvent) { hover(true) }
     override func mouseExited(with event: NSEvent) { hover(false) }
-    override func mouseDown(with event: NSEvent) {
-        wantsLayer = true; ClipboardMotion.pulse(self)
-        super.mouseDown(with: event)
-    }
 }
 
 @MainActor
@@ -245,7 +234,6 @@ private final class ClipboardCard: NSView {
     override func accessibilityPerformPress() -> Bool { choose?(); copyItem?(); return true }
     override func mouseDown(with event: NSEvent) {
         choose?()
-        ClipboardMotion.pulse(self)
         if event.clickCount > 1 { copyItem?() }
     }
 }
@@ -458,7 +446,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     }
     func controlTextDidBeginEditing(_ obj: Notification) { ClipboardMotion.fade(search, duration: 0.12) }
     func controlTextDidChange(_ obj: Notification) { cards.layer?.removeAnimation(forKey: "reveal"); selected = nil; scroll.contentView.scroll(to: .zero); refresh() }
-    @objc private func filterChanged() { selected = nil; scroll.contentView.scroll(to: .zero); refresh(); ClipboardMotion.fade(cards); ClipboardMotion.pulse(filter) }
+    @objc private func filterChanged() { selected = nil; scroll.contentView.scroll(to: .zero); refresh() }
     func refresh() {
         let previousResults = results
         let groupChoices = Array(Set(store.groups + [selectedGroup].compactMap { $0 }.filter { !$0.isEmpty })).sorted()
@@ -714,10 +702,7 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
         guard let entry = store.entries.first(where: { $0.id == id }) else { return }
         do {
             try store.setPinned(!entry.isPinned, for: id); refresh()
-            if let index = results.firstIndex(where: { $0.id == id }),
-               let card = cards.subviews.first(where: { $0.identifier?.rawValue == String(index) }) {
-                ClipboardMotion.pulse(card)
-            }
+
         }
         catch { showError(error) }
     }

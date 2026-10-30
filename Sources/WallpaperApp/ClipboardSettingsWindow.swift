@@ -360,7 +360,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         }
         let featureNote = NSTextField(wrappingLabelWithString: AppLanguage.english
             ? "Disabled tools disappear from menus and stop running. Their settings are kept."
-            : "关闭后隐藏入口并停用功能，保留原配置。背景关闭后保留当前静态壁纸。")
+            : "按需启用工具，关闭后保留配置。")
         featureNote.textColor = .secondaryLabelColor
         let featureGrid = SettingsFeatureGrid(items: featureButtons)
         let featureSearch = NSSearchField()
@@ -369,7 +369,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         featureSearch.sendsSearchStringImmediately = true
         featureSearch.delegate = featureGrid
         featureSearch.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        let features = settingsCard(AppLanguage.english ? "Tools" : "工具管理", [featureGrid, featureNote], accessory: featureSearch)
+        let features = settingsCard(AppLanguage.english ? "Tools" : "工具管理", [featureGrid, featureNote], accessory: featureButtons.count > 8 ? featureSearch : nil)
         featureSearch.widthAnchor.constraint(equalToConstant: 180).isActive = true
         featureNote.font = .systemFont(ofSize: 11)
         featureGrid.widthAnchor.constraint(equalTo: features.widthAnchor, constant: -32).isActive = true
@@ -594,6 +594,7 @@ final class SettingsFeatureGrid: NSScrollView, NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         if let field = notification.object as? NSSearchField { filter(field.stringValue) }
     }
+    private var gridHeight: NSLayoutConstraint!
     private let items: [NSView]
     private let content = SettingsFeatureGridContent()
     init(items: [NSView]) {
@@ -607,8 +608,8 @@ final class SettingsFeatureGrid: NSScrollView, NSSearchFieldDelegate {
         scrollerStyle = .overlay
         documentView = content
         for item in items { content.addSubview(item) }
-        let rows = max(1, (items.count + 2) / 3)
-        heightAnchor.constraint(equalToConstant: CGFloat(min(3, rows) * 36)).isActive = true
+        gridHeight = heightAnchor.constraint(equalToConstant: 36)
+        gridHeight.isActive = true
         setAccessibilityLabel(AppLanguage.english ? "Tool switches" : "功能开关")
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
@@ -616,13 +617,18 @@ final class SettingsFeatureGrid: NSScrollView, NSSearchFieldDelegate {
         super.layout()
         let width = contentView.bounds.width
         let visible = visibleItems
-        let rows = max(1, (visible.count + 2) / 3)
-        content.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows * 36))
-        let cellWidth = max(0, (width - 24) / 3)
+        guard width > 0 else { return }
+        let minimumWidth: CGFloat = AppLanguage.english ? 168 : 132
+        let columns = max(1, Int((width + 8) / (minimumWidth + 8)))
+        let rows = max(1, (visible.count + columns - 1) / columns)
+        let height = CGFloat(min(3, rows) * 44 - 8)
+        if gridHeight.constant != height { gridHeight.constant = height }
+        content.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows * 44 - 8))
+        let cellWidth = min(190, max(0, (width - CGFloat(columns - 1) * 8) / CGFloat(columns)))
         for item in items { item.isHidden = !visible.contains { $0 === item } }
         for (index, item) in visible.enumerated() {
-            item.frame = NSRect(x: CGFloat(index % 3) * (cellWidth + 12),
-                                y: CGFloat(index / 3) * 36, width: cellWidth, height: 36)
+            item.frame = NSRect(x: CGFloat(index % columns) * (cellWidth + 8),
+                                y: CGFloat(index / columns) * 44, width: cellWidth, height: 36)
         }
     }
 }
@@ -641,20 +647,24 @@ private final class SettingsToolRow: NSView {
         self.title = title
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 7
+        layer?.cornerRadius = 8
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
         let icon = NSImageView(image: ToolIcon.featureImage(symbol: symbol))
         icon.contentTintColor = .secondaryLabelColor
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 12, weight: .medium)
         label.lineBreakMode = .byTruncatingTail
-        toggle.controlSize = .small
+        toggle.controlSize = .mini
+        toggle.widthAnchor.constraint(equalToConstant: 36).isActive = true
         toggle.target = target; toggle.action = action
         toggle.setAccessibilityLabel(title)
         toggle.toolTip = AppLanguage.english ? "Enable or disable; settings are kept" : "启用或停用，保留原配置"
         for view in [icon, label, toggle] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), icon.widthAnchor.constraint(equalToConstant: 18), icon.heightAnchor.constraint(equalToConstant: 18), icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8), label.centerYAnchor.constraint(equalTo: centerYAnchor), label.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8), label.centerYAnchor.constraint(equalTo: centerYAnchor), label.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -4),
             toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), toggle.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
@@ -665,6 +675,12 @@ private final class SettingsToolRow: NSView {
         let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area); tracking = area
     }
-    override func mouseEntered(with event: NSEvent) { layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor }
-    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = NSColor.clear.cgColor }
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.45).cgColor
+    }
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
+    }
 }

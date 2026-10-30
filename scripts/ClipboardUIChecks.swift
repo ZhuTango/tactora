@@ -332,13 +332,11 @@ struct Preview {
         let motionProbe = NSView(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
         motionProbe.wantsLayer = true
         ClipboardMotion.reducedMotionOverride = false
-        ClipboardMotion.pulse(motionProbe)
         ClipboardMotion.fade(motionProbe)
-        precondition(motionProbe.layer?.animation(forKey: "press") != nil)
+        precondition(motionProbe.layer?.animation(forKey: "press") == nil)
         precondition(motionProbe.layer?.animation(forKey: "reveal") != nil)
         motionProbe.layer?.removeAllAnimations()
         ClipboardMotion.reducedMotionOverride = true
-        ClipboardMotion.pulse(motionProbe)
         ClipboardMotion.fade(motionProbe)
         precondition(motionProbe.layer?.animationKeys()?.isEmpty ?? true)
         ClipboardMotion.reducedMotionOverride = nil
@@ -695,19 +693,19 @@ struct Preview {
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
         manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 108)
         manyTools.layoutSubtreeIfNeeded()
-        precondition(manyTools.documentView!.frame.height == 216)
+        precondition(manyTools.documentView!.frame.height > 108)
         precondition(manyTools.frame.height == 108, "Additional tools must not grow the settings page")
         let lastTool = manyTools.documentView!.subviews.last!
         precondition(lastTool.frame.maxX <= manyTools.contentView.bounds.width)
-        precondition(lastTool.frame.maxY == 216)
-        manyTools.contentView.scroll(to: NSPoint(x: 0, y: 108))
+        precondition(lastTool.frame.maxY == manyTools.documentView!.frame.height)
+        manyTools.contentView.scroll(to: NSPoint(x: 0, y: max(0, lastTool.frame.maxY - 108)))
         manyTools.reflectScrolledClipView(manyTools.contentView)
         precondition(manyTools.documentVisibleRect.intersects(lastTool.frame), "Last tool must be reachable by scrolling")
         manyTools.filter("Tool 17")
         precondition(manyTools.documentView!.subviews.filter { !$0.isHidden }.count == 1)
         manyTools.filter("")
         precondition(manyTools.documentView!.subviews.allSatisfy { !$0.isHidden })
-        print("PASS: 18 compact tool rows fit three columns with bounded height and reachable overflow")
+        print("PASS: 18 compact tool rows fit adaptive columns with bounded height and reachable overflow")
 
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
         precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 5)
