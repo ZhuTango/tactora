@@ -73,6 +73,29 @@ import AppKit
    window.orderOut(nil)
   }
   let tool = CalendarTool(defaults:defaults)
+  precondition(!tool.showHolidays)
+  let settings = CalendarSettingsView(manager:tool)
+  let holidayToggle = views(settings).first { $0.identifier?.rawValue == "calendar.showHolidays" } as! NSButton
+  holidayToggle.performClick(nil)
+  precondition(CalendarTool(defaults:defaults).showHolidays)
+  holidayToggle.performClick(nil)
+  precondition(!CalendarTool(defaults:defaults).showHolidays)
+  let holidayDate = calendar.date(from:DateComponents(year:2026,month:5,day:1,hour:12))!
+  for enabled in [false,true] {
+   let panel = CalendarPanel(firstWeekday:2,showWeeks:true,showHolidays:enabled,date:holidayDate)
+   let window = NSWindow(contentRect:panel.frame,styleMask:[.titled],backing:.buffered,defer:false)
+   window.contentView = panel
+   panel.layoutSubtreeIfNeeded()
+   let entries = views(panel).compactMap { $0 as? NSButton }.filter { $0.toolTip?.contains("劳动节 · 放假") == true }
+   precondition(entries.count == (enabled ? 5 : 0))
+   if enabled {
+    precondition(views(panel).compactMap { $0 as? NSButton }.contains { $0.toolTip?.contains("劳动节 · 调休上班") == true })
+    let bitmap = panel.bitmapImageRepForCachingDisplay(in:panel.bounds)!
+    panel.cacheDisplay(in:panel.bounds,to:bitmap)
+    try bitmap.representation(using:.png,properties:[:])!.write(to: URL(fileURLWithPath:".build/calendar-holidays.png"))
+   }
+   window.orderOut(nil)
+  }
   tool.refresh(); precondition(tool.statusItem != nil)
   ToolFeature.calendar.setEnabled(false,in:defaults); tool.refresh(); precondition(tool.statusItem == nil)
   defaults.set(1,forKey:"calendar.firstWeekday"); defaults.set(true,forKey:"calendar.showWeeks")

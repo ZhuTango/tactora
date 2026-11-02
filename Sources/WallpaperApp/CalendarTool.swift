@@ -9,6 +9,7 @@ final class CalendarTool: NSObject {
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     var onSettings: (() -> Void)?
     var firstWeekday: Int { defaults.integer(forKey: "calendar.firstWeekday") == 1 ? 1 : 2 }
+    var showHolidays: Bool { defaults.bool(forKey: "calendar.showHolidays") }
     var showWeeks: Bool { defaults.bool(forKey: "calendar.showWeeks") }
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -79,7 +80,7 @@ final class CalendarTool: NSObject {
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
         if popover.isShown { popover.performClose(nil); return }
-        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks)
+        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays)
         panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
         panel.onClose = { [weak self] in self?.popover.performClose(nil) }
         panel.onSettings = { [weak self] in self?.popover.performClose(nil); self?.onSettings?() }
@@ -104,6 +105,7 @@ final class CalendarTool: NSObject {
 final class CalendarPanel: NSView {
     private let firstWeekday: Int
     private let showWeeks: Bool
+    private let showHolidays: Bool
     private(set) var selectedDate: Date
     private var month: Date
     private let heading = NSButton(title: "", target: nil, action: nil)
@@ -118,8 +120,8 @@ final class CalendarPanel: NSView {
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
-    init(firstWeekday: Int, showWeeks: Bool, date: Date = Date()) {
-        self.firstWeekday = firstWeekday; self.showWeeks = showWeeks
+    init(firstWeekday: Int, showWeeks: Bool, showHolidays: Bool = false, date: Date = Date()) {
+        self.firstWeekday = firstWeekday; self.showWeeks = showWeeks; self.showHolidays = showHolidays
         selectedDate = date; month = date
         super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -196,20 +198,29 @@ final class CalendarPanel: NSView {
                 let index = week * 7 + offset, date = model.days[index]
                 let button = CalendarDayButton(title: String(model.calendar.component(.day, from: date)), target: self, action: #selector(selectDay(_:)))
                 let lunar = LunarDate(date, timeZone: model.calendar.timeZone)
+                let holiday = showHolidays ? ChinaHolidays.entry(on: date, calendar: model.calendar) : nil
+                button.holiday = holiday
                 button.subtitle = lunar.shortLabel
                 button.tag = index
                 button.identifier = NSUserInterfaceItemIdentifier("calendar.day.\(index)")
                 button.selected = model.calendar.isDate(date, inSameDayAs: selectedDate)
                 button.today = model.calendar.isDateInToday(date)
                 button.dimmed = !model.contains(date)
-                button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel
-                button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
+                button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel + (holiday.map { " · " + $0.label } ?? "")
+                button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (holiday.map { "，" + $0.label } ?? "") + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
                 button.setAccessibilityValue(button.selected ? (AppLanguage.english ? "Selected" : "已选中") : "")
                 cells.append(button)
             }
             row(cells)
         }
         detail.stringValue = formatter.string(from: selectedDate) + " · " + LunarDate(selectedDate).fullLabel
+        if showHolidays {
+            if !ChinaHolidays.supportedYears.contains(model.calendar.component(.year, from: month)) {
+                detail.stringValue = AppLanguage.english ? "Holiday schedule not included for this year" : "该年放假安排暂未收录"
+            } else if let holiday = ChinaHolidays.entry(on: selectedDate, calendar: model.calendar) {
+                detail.stringValue = holiday.label + " · " + detail.stringValue
+            }
+        }
         detail.toolTip = detail.stringValue
         detail.lineBreakMode = .byTruncatingTail
         let size = NSSize(width: showWeeks ? 338 : 310, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
@@ -314,6 +325,7 @@ final class CalendarPanel: NSView {
 
 @MainActor
 private final class CalendarDayButton: NSButton {
+    var holiday: ChinaHolidays.Entry?
     var subtitle: String?
     var selected = false
     var today = false
@@ -340,7 +352,11 @@ private final class CalendarDayButton: NSButton {
         if let subtitle {
             let main = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: today || selected ? .semibold : .regular), .foregroundColor: color])
             let sub = NSAttributedString(string: subtitle, attributes: [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: selected ? NSColor.white.withAlphaComponent(0.85) : dimmed ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor])
-            main.draw(at: NSPoint(x: (bounds.width - main.size().width) / 2, y: 4))
+            main.draw(at: NSPoint(x: (bounds.width - main.size().width) / 2 - (holiday == nil ? 0 : 3), y: 4))
+            if let holiday {
+                let badge = NSAttributedString(string: holiday.badge, attributes: [.font: NSFont.systemFont(ofSize: 7, weight: .semibold), .foregroundColor: selected ? NSColor.white : holiday.isWorkday ? NSColor.systemOrange : NSColor.systemRed])
+                badge.draw(at: NSPoint(x: bounds.width - badge.size().width - 1, y: 3))
+            }
             sub.draw(at: NSPoint(x: (bounds.width - sub.size().width) / 2, y: 24))
             return
         }
@@ -355,6 +371,7 @@ private final class CalendarDayButton: NSButton {
 final class CalendarSettingsView: NSView {
     private let manager: CalendarTool
     private let firstDay = NSPopUpButton()
+    private let holidays = NSButton(checkboxWithTitle: AppLanguage.english ? "Show mainland China holidays" : "显示中国大陆节假日", target: nil, action: nil)
     private let weeks = NSButton(checkboxWithTitle: AppLanguage.english ? "Show ISO week numbers" : "显示 ISO 周数", target: nil, action: nil)
     init(manager: CalendarTool) {
         self.manager = manager
@@ -369,18 +386,23 @@ final class CalendarSettingsView: NSView {
         firstDay.setAccessibilityLabel(AppLanguage.english ? "First day of week" : "每周起始日")
         firstDay.target = self; firstDay.action = #selector(change)
         weeks.state = manager.showWeeks ? .on : .off; weeks.target = self; weeks.action = #selector(change)
+        holidays.state = manager.showHolidays ? .on : .off; holidays.target = self; holidays.action = #selector(change)
+        holidays.identifier = NSUserInterfaceItemIdentifier("calendar.showHolidays")
+        let coverage = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Offline 2026 State Council schedule. 休: holiday · 班: makeup workday. Other years are not inferred; updates ship with the app." : "内置 2026 年国务院放假安排。休：放假；班：调休上班。其他年份不推算，随应用更新补充。")
+        coverage.font = .systemFont(ofSize: 12); coverage.textColor = .secondaryLabelColor
         let row = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Week starts on" : "每周起始日"), firstDay]); row.spacing = 16
         let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Arrow keys select dates · Page Up / Down change months · T returns to today · Esc closes. Click outside to dismiss." : "方向键选择日期 · Page Up / Down 切换月份 · T 回到今天 · Esc 关闭。点击面板外自动收起。")
         hint.textColor = .secondaryLabelColor; hint.font = .systemFont(ofSize: 12)
         let open = NSButton(title: AppLanguage.english ? "Open calendar" : "打开日历", target: self, action: #selector(openCalendar))
-        let stack = NSStackView(views: [title, note, row, weeks, hint, open])
+        let stack = NSStackView(views: [title, note, row, weeks, holidays, coverage, hint, open])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 20
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
-        NSLayoutConstraint.activate([stack.topAnchor.constraint(equalTo: topAnchor, constant: 24), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24), note.widthAnchor.constraint(equalTo: stack.widthAnchor), hint.widthAnchor.constraint(equalTo: stack.widthAnchor)])
+        NSLayoutConstraint.activate([stack.topAnchor.constraint(equalTo: topAnchor, constant: 24), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24), coverage.widthAnchor.constraint(equalTo: stack.widthAnchor), note.widthAnchor.constraint(equalTo: stack.widthAnchor), hint.widthAnchor.constraint(equalTo: stack.widthAnchor)])
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     @objc private func change() {
         manager.defaults.set(firstDay.indexOfSelectedItem == 1 ? 1 : 2, forKey: "calendar.firstWeekday")
+        manager.defaults.set(holidays.state == .on, forKey: "calendar.showHolidays")
         manager.defaults.set(weeks.state == .on, forKey: "calendar.showWeeks")
         manager.refresh()
     }

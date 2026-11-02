@@ -48,3 +48,39 @@ struct LunarDate {
     var shortLabel: String { dayName == "初一" ? monthName : dayName }
     var fullLabel: String { monthName + dayName }
 }
+
+/// Mainland China schedule, State Council notice 国办发明电〔2025〕7号.
+/// Source: https://www.gov.cn/zhengce/content/202511/content_7047090.htm
+/// Verified against government republication:
+/// https://www.wuhan.gov.cn/zwgk/tzgg/202511/t20251105_2672471.shtml
+enum ChinaHolidays {
+    struct Entry {
+        let name: String
+        let isWorkday: Bool
+        var label: String { name + (isWorkday ? " · 调休上班" : " · 放假") }
+        var badge: String { isWorkday ? "班" : "休" }
+    }
+    static let supportedYears: Set<Int> = [2026]
+    private static let entries: [Int: Entry] = {
+        var result: [Int: Entry] = [:]
+        func holiday(_ month: Int, _ days: ClosedRange<Int>, _ name: String) {
+            for day in days { result[month * 100 + day] = Entry(name: name, isWorkday: false) }
+        }
+        holiday(1, 1...3, "元旦")
+        holiday(2, 15...23, "春节")
+        holiday(4, 4...6, "清明节")
+        holiday(5, 1...5, "劳动节")
+        holiday(6, 19...21, "端午节")
+        holiday(9, 25...27, "中秋节")
+        holiday(10, 1...7, "国庆节")
+        for (key, name) in [(104, "元旦"), (214, "春节"), (228, "春节"), (509, "劳动节"), (920, "国庆节"), (1010, "国庆节")] {
+            result[key] = Entry(name: name, isWorkday: true)
+        }
+        return result
+    }()
+    static func entry(on date: Date, calendar: Calendar) -> Entry? {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        guard parts.year == 2026, let month = parts.month, let day = parts.day else { return nil }
+        return entries[month * 100 + day]
+    }
+}

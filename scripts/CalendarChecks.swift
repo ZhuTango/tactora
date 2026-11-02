@@ -27,6 +27,19 @@ import Foundation
   precondition(LunarDate(date(2023,3,22), timeZone:c.timeZone).fullLabel == "闰二月初一")
   precondition(LunarDate(date(2024,9,17), timeZone:c.timeZone).fullLabel == "八月十五")
   precondition(LunarDate(date(2024,2,9), timeZone:c.timeZone).monthName == "腊月")
+  var holidays = 0, workdays = 0
+  for month in 1...12 {
+   for day in 1...c.range(of:.day, in:.month, for:date(2026,month,1))!.count {
+    if let entry = ChinaHolidays.entry(on:date(2026,month,day),calendar:c) {
+     if entry.isWorkday { workdays += 1 } else { holidays += 1 }
+    }
+   }
+  }
+  precondition(holidays == 33 && workdays == 6)
+  precondition(ChinaHolidays.entry(on:date(2026,2,14),calendar:c)?.isWorkday == true)
+  precondition(ChinaHolidays.entry(on:date(2026,2,15),calendar:c)?.name == "春节")
+  precondition(ChinaHolidays.entry(on:date(2026,2,24),calendar:c) == nil)
+  precondition(ChinaHolidays.entry(on:date(2027,1,1),calendar:c) == nil)
   print("PASS: leap year, Sunday/Monday grids, year transition, DST and ISO week numbers")
  }
 }
