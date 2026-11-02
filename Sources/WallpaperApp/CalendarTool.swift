@@ -34,12 +34,35 @@ final class CalendarTool: NSObject {
         }
         observers.append((center, token))
     }
+    /// Template artwork lets macOS tint the date and outline together in any menu bar appearance.
+    static func dateIcon(day: Int) -> NSImage {
+        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+            NSColor.black.setStroke()
+            let outline = NSBezierPath(roundedRect: NSRect(x: 1.5, y: 1.5, width: 17, height: 16), xRadius: 3, yRadius: 3)
+            outline.lineWidth = 1.25; outline.stroke()
+            let binding = NSBezierPath()
+            binding.lineWidth = 1.5; binding.lineCapStyle = .round
+            for x: CGFloat in [6, 14] {
+                binding.move(to: NSPoint(x: x, y: 16)); binding.line(to: NSPoint(x: x, y: 19))
+            }
+            binding.stroke()
+            let text = NSAttributedString(string: String(day), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+                .foregroundColor: NSColor.black
+            ])
+            let size = text.size()
+            text.draw(at: NSPoint(x: (20 - size.width) / 2, y: 3 + (11 - size.height) / 2))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
     private func updateDate() {
         guard let button = statusItem?.button else { return }
         let now = Date(), model = CalendarMonth(containing: now, firstWeekday: firstWeekday)
-        button.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)
-        button.imagePosition = .imageLeading
-        button.title = " " + String(model.calendar.component(.day, from: now))
+        button.image = Self.dateIcon(day: model.calendar.component(.day, from: now))
+        button.imagePosition = .imageOnly
+        button.title = ""
         let formatter = DateFormatter(); formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
         formatter.calendar = model.calendar; formatter.dateStyle = .full
         button.toolTip = formatter.string(from: now)
