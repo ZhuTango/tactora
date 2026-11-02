@@ -106,7 +106,9 @@ final class CalendarPanel: NSView {
     private let showWeeks: Bool
     private(set) var selectedDate: Date
     private var month: Date
-    private let heading = NSTextField(labelWithString: "")
+    private let heading = NSButton(title: "", target: nil, action: nil)
+    private let monthPicker = NSDatePicker()
+    private let monthPickerRow = NSStackView()
     private let detail = NSTextField(labelWithString: "")
     private let grid = NSStackView()
     var onSizeChange: ((NSSize) -> Void)?
@@ -118,6 +120,24 @@ final class CalendarPanel: NSView {
         selectedDate = date; month = date
         super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
+        heading.isBordered = false; heading.alignment = .left
+        heading.target = self; heading.action = #selector(toggleMonthPicker)
+        heading.identifier = NSUserInterfaceItemIdentifier("calendar.chooseMonth")
+        heading.toolTip = AppLanguage.english ? "Choose year and month" : "选择年份和月份"
+        heading.setAccessibilityLabel(heading.toolTip)
+        monthPicker.datePickerStyle = .textFieldAndStepper
+        monthPicker.datePickerElements = .yearMonth
+        monthPicker.calendar = Calendar(identifier: .gregorian)
+        monthPicker.minDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 1, month: 1, day: 1))
+        monthPicker.maxDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 9999, month: 12, day: 1))
+        monthPicker.identifier = NSUserInterfaceItemIdentifier("calendar.monthPicker")
+        monthPicker.setAccessibilityLabel(heading.toolTip)
+        let jump = NSButton(title: AppLanguage.english ? "Go" : "跳转", target: self, action: #selector(applyMonthPicker))
+        jump.bezelStyle = .rounded
+        jump.identifier = NSUserInterfaceItemIdentifier("calendar.jump")
+        monthPickerRow.addArrangedSubview(monthPicker); monthPickerRow.addArrangedSubview(jump)
+        monthPickerRow.spacing = 8; monthPickerRow.alignment = .centerY
+        monthPickerRow.isHidden = true
         detail.font = .systemFont(ofSize: 12); detail.textColor = .secondaryLabelColor
         let previous = icon("chevron.left", label: AppLanguage.english ? "Previous month" : "上个月", action: #selector(previousMonth))
         let next = icon("chevron.right", label: AppLanguage.english ? "Next month" : "下个月", action: #selector(nextMonth))
@@ -133,7 +153,7 @@ final class CalendarPanel: NSView {
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
         let separator = NSBox(); separator.boxType = .separator
-        let stack = NSStackView(views: [header, grid, separator, detail])
+        let stack = NSStackView(views: [header, monthPickerRow, grid, separator, detail])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([
@@ -161,7 +181,7 @@ final class CalendarPanel: NSView {
         let formatter = DateFormatter(); formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
         formatter.calendar = model.calendar; formatter.timeZone = model.calendar.timeZone
         formatter.setLocalizedDateFormatFromTemplate("yyyyMMM")
-        heading.stringValue = formatter.string(from: model.start)
+        heading.title = formatter.string(from: model.start)
         for view in grid.arrangedSubviews { grid.removeArrangedSubview(view); view.removeFromSuperview() }
         let weekdays = formatter.shortStandaloneWeekdaySymbols!
         func label(_ text: String) -> NSTextField {
@@ -194,9 +214,25 @@ final class CalendarPanel: NSView {
             row(cells)
         }
         detail.stringValue = formatter.string(from: selectedDate)
-        let size = NSSize(width: showWeeks ? 338 : 310, height: 332 + CGFloat(model.visibleWeeks - 6) * 32)
+        let size = NSSize(width: showWeeks ? 338 : 310, height: 332 + CGFloat(model.visibleWeeks - 6) * 32 + (monthPickerRow.isHidden ? 0 : 38))
         setFrameSize(size)
         onSizeChange?(size)
+    }
+    @objc private func toggleMonthPicker() {
+        monthPickerRow.isHidden.toggle()
+        if !monthPickerRow.isHidden { monthPicker.dateValue = month }
+        reload()
+        window?.makeFirstResponder(monthPickerRow.isHidden ? self : monthPicker)
+    }
+    @objc private func applyMonthPicker() {
+        window?.makeFirstResponder(self)
+        jumpToMonth(monthPicker.dateValue)
+    }
+    func jumpToMonth(_ date: Date) {
+        month = CalendarMonth(containing: date, firstWeekday: firstWeekday).start
+        selectedDate = month
+        monthPickerRow.isHidden = true
+        reload()
     }
     @objc private func selectDay(_ sender: NSButton) {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)

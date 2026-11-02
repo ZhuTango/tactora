@@ -50,6 +50,21 @@ import AppKit
    precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }.count == 42)
    panel.moveMonth(1)
    precondition(resized?.height == 364 && panel.frame.height == 364)
+   let choose = views(panel).first { $0.identifier?.rawValue == "calendar.chooseMonth" } as! NSButton
+   choose.performClick(nil)
+   panel.layoutSubtreeIfNeeded()
+   precondition(panel.frame.height == 402)
+   let picker = views(panel).first { $0.identifier?.rawValue == "calendar.monthPicker" } as! NSDatePicker
+   precondition(panel.bounds.contains(panel.convert(picker.bounds, from: picker)))
+   let preview = panel.bitmapImageRepForCachingDisplay(in: panel.bounds)!
+   panel.cacheDisplay(in: panel.bounds, to: preview)
+   try preview.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/calendar-month-picker.png"))
+   picker.dateValue = calendar.date(from: DateComponents(year: 2032, month: 2, day: 1))!
+   let jump = views(panel).first { $0.identifier?.rawValue == "calendar.jump" } as! NSButton
+   jump.performClick(nil)
+   precondition(calendar.component(.year, from: panel.selectedDate) == 2032)
+   precondition(calendar.component(.month, from: panel.selectedDate) == 2)
+   precondition(picker.superview!.isHidden)
    window.orderOut(nil)
   }
   let tool = CalendarTool(defaults:defaults)
