@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class CalendarTool: NSObject {
+final class CalendarTool: NSObject, NSPopoverDelegate {
     let defaults: UserDefaults
     private(set) var statusItem: NSStatusItem?
     private let popover = NSPopover()
@@ -11,11 +11,13 @@ final class CalendarTool: NSObject {
     var onSettings: (() -> Void)?
     var firstWeekday: Int { defaults.integer(forKey: "calendar.firstWeekday") == 1 ? 1 : 2 }
     var showHolidays: Bool { defaults.bool(forKey: "calendar.showHolidays") }
+    var notesEnabled: Bool { defaults.bool(forKey: "calendar.notesEnabled") }
     var showWeeks: Bool { defaults.bool(forKey: "calendar.showWeeks") }
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init()
-        popover.behavior = .transient
+        popover.behavior = .semitransient
+        popover.delegate = self
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
     func refresh() {
@@ -81,7 +83,7 @@ final class CalendarTool: NSObject {
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
         if popover.isShown { popover.performClose(nil); return }
-        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays, notesStore: notesStore)
+        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays, notesEnabled: notesEnabled, notesStore: notesStore)
         panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
         panel.onClose = { [weak self] in self?.popover.performClose(nil) }
         panel.onSettings = { [weak self] in self?.popover.performClose(nil); self?.onSettings?() }
@@ -91,6 +93,9 @@ final class CalendarTool: NSObject {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         panel.window?.makeFirstResponder(panel)
+    }
+    func popoverDidClose(_ notification: Notification) {
+        (popover.contentViewController?.view as? CalendarPanel)?.dismissNotes()
     }
     func stop() {
         popover.performClose(nil); popover.contentViewController = nil
@@ -107,8 +112,10 @@ final class CalendarPanel: NSView {
     private let firstWeekday: Int
     private let showWeeks: Bool
     private let showHolidays: Bool
+    private let notesEnabled: Bool
     private let notesStore: CalendarNotesStore
     private lazy var notesView = CalendarNotesView(store: notesStore)
+    private var notesWindow: CalendarNotesPanel?
     private var notesVisible = false
     private var notesEditing = false
     private var notesDate: Date?
@@ -131,11 +138,12 @@ final class CalendarPanel: NSView {
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
-    init(firstWeekday: Int, showWeeks: Bool, showHolidays: Bool = false, date: Date = Date(), notesStore: CalendarNotesStore? = nil) {
+    init(firstWeekday: Int, showWeeks: Bool, showHolidays: Bool = false, notesEnabled: Bool = false, date: Date = Date(), notesStore: CalendarNotesStore? = nil) {
         self.firstWeekday = firstWeekday; self.showWeeks = showWeeks; self.showHolidays = showHolidays
         self.notesStore = notesStore ?? CalendarNotesStore()
+        self.notesEnabled = notesEnabled
         selectedDate = date; month = date
-        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 638 : 610, height: 332))
+        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
         heading.isBordered = false; heading.alignment = .left
         heading.target = self; heading.action = #selector(toggleMonthPicker)
@@ -171,19 +179,8 @@ final class CalendarPanel: NSView {
             separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
-        let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Hover a date to preview\nClick to pin and add tasks" : "悬停日期，预览事项\n点击固定，即可添加和操作")
-        hint.font = .systemFont(ofSize: 12)
-        hint.textColor = .secondaryLabelColor
-        hint.alignment = .center
-        hint.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hint)
-        NSLayoutConstraint.activate([
-            hint.leadingAnchor.constraint(equalTo: leadingAnchor, constant: calendarWidth + 20),
-            hint.widthAnchor.constraint(equalToConstant: 244),
-            hint.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
+        notesButton.isHidden = !notesEnabled
         notesView.isHidden = true
-        addSubview(notesView)
         notesView.onChange = { [weak self] in self?.reload() }
         notesView.onClose = { [weak self] in self?.hideNotes() }
         notesView.onAdd = { [weak self] in
@@ -241,7 +238,7 @@ final class CalendarPanel: NSView {
                 let holiday = showHolidays ? ChinaHolidays.entry(on: date, calendar: model.calendar) : nil
                 button.holiday = holiday
                 button.subtitle = lunar.shortLabel
-                let notes = notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: model.calendar))
+                let notes = notesEnabled ? notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: model.calendar)) : []
                 button.onHover = { [weak self, weak button] entered in
                     guard let self, let button else { return }
                     self.hoverDate(date, anchor: button, entered: entered)
@@ -251,7 +248,7 @@ final class CalendarPanel: NSView {
                     self.layoutSubtreeIfNeeded()
                     self.beginQuickNote(on: date, anchor: self.convert(button.bounds, from: button))
                 }
-                button.hasNotes = !notes.isEmpty
+                button.hasNotes = notesEnabled && !notes.isEmpty
                 button.allNotesCompleted = !notes.isEmpty && notes.allSatisfy { $0.completed }
                 button.tag = index
                 button.identifier = NSUserInterfaceItemIdentifier("calendar.day.\(index)")
@@ -276,7 +273,7 @@ final class CalendarPanel: NSView {
         }
         detail.toolTip = detail.stringValue
         detail.lineBreakMode = .byTruncatingTail
-        let size = NSSize(width: calendarWidth + 300, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
+        let size = NSSize(width: calendarWidth, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
         setFrameSize(size)
         onSizeChange?(size)
         if notesVisible, let date = notesDate {
@@ -285,6 +282,7 @@ final class CalendarPanel: NSView {
         }
     }
     @objc private func openNotes() {
+        guard notesEnabled else { return }
         layoutSubtreeIfNeeded()
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)
         let tag = model.days.firstIndex { model.calendar.isDate($0, inSameDayAs: selectedDate) }
@@ -293,18 +291,34 @@ final class CalendarPanel: NSView {
         beginQuickNote(on: selectedDate, anchor: anchor)
     }
     private func beginQuickNote(on date: Date, anchor: NSRect) {
+        guard notesEnabled else { return }
         cancelHover(); hoveredDate = nil
         selectedDate = date; selectionMode = .days
         notesDate = date; notesAnchor = anchor; notesVisible = true; notesEditing = true
         notesView.isHidden = false
-        reload(); notesView.focusInput()
+        reload(); notesWindow?.makeKey(); notesView.focusInput()
     }
     private func positionNotesCard() {
-        notesView.frame = NSRect(x: calendarWidth, y: 16, width: 284, height: bounds.height - 32)
+        guard let parent = window else { return }
+        if notesWindow == nil {
+            let panel = CalendarNotesPanel(contentRect: NSRect(x: 0, y: 0, width: 284, height: 280), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
+            panel.isReleasedWhenClosed = false
+            panel.contentView = notesView
+            notesWindow = panel
+        }
+        guard let panel = notesWindow else { return }
+        let screen = parent.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
+        let height: CGFloat = notesEditing ? 320 : 240
+        let parentFrame = parent.frame
+        let x = parentFrame.maxX + 8 + 284 <= screen.maxX ? parentFrame.maxX + 8 : parentFrame.minX - 292
+        panel.setFrame(NSRect(x: max(screen.minX, min(x, screen.maxX - 284)), y: max(screen.minY, min(parentFrame.maxY - height, screen.maxY - height)), width: 284, height: height), display: true)
+        if panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
+        panel.orderFront(nil)
     }
 
     private func hoverDate(_ date: Date, anchor: NSView, entered: Bool) {
-        guard !notesEditing, selectionMode == .days else { return }
+        guard notesEnabled, !notesEditing, selectionMode == .days else { return }
         cancelHover()
         if !entered {
             if hoveredDate == date { hoveredDate = nil }
@@ -339,11 +353,14 @@ final class CalendarPanel: NSView {
     private func cancelHover() {
         hoverGeneration += 1; hoverTimer?.invalidate(); hoverTimer = nil
     }
+    func dismissNotes() { hideNotes() }
     private func hideNotes() {
         cancelHover(); hoverTimer = nil; hoveredDate = nil
         let restoreFocus = notesEditing
         notesVisible = false; notesEditing = false; notesView.isHidden = true
-        if restoreFocus { window?.makeFirstResponder(self) }
+        notesWindow?.parent?.removeChildWindow(notesWindow!)
+        notesWindow?.orderOut(nil)
+        if restoreFocus { window?.makeKey(); window?.makeFirstResponder(self) }
     }
     override func mouseDown(with event: NSEvent) {
         hideNotes()
@@ -415,7 +432,8 @@ final class CalendarPanel: NSView {
     @objc private func selectDay(_ sender: NSButton) {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)
         layoutSubtreeIfNeeded()
-        beginQuickNote(on: model.days[sender.tag], anchor: convert(sender.bounds, from: sender))
+        if notesEnabled { beginQuickNote(on: model.days[sender.tag], anchor: convert(sender.bounds, from: sender)) }
+        else { selectedDate = model.days[sender.tag]; reload() }
     }
     func moveMonth(_ delta: Int) {
         hideNotes()
@@ -451,6 +469,11 @@ final class CalendarPanel: NSView {
         }
         super.keyDown(with: event)
     }
+}
+
+@MainActor
+private final class CalendarNotesPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }
 
 @MainActor
@@ -513,6 +536,7 @@ private final class CalendarDayButton: NSButton {
 final class CalendarSettingsView: NSView {
     private let manager: CalendarTool
     private let firstDay = NSPopUpButton()
+    private let notes = NSButton(checkboxWithTitle: AppLanguage.english ? "Date tasks · floating preview" : "日期事项 · 悬浮预览", target: nil, action: nil)
     private let holidays = NSButton(checkboxWithTitle: AppLanguage.english ? "Show mainland China holidays" : "显示中国大陆节假日", target: nil, action: nil)
     private let weeks = NSButton(checkboxWithTitle: AppLanguage.english ? "Show ISO week numbers" : "显示 ISO 周数", target: nil, action: nil)
     init(manager: CalendarTool) {
@@ -527,6 +551,9 @@ final class CalendarSettingsView: NSView {
         firstDay.identifier = NSUserInterfaceItemIdentifier("calendar.firstWeekday")
         firstDay.setAccessibilityLabel(AppLanguage.english ? "First day of week" : "每周起始日")
         firstDay.target = self; firstDay.action = #selector(change)
+        notes.state = manager.notesEnabled ? .on : .off; notes.target = self; notes.action = #selector(change)
+        notes.identifier = NSUserInterfaceItemIdentifier("calendar.notesEnabled")
+        notes.toolTip = AppLanguage.english ? "Off by default. Existing tasks are kept when disabled." : "默认关闭；关闭后保留已有事项。"
         weeks.state = manager.showWeeks ? .on : .off; weeks.target = self; weeks.action = #selector(change)
         holidays.state = manager.showHolidays ? .on : .off; holidays.target = self; holidays.action = #selector(change)
         holidays.identifier = NSUserInterfaceItemIdentifier("calendar.showHolidays")
@@ -536,7 +563,7 @@ final class CalendarSettingsView: NSView {
         let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Arrow keys select dates · Page Up / Down change months · T returns to today · Esc closes. Click outside to dismiss." : "方向键选择日期 · Page Up / Down 切换月份 · T 回到今天 · Esc 关闭。点击面板外自动收起。")
         hint.textColor = .secondaryLabelColor; hint.font = .systemFont(ofSize: 12)
         let open = NSButton(title: AppLanguage.english ? "Open calendar" : "打开日历", target: self, action: #selector(openCalendar))
-        let stack = NSStackView(views: [title, note, row, weeks, holidays, coverage, hint, open])
+        let stack = NSStackView(views: [title, note, row, weeks, notes, holidays, coverage, hint, open])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 20
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([stack.topAnchor.constraint(equalTo: topAnchor, constant: 24), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24), coverage.widthAnchor.constraint(equalTo: stack.widthAnchor), note.widthAnchor.constraint(equalTo: stack.widthAnchor), hint.widthAnchor.constraint(equalTo: stack.widthAnchor)])
@@ -545,6 +572,7 @@ final class CalendarSettingsView: NSView {
     @objc private func change() {
         manager.defaults.set(firstDay.indexOfSelectedItem == 1 ? 1 : 2, forKey: "calendar.firstWeekday")
         manager.defaults.set(holidays.state == .on, forKey: "calendar.showHolidays")
+        manager.defaults.set(notes.state == .on, forKey: "calendar.notesEnabled")
         manager.defaults.set(weeks.state == .on, forKey: "calendar.showWeeks")
         manager.refresh()
     }
