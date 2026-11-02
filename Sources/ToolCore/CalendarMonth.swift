@@ -84,3 +84,25 @@ enum ChinaHolidays {
         return entries[month * 100 + day]
     }
 }
+
+/// Day-level solar terms from apparent solar longitude (Meeus low-precision solar model).
+/// Uses the displayed calendar's time zone; bounded to 1900...2100, not an ephemeris for exact times.
+enum SolarTerms {
+    static let names = ["春分", "清明", "谷雨", "立夏", "小满", "芒种", "夏至", "小暑", "大暑", "立秋", "处暑", "白露", "秋分", "寒露", "霜降", "立冬", "小雪", "大雪", "冬至", "小寒", "大寒", "立春", "雨水", "惊蛰"]
+    static func label(on date: Date, calendar: Calendar) -> String? {
+        guard (1900...2100).contains(calendar.component(.year, from: date)),
+              let interval = calendar.dateInterval(of: .day, for: date) else { return nil }
+        let start = Int(floor(longitude(interval.start) / 15))
+        let end = Int(floor(longitude(interval.end.addingTimeInterval(-0.001)) / 15))
+        return start == end ? nil : names[end % 24]
+    }
+    private static func longitude(_ date: Date) -> Double {
+        let t = (date.timeIntervalSince1970 / 86400 + 2440587.5 - 2451545) / 36525
+        let mean = 280.46646 + t * (36000.76983 + t * 0.0003032)
+        let anomaly = (357.52911 + t * (35999.05029 - 0.0001537 * t)) * .pi / 180
+        let center = sin(anomaly) * (1.914602 - t * (0.004817 + 0.000014 * t))
+            + sin(2 * anomaly) * (0.019993 - 0.000101 * t) + sin(3 * anomaly) * 0.000289
+        let apparent = mean + center - 0.00569 - 0.00478 * sin((125.04 - 1934.136 * t) * .pi / 180)
+        return (apparent.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+    }
+}

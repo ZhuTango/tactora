@@ -5,6 +5,7 @@ import AppKit
 final class CalendarNotesView: NSView, NSTextFieldDelegate {
     private let store: CalendarNotesStore
     private let heading = NSTextField(labelWithString: "")
+    private let dateInfo = NSTextField(wrappingLabelWithString: "")
     private let summary = NSTextField(labelWithString: "")
     private let input = CalendarNoteInput()
     private let submit = NSButton(title: "", target: nil, action: nil)
@@ -28,6 +29,9 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         layer?.cornerRadius = 16; layer?.borderWidth = 1
         layer?.shadowOpacity = 0; layer?.shadowRadius = 12; layer?.shadowOffset = NSSize(width: 0, height: -3)
         heading.font = .systemFont(ofSize: 15, weight: .semibold)
+        dateInfo.font = .systemFont(ofSize: 11)
+        dateInfo.textColor = .secondaryLabelColor
+        dateInfo.identifier = NSUserInterfaceItemIdentifier("calendar.notes.dateInfo")
         summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabelColor
         let close = actionButton("xmark", label: AppLanguage.english ? "Close notes" : "收起事项", action: #selector(closeNotes))
         close.identifier = NSUserInterfaceItemIdentifier("calendar.notes.close")
@@ -57,13 +61,13 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         document.translatesAutoresizingMaskIntoConstraints = false; document.addSubview(list)
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false; scroll.borderType = .noBorder; scroll.documentView = document
-        let top = NSStackView(views: [header, summary, composer, status])
+        let top = NSStackView(views: [header, dateInfo, summary, composer, status])
         top.orientation = .vertical; top.alignment = .leading; top.spacing = 10
         for view in [top, scroll] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             top.topAnchor.constraint(equalTo: topAnchor, constant: 12), top.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             top.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            header.widthAnchor.constraint(equalTo: top.widthAnchor), composer.widthAnchor.constraint(equalTo: top.widthAnchor), status.widthAnchor.constraint(equalTo: top.widthAnchor),
+            header.widthAnchor.constraint(equalTo: top.widthAnchor), dateInfo.widthAnchor.constraint(equalTo: top.widthAnchor), composer.widthAnchor.constraint(equalTo: top.widthAnchor), status.widthAnchor.constraint(equalTo: top.widthAnchor),
             scroll.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 10), scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12), scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
@@ -87,7 +91,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     override func mouseExited(with event: NSEvent) { onHover?(false) }
     override func mouseDown(with event: NSEvent) { if preview { onAdd?() } else { super.mouseDown(with: event) } }
     @objc private func addNote() { onAdd?() }
-    func show(date: Date, calendar: Calendar, preview: Bool = false, focus: Bool = false) {
+    func show(date: Date, calendar: Calendar, preview: Bool = false, showHolidays: Bool = false, focus: Bool = false) {
         self.preview = preview
         composer.isHidden = preview
         let key = CalendarNotesStore.dayKey(date, calendar: calendar)
@@ -101,6 +105,10 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
         formatter.timeZone = calendar.timeZone; formatter.setLocalizedDateFormatFromTemplate("MMMd EEE")
         heading.stringValue = formatter.string(from: date)
+        var details = [LunarDate(date, timeZone: calendar.timeZone).fullLabel]
+        if let term = SolarTerms.label(on: date, calendar: calendar) { details.append(term) }
+        if showHolidays, let holiday = ChinaHolidays.entry(on: date, calendar: calendar) { details.append(holiday.label) }
+        dateInfo.stringValue = details.joined(separator: " · ")
         render()
         if focus { window?.makeFirstResponder(input) }
     }

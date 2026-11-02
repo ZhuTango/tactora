@@ -40,6 +40,10 @@ import Foundation
   precondition(ChinaHolidays.entry(on:date(2026,2,15),calendar:c)?.name == "春节")
   precondition(ChinaHolidays.entry(on:date(2026,2,24),calendar:c) == nil)
   precondition(ChinaHolidays.entry(on:date(2027,1,1),calendar:c) == nil)
+  c.timeZone = TimeZone(identifier:"Asia/Shanghai")!
+  let termDates = [(1,5,"小寒"),(1,20,"大寒"),(2,4,"立春"),(2,18,"雨水"),(3,5,"惊蛰"),(3,20,"春分"),(4,5,"清明"),(4,20,"谷雨"),(5,5,"立夏"),(5,21,"小满"),(6,5,"芒种"),(6,21,"夏至"),(7,7,"小暑"),(7,23,"大暑"),(8,7,"立秋"),(8,23,"处暑"),(9,7,"白露"),(9,23,"秋分"),(10,8,"寒露"),(10,23,"霜降"),(11,7,"立冬"),(11,22,"小雪"),(12,7,"大雪"),(12,22,"冬至")]
+  for (m,d,name) in termDates { precondition(SolarTerms.label(on:date(2026,m,d),calendar:c) == name, "Wrong solar term: \(name)") }
+  precondition(SolarTerms.label(on:date(2026,11,2),calendar:c) == nil)
   print("PASS: leap year, Sunday/Monday grids, year transition, DST and ISO week numbers")
  }
 }

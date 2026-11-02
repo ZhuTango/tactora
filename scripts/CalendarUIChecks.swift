@@ -38,9 +38,7 @@ import AppKit
     panel.cacheDisplay(in:panel.bounds,to:bitmap)
     try bitmap.representation(using:.png,properties:[:])!.write(to: URL(fileURLWithPath:".build/calendar-\(weeks)-\(appearance.rawValue).png"))
    }
-   precondition(views(panel).contains { $0.identifier?.rawValue == "calendar.notes.open" }, "Date notes entry missing")
-   let disabledAdd = views(panel).first { $0.identifier?.rawValue == "calendar.notes.open" }!
-   precondition(disabledAdd.isHidden, "Date tasks must be disabled by default")
+   precondition(!views(panel).contains { $0.identifier?.rawValue == "calendar.notes.open" }, "Redundant quick-add button must be removed")
    let right = NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:window.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:124)!
    panel.keyDown(with:right)
    precondition(calendar.component(.year,from:panel.selectedDate) == 2027 && calendar.component(.day,from:panel.selectedDate) == 1)
@@ -81,7 +79,8 @@ import AppKit
   let noteWindow = NSWindow(contentRect:notePanel.frame,styleMask:[.titled],backing:.buffered,defer:false)
   noteWindow.contentView = notePanel
   func noteButton(_ id: String) -> NSButton { views(notePanel).first { $0.identifier?.rawValue == id } as! NSButton }
-  noteButton("calendar.notes.open").performClick(nil)
+  precondition(views(notePanel).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }.allSatisfy { $0.toolTip == nil }, "Floating preview must suppress all native date tooltips, including empty dates")
+  notePanel.keyDown(with:NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:noteWindow.windowNumber,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:false,keyCode:36)!)
   precondition(notePanel.frame.width == 310, "Floating notes must not widen calendar")
   precondition(notePanel.containsCalendarWindow(noteWindow))
   precondition(notePanel.containsCalendarWindow(noteWindow.childWindows!.first!))
@@ -130,7 +129,7 @@ import AppKit
   let another = model.days.firstIndex { calendar.component(.day,from:$0) == 30 && model.contains($0) }!
   noteButton("calendar.day.\(another)").performClick(nil)
   precondition(!notesView.isHidden && !input.isHiddenOrHasHiddenAncestor, "Click pins editable notes")
-  noteButton("calendar.notes.open").performClick(nil)
+  notePanel.keyDown(with:NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:noteWindow.windowNumber,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:false,keyCode:36)!)
   precondition(input.stringValue.isEmpty)
   let original = model.days.firstIndex { calendar.isDate($0,inSameDayAs:date) }!
   noteButton("calendar.day.\(original)").performClick(nil)
@@ -190,9 +189,22 @@ import AppKit
   RunLoop.main.run(until:Date().addingTimeInterval(0.35))
   precondition(!input.isHiddenOrHasHiddenAncestor, "Hover cannot replace an active editor")
   let floating = notesView.window!
-  notePanel.dismissNotes()
+  var requestedClose = false
+  notePanel.onClose = { requestedClose = true }
+  notePanel.mouseDown(with: NSEvent.mouseEvent(with:.leftMouseDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:noteWindow.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1)!)
+  precondition(requestedClose, "Clicking calendar blank space must close the whole calendar group")
   precondition(!floating.isVisible && floating.parent == nil, "Closing calendar must dismiss the floating window")
   noteWindow.orderOut(nil)
+  let infoView = views(notesView).first { $0.identifier?.rawValue == "calendar.notes.dateInfo" } as! NSTextField
+  let makeupDate = calendar.date(from:DateComponents(year:2026,month:10,day:10,hour:12))!
+  notesView.show(date:makeupDate,calendar:calendar,preview:true,showHolidays:true)
+  precondition(infoView.stringValue.contains("九月初一") && infoView.stringValue.contains("调休上班"))
+  notesView.show(date:makeupDate,calendar:calendar,preview:true,showHolidays:false)
+  precondition(!infoView.stringValue.contains("调休"))
+  var china = Calendar(identifier:.gregorian); china.timeZone = TimeZone(identifier:"Asia/Shanghai")!
+  let termDate = china.date(from:DateComponents(year:2026,month:11,day:7,hour:12))!
+  notesView.show(date:termDate,calendar:china,preview:true)
+  precondition(infoView.stringValue.contains("立冬"))
   let tool = CalendarTool(defaults:defaults)
   precondition(!tool.showHolidays && !tool.notesEnabled)
   let settings = CalendarSettingsView(manager:tool)

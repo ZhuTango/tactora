@@ -83,11 +83,11 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
     }
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
-        if popover.isShown { popover.performClose(nil); return }
+        if popover.isShown { closeCalendar(); return }
         let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays, notesEnabled: notesEnabled, notesStore: notesStore)
         panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
-        panel.onClose = { [weak self] in self?.popover.performClose(nil) }
-        panel.onSettings = { [weak self] in self?.popover.performClose(nil); self?.onSettings?() }
+        panel.onClose = { [weak self] in self?.closeCalendar() }
+        panel.onSettings = { [weak self] in self?.closeCalendar(); self?.onSettings?() }
         let controller = NSViewController(); controller.view = panel
         popover.contentViewController = controller
         popover.contentSize = panel.frame.size
@@ -96,19 +96,24 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         panel.window?.makeFirstResponder(panel)
         monitorOutsideClicks()
     }
+    private func closeCalendar() {
+        clearOutsideMonitors()
+        (popover.contentViewController?.view as? CalendarPanel)?.dismissNotes()
+        popover.close()
+    }
     private func monitorOutsideClicks() {
         clearOutsideMonitors()
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            guard let self, self.popover.isShown else { return event }
+            guard let self else { return event }
             let calendar = self.popover.contentViewController?.view as? CalendarPanel
             if calendar?.containsCalendarWindow(event.window) != true && event.window !== self.statusItem?.button?.window {
-                self.popover.performClose(nil)
+                self.closeCalendar()
             }
             return event
         }) { outsideMonitors.append(local) }
         if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
-            self?.popover.performClose(nil)
+            self?.closeCalendar()
         }) { outsideMonitors.append(global) }
     }
     private func clearOutsideMonitors() {
@@ -121,7 +126,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
     }
     func stop() {
         clearOutsideMonitors()
-        popover.performClose(nil); popover.contentViewController = nil
+        closeCalendar(); popover.contentViewController = nil
         midnight?.invalidate(); midnight = nil
         for (center, token) in observers { center.removeObserver(token) }
         observers.removeAll()
@@ -188,9 +193,7 @@ final class CalendarPanel: NSView {
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
         let separator = NSBox(); separator.boxType = .separator
-        let notesButton = icon("text.badge.plus", label: AppLanguage.english ? "Quick add · Return / double-click date" : "快速添加 · 回车或双击日期", action: #selector(openNotes))
-        notesButton.identifier = NSUserInterfaceItemIdentifier("calendar.notes.open")
-        let footer = NSStackView(views: [detail, notesButton]); footer.spacing = 6; footer.alignment = .centerY
+        let footer = NSStackView(views: [detail]); footer.alignment = .centerY
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let stack = NSStackView(views: [header, grid, separator, footer])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
@@ -202,7 +205,6 @@ final class CalendarPanel: NSView {
             separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
-        notesButton.isHidden = !notesEnabled
         notesView.isHidden = true
         notesView.onChange = { [weak self] in self?.reload() }
         notesView.onClose = { [weak self] in self?.hideNotes() }
@@ -260,7 +262,8 @@ final class CalendarPanel: NSView {
                 let lunar = LunarDate(date, timeZone: model.calendar.timeZone)
                 let holiday = showHolidays ? ChinaHolidays.entry(on: date, calendar: model.calendar) : nil
                 button.holiday = holiday
-                button.subtitle = lunar.shortLabel
+                let solarTerm = SolarTerms.label(on: date, calendar: model.calendar)
+                button.subtitle = solarTerm ?? lunar.shortLabel
                 let notes = notesEnabled ? notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: model.calendar)) : []
                 button.onHover = { [weak self, weak button] entered in
                     guard let self, let button else { return }
@@ -278,9 +281,9 @@ final class CalendarPanel: NSView {
                 button.selected = model.calendar.isDate(date, inSameDayAs: selectedDate)
                 button.today = model.calendar.isDateInToday(date)
                 button.dimmed = !model.contains(date)
-                button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel + (holiday.map { " · " + $0.label } ?? "")
+                button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel + (holiday.map { " · " + $0.label } ?? "") + (solarTerm.map { " · " + $0 } ?? "")
                 button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (holiday.map { "，" + $0.label } ?? "") + (notes.isEmpty ? "" : (AppLanguage.english ? ", \(notes.count) notes" : "，\(notes.count) 项事项")) + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
-                if !notes.isEmpty { button.toolTip = nil } // Custom hover card replaces the system tooltip.
+                if notesEnabled { button.toolTip = nil } // Custom hover card replaces the system tooltip.
                 button.setAccessibilityValue(button.selected ? (AppLanguage.english ? "Selected" : "已选中") : "")
                 cells.append(button)
             }
@@ -300,7 +303,7 @@ final class CalendarPanel: NSView {
         setFrameSize(size)
         onSizeChange?(size)
         if notesVisible, let date = notesDate {
-            notesView.show(date: date, calendar: model.calendar, preview: !notesEditing)
+            notesView.show(date: date, calendar: model.calendar, preview: !notesEditing, showHolidays: showHolidays)
             positionNotesCard()
         }
     }
@@ -333,7 +336,7 @@ final class CalendarPanel: NSView {
         guard let panel = notesWindow else { return }
         let screen = parent.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
         let count = notesDate.map { notesStore.entries(on: CalendarNotesStore.dayKey($0, calendar: CalendarMonth(containing: $0).calendar)).count } ?? 0
-        let height: CGFloat = min(360, (notesEditing ? 160 : 110) + CGFloat(max(1, min(count, 4))) * 48)
+        let height: CGFloat = min(360, (notesEditing ? 180 : 130) + CGFloat(max(1, min(count, 4))) * 48)
         let parentFrame = parent.frame
         let x = parentFrame.maxX + 8 + 284 <= screen.maxX ? parentFrame.maxX + 8 : parentFrame.minX - 292
         panel.setFrame(NSRect(x: max(screen.minX, min(x, screen.maxX - 284)), y: max(screen.minY, min(parentFrame.midY - height / 2, screen.maxY - height)), width: 284, height: height), display: true)
@@ -357,7 +360,7 @@ final class CalendarPanel: NSView {
             Task { @MainActor [weak self] in
                 guard let self, self.window != nil, self.hoverGeneration == generation, self.hoveredDate == date, !self.notesEditing else { return }
                 self.notesDate = date; self.notesAnchor = rect; self.notesVisible = true
-                self.notesView.show(date: date, calendar: calendar, preview: true)
+                self.notesView.show(date: date, calendar: calendar, preview: true, showHolidays: self.showHolidays)
                 self.positionNotesCard(); self.notesView.isHidden = false
             }
         }
@@ -381,18 +384,18 @@ final class CalendarPanel: NSView {
         guard let candidate else { return false }
         return candidate === window || (notesVisible && candidate === notesWindow)
     }
-    func dismissNotes() { hideNotes() }
-    private func hideNotes() {
+    func dismissNotes() { hideNotes(restoreKeyboardFocus: false) }
+    private func hideNotes(restoreKeyboardFocus: Bool = true) {
         cancelHover(); hoverTimer = nil; hoveredDate = nil
-        let restoreFocus = notesEditing
+        let restoreFocus = notesEditing && restoreKeyboardFocus
         notesVisible = false; notesEditing = false; notesView.isHidden = true
         notesWindow?.parent?.removeChildWindow(notesWindow!)
         notesWindow?.orderOut(nil)
         if restoreFocus { window?.makeKey(); window?.makeFirstResponder(self) }
     }
     override func mouseDown(with event: NSEvent) {
-        hideNotes()
-        super.mouseDown(with: event)
+        dismissNotes()
+        onClose?()
     }
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil { hideNotes() }
