@@ -26,9 +26,9 @@ final class OCRManager {
     var onChange: (() -> Void)?
     var onCapture: (() -> Void)?
     var onShowHistory: (() -> Void)?
-    var keepLineBreaks: Bool {
-        get { defaults.object(forKey: "ocrKeepLineBreaks") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "ocrKeepLineBreaks") }
+    var lineBreakMode: OCRLineBreakMode {
+        get { OCRLineBreakMode.saved(in: defaults) }
+        set { defaults.set(newValue.rawValue, forKey: "ocrLineBreakMode") }
     }
     var showHistory: Bool {
         get { defaults.bool(forKey: "ocrShowHistory") }
@@ -116,9 +116,9 @@ final class OCRManager {
     private func recognize(_ data: Data) {
         guard !busy, ToolFeature.ocr.isEnabled(in: defaults) else { return }
         busy = true; status = AppLanguage.english ? "Recognizing…" : "正在识别…"; onChange?()
-        let keep = keepLineBreaks
+        let mode = lineBreakMode
         task = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { Result { try OCRRecognition.recognize(data, keepLineBreaks: keep) } }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try OCRRecognition.recognize(data, mode: mode) } }.value
             guard let self else { return }
             defer { self.busy = false; self.task = nil; self.onChange?() }
             guard !Task.isCancelled, ToolFeature.ocr.isEnabled(in: self.defaults) else { return }
@@ -188,7 +188,8 @@ final class OCRToastView: NSVisualEffectView {
 final class OCRSettingsView: NSView {
     private let manager: OCRManager
     private let recorder = SwitcherShortcutRecorder(frame: .zero)
-    private let lines = NSButton(checkboxWithTitle: AppLanguage.english ? "Preserve line breaks" : "保留识别文字的换行", target: nil, action: nil)
+    private let lines = NSPopUpButton()
+    private let lineHelp = NSTextField(wrappingLabelWithString: "")
     private let history = NSButton(checkboxWithTitle: AppLanguage.english ? "Show clipboard history after recognition" : "识别后打开剪贴板列表", target: nil, action: nil)
     private let status = NSTextField(wrappingLabelWithString: "")
     init(manager: OCRManager) {
@@ -202,10 +203,16 @@ final class OCRSettingsView: NSView {
         recorder.onRecord = { [weak self] value in guard let self else { return }; _ = self.manager.setShortcut(value); self.refresh() }
         let reset = NSButton(title: AppLanguage.english ? "Reset" : "恢复默认", target: self, action: #selector(resetShortcut))
         let row = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Shortcut" : "呼出快捷键"), recorder, reset]); row.spacing = 16
+        lines.addItems(withTitles: AppLanguage.english ? ["Smart line breaks", "Preserve original", "Single line"] : ["智能换行", "保留原样", "合并为一行"])
+        lines.identifier = NSUserInterfaceItemIdentifier("ocr.lineBreakMode")
+        lines.setAccessibilityLabel(AppLanguage.english ? "Line break mode" : "换行处理")
         lines.target = self; lines.action = #selector(optionsChanged)
+        lineHelp.textColor = .secondaryLabelColor; lineHelp.font = .systemFont(ofSize: 12)
+        let lineRow = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Line breaks" : "换行处理"), lines]); lineRow.spacing = 16
+        let lineGroup = NSStackView(views: [lineRow, lineHelp]); lineGroup.orientation = .vertical; lineGroup.alignment = .leading; lineGroup.spacing = 8
         history.target = self; history.action = #selector(optionsChanged)
         let start = NSButton(title: AppLanguage.english ? "Capture Text…" : "开始截图识字…", target: self, action: #selector(capture))
-        let stack = NSStackView(views: [title, note, row, lines, history, start, status])
+        let stack = NSStackView(views: [title, note, row, lineGroup, history, start, status])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 22; stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([stack.topAnchor.constraint(equalTo: topAnchor, constant: 24), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24), note.widthAnchor.constraint(equalTo: stack.widthAnchor), status.widthAnchor.constraint(equalTo: stack.widthAnchor)])
@@ -214,10 +221,16 @@ final class OCRSettingsView: NSView {
     required init?(coder: NSCoder) { fatalError("Not used") }
     func refresh() {
         if !recorder.isRecording { recorder.title = manager.shortcut?.label ?? (AppLanguage.english ? "Click to record" : "点击录入快捷键") }
-        lines.state = manager.keepLineBreaks ? .on : .off; history.state = manager.showHistory ? .on : .off
+        lines.selectItem(at: OCRLineBreakMode.allCases.firstIndex(of: manager.lineBreakMode) ?? 0)
+        switch manager.lineBreakMode {
+        case .smart: lineHelp.stringValue = AppLanguage.english ? "Merge wrapped prose; retain paragraphs and lists. For code or tables, use Preserve original." : "合并段内折行，保留段落与列表；代码、表格建议选保留原样。"
+        case .original: lineHelp.stringValue = AppLanguage.english ? "Keep the lines detected by OCR; original spacing may differ." : "保留识别到的文字行；无法保证还原图片中的全部空格与排版。"
+        case .singleLine: lineHelp.stringValue = AppLanguage.english ? "Remove line breaks, joining Chinese directly and English with spaces." : "移除换行，中文直接连接，英文按需补空格。"
+        }
+        history.state = manager.showHistory ? .on : .off
         status.stringValue = manager.status
     }
     @objc private func resetShortcut() { _ = manager.setShortcut(OCRManager.defaultShortcut); refresh() }
-    @objc private func optionsChanged() { manager.keepLineBreaks = lines.state == .on; manager.showHistory = history.state == .on }
+    @objc private func optionsChanged() { manager.lineBreakMode = OCRLineBreakMode.allCases[lines.indexOfSelectedItem]; manager.showHistory = history.state == .on; refresh() }
     @objc private func capture() { manager.capture() }
 }

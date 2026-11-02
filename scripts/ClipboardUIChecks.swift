@@ -784,11 +784,11 @@ struct Preview {
         try settingsSnapshot("settings-text")
         unified.selectSection("ocr")
         precondition(tabs.selectedTabViewItem?.view is OCRSettingsView)
-        precondition(ocrManager.keepLineBreaks && !ocrManager.showHistory)
-        ocrManager.keepLineBreaks = false
+        precondition(ocrManager.lineBreakMode == .smart && !ocrManager.showHistory)
+        ocrManager.lineBreakMode = .singleLine
         ocrManager.showHistory = true
         let restoredOCR = OCRManager(store: store, defaults: switcherDefaults)
-        precondition(!restoredOCR.keepLineBreaks && restoredOCR.showHistory)
+        precondition(restoredOCR.lineBreakMode == .singleLine && restoredOCR.showHistory)
         precondition(ocrManager.setShortcut(nil) && OCRManager.savedShortcut(defaults: switcherDefaults) == nil)
         ocrManager.conflicts = { _ in true }
         precondition(!ocrManager.setShortcut(OCRManager.defaultShortcut) && ocrManager.shortcut == nil)

@@ -19,6 +19,16 @@ import AppKit
         let store = ClipboardStore(url: root.appendingPathComponent("history.json"), pasteboard: board)
         let manager = OCRManager(store: store, defaults: defaults)
         defer { manager.stop(); store.stop() }
+        let settings = OCRSettingsView(manager: manager)
+        func views(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(views) }
+        let picker = views(settings).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "ocr.lineBreakMode" }!
+        precondition(picker.numberOfItems == 3 && manager.lineBreakMode == .smart)
+        for (index, mode) in OCRLineBreakMode.allCases.enumerated() {
+            picker.selectItem(at: index)
+            NSApp.sendAction(picker.action!, to: picker.target, from: picker)
+            precondition(manager.lineBreakMode == mode)
+            precondition(OCRManager(store: store, defaults: defaults).lineBreakMode == mode)
+        }
         let image = URL(fileURLWithPath: ".build/ocr-fixture.png")
         func settle() async throws {
             for _ in 0..<600 {
@@ -26,6 +36,13 @@ import AppKit
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
             preconditionFailure("OCR did not finish")
+        }
+        for mode in OCRLineBreakMode.allCases {
+            manager.lineBreakMode = mode
+            manager.recognizeImage(at: image)
+            try await settle()
+            let expected = try OCRRecognition.recognize(Data(contentsOf: image), mode: mode)
+            precondition(board.string(forType: .string) == expected, "Selected layout must reach clipboard")
         }
         var shows = 0
         manager.onShowHistory = { shows += 1 }
