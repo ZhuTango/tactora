@@ -114,29 +114,31 @@ final class CalendarPanel: NSView {
     init(firstWeekday: Int, showWeeks: Bool, date: Date = Date()) {
         self.firstWeekday = firstWeekday; self.showWeeks = showWeeks
         selectedDate = date; month = date
-        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 370))
+        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332 + CGFloat(CalendarMonth.visibleWeeks - 6) * 32))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
         detail.font = .systemFont(ofSize: 12); detail.textColor = .secondaryLabelColor
         let previous = icon("chevron.left", label: AppLanguage.english ? "Previous month" : "上个月", action: #selector(previousMonth))
         let next = icon("chevron.right", label: AppLanguage.english ? "Next month" : "下个月", action: #selector(nextMonth))
-        let today = CalendarDayButton(title: AppLanguage.english ? "Today" : "今天", target: self, action: #selector(goToday))
+        let today = icon("circle.fill", label: AppLanguage.english ? "Back to today" : "回到今天", action: #selector(goToday))
+        today.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
+        previous.identifier = NSUserInterfaceItemIdentifier("calendar.previous")
+        next.identifier = NSUserInterfaceItemIdentifier("calendar.next")
         today.identifier = NSUserInterfaceItemIdentifier("calendar.today")
-        today.widthAnchor.constraint(equalToConstant: 48).isActive = true
         let spacer = NSView()
-        let header = NSStackView(views: [heading, spacer, previous, next]); header.spacing = 4
+        let settings = icon("gearshape", label: AppLanguage.english ? "Calendar settings" : "日历设置", action: #selector(settings))
+        settings.identifier = NSUserInterfaceItemIdentifier("calendar.settings")
+        let header = NSStackView(views: [heading, spacer, previous, today, next, settings]); header.spacing = 2; header.alignment = .centerY
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
-        let settings = icon("gearshape", label: AppLanguage.english ? "Calendar settings" : "日历设置", action: #selector(settings))
-        let footer = NSStackView(views: [today, NSView(), settings]); footer.spacing = 8
         let separator = NSBox(); separator.boxType = .separator
-        let stack = NSStackView(views: [header, grid, separator, detail, footer])
+        let stack = NSStackView(views: [header, grid, separator, detail])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 16), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor), grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            separator.widthAnchor.constraint(equalTo: stack.widthAnchor), footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detail.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
         reload()
@@ -156,7 +158,7 @@ final class CalendarPanel: NSView {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)
         let formatter = DateFormatter(); formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
         formatter.calendar = model.calendar; formatter.timeZone = model.calendar.timeZone
-        formatter.setLocalizedDateFormatFromTemplate("yyyyMMMM")
+        formatter.setLocalizedDateFormatFromTemplate("yyyyMMM")
         heading.stringValue = formatter.string(from: model.start)
         for view in grid.arrangedSubviews { grid.removeArrangedSubview(view); view.removeFromSuperview() }
         let weekdays = formatter.shortStandaloneWeekdaySymbols!
@@ -172,7 +174,7 @@ final class CalendarPanel: NSView {
         }
         row((showWeeks ? [label(AppLanguage.english ? "Wk" : "周")] : []) + (0..<7).map { label(weekdays[($0 + firstWeekday - 1) % 7]) })
         formatter.dateStyle = .full; formatter.timeStyle = .none
-        for week in 0..<6 {
+        for week in 0..<CalendarMonth.visibleWeeks {
             var cells: [NSView] = showWeeks ? [label(String(model.weekNumbers[week]))] : []
             for offset in 0..<7 {
                 let index = week * 7 + offset, date = model.days[index]

@@ -15,14 +15,25 @@ import AppKit
     window.appearance = NSAppearance(named:appearance)
     panel.layoutSubtreeIfNeeded(); panel.displayIfNeeded()
     let days = views(panel).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }
-    precondition(days.count == 42)
+    precondition(days.count == 56)
     for button in days {
      let rect = panel.convert(button.bounds,from:button)
      precondition(panel.bounds.contains(rect), "Date cell clipped")
      precondition(rect.width >= 27 && rect.height >= 27)
     }
     let today = views(panel).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "calendar.today" }!
-    precondition(panel.bounds.contains(panel.convert(today.bounds,from:today)), "Footer clipped")
+    precondition(panel.bounds.contains(panel.convert(today.bounds,from:today)), "Today control clipped")
+    func buttonRect(_ id: String) -> NSRect {
+     let button = views(panel).first { $0.identifier?.rawValue == "calendar.\(id)" }!
+     let rect = panel.convert(button.bounds, from: button)
+     precondition(panel.bounds.contains(rect), "Header control clipped")
+     return rect
+    }
+    let prevRect = buttonRect("previous"), todayRect = buttonRect("today")
+    let nextRect = buttonRect("next"), settingsRect = buttonRect("settings")
+    precondition(prevRect.maxX <= todayRect.minX && todayRect.maxX <= nextRect.minX)
+    precondition(nextRect.maxX <= settingsRect.minX && abs(settingsRect.midY - todayRect.midY) <= 1, "\(nextRect) \(settingsRect) \(todayRect)")
+    precondition(today.title.isEmpty && today.toolTip != nil)
     let bitmap = panel.bitmapImageRepForCachingDisplay(in:panel.bounds)!
     panel.cacheDisplay(in:panel.bounds,to:bitmap)
     try bitmap.representation(using:.png,properties:[:])!.write(to: URL(fileURLWithPath:".build/calendar-\(weeks)-\(appearance.rawValue).png"))
