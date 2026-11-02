@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let windowManager = WindowManager()
     private let lidDisplaySleep = LidDisplaySleep()
     private let keepAwake = KeepAwake()
+    private let keyboardManager = KeyboardManager()
     private var ocr: OCRManager!
     private var textWindow: TextProcessingWindow?
     private let textShortcut = TextToolsShortcut()
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
+        keyboardManager.start()
         lidDisplaySleep.refresh()
         clipboard = ClipboardStore()
         clipboard.onChange = { [weak self] in self?.clipboardWindow?.refresh(); self?.clipboardSettings?.refresh(); self?.updateMenu() }
@@ -196,6 +198,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.toolTip = appSwitcher.panelEnabled
                 ? (AppLanguage.english ? "Hold Option to show apps" : "长按 Option 显示应用列表")
                 : (AppLanguage.english ? "Option-hold is disabled" : "长按 Option 显示应用列表已关闭")
+        }
+        if ToolFeature.keyboard.isEnabled() {
+            add(AppLanguage.english ? "Keyboard…" : "键盘管理…", to: self.menu, action: #selector(showKeyboardSettings))
         }
         if ToolFeature.windows.isEnabled() {
             let item = add(AppLanguage.english ? "Window Management…" : "窗口管理…", to: self.menu, action: #selector(showWindowSettings))
@@ -597,13 +602,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func captureText() { ocr.capture() }
+    @objc private func showKeyboardSettings() { showClipboardSettings(); clipboardSettings?.selectSection("keyboard") }
 
     @objc private func showSettings() { showClipboardSettings(); clipboardSettings?.selectSection("general") }
 
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -635,6 +641,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func applyFeature(_ feature: ToolFeature, enabled: Bool) {
         switch feature {
+        case .keyboard:
+            keyboardManager.controller.setEnabled(enabled)
         case .clipboard:
             clipboardWindow?.close(); clipboardWindow = nil
             clipboard.setSuspended(!enabled || controller.policy.displayAsleep || controller.policy.systemAsleep || controller.policy.sessionInactive)
@@ -667,6 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for task in selections.values { task.cancel() }
         refreshTask?.cancel()
         windowManager.setEnabled(false)
+        keyboardManager.stop()
         ocr?.stop()
         textShortcut.stop()
         textWindow?.close()

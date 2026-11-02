@@ -4,6 +4,7 @@ import ServiceManagement
 @MainActor
 final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTabViewDelegate {
     private var tabs: NSTabView?
+    private var featureSwitches: [ToolFeature: NSSwitch] = [:]
     private var allSections: [NSTabViewItem] = []
     var onLidSleepChange: (() -> Void)?
     private let lidSleepToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
@@ -194,7 +195,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -221,7 +222,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
             navigation.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             navigation.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
-            navigation.widthAnchor.constraint(equalToConstant: windowManager != nil ? 680 : appSwitcher == nil ? 360 : 520),
+            navigation.widthAnchor.constraint(equalToConstant: keyboard != nil ? 780 : windowManager != nil ? 680 : appSwitcher == nil ? 360 : 520),
             tabs.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
             tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16)
         ])
@@ -260,6 +261,18 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             let item = NSTabViewItem(identifier: "text")
             item.label = AppLanguage.english ? "Text" : "文本处理"
             item.view = TextToolsSettingsView(manager: textShortcut)
+            tabs.addTabViewItem(item)
+        }
+        if let keyboard {
+            let item = NSTabViewItem(identifier: "keyboard")
+            item.label = AppLanguage.english ? "Keyboard" : "键盘管理"
+            let view = KeyboardSettingsView(controller: keyboard.controller)
+            view.onEmergencyStop = { [weak self] in
+                self?.onFeatureChange?(.keyboard, false)
+                self?.refreshFeatureSections()
+                self?.refreshGeneral()
+            }
+            item.view = view
             tabs.addTabViewItem(item)
         }
         window.contentView = root
@@ -358,6 +371,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let featureButtons = ToolFeature.allCases.map { feature -> NSView in
             let title: String
             switch feature {
+            case .keyboard: title = AppLanguage.english ? "Keyboard" : "键盘管理"
             case .clipboard: title = AppLanguage.text("剪贴板")
             case .wallpaper: title = AppLanguage.text("桌面背景")
             case .apps: title = AppLanguage.english ? "App Switcher" : "应用切换"
@@ -366,10 +380,11 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let symbols: [ToolFeature: String] = [.clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
+            let symbols: [ToolFeature: String] = [.keyboard: "keyboard", .clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
             let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
             row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off
+            featureSwitches[feature] = row.toggle
             return row
         }
         let featureNote = NSTextField(wrappingLabelWithString: AppLanguage.english
@@ -399,6 +414,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         onLidSleepChange?()
     }
     private func refreshGeneral() {
+        for (feature, control) in featureSwitches { control.state = feature.isEnabled(in: defaults) ? .on : .off }
         lidSleepToggle.state = defaults.bool(forKey: LidSleepPolicy.preferenceKey) ? .on : .off
         guard tabs != nil else { return }
         let status = loginAccess.status()

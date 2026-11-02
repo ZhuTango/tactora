@@ -21,6 +21,10 @@ fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mkdir -p .build
 xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -whole-module-optimization Sources/WallpaperCore/*.swift Sources/ToolCore/*.swift Sources/WallpaperApp/*.swift -o "$APP/Contents/MacOS/Tactora"
+xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O Sources/ToolCore/KeyboardControl.swift Sources/ToolCore/ToolFeatures.swift Sources/ToolCore/KeyboardHelperProtocol.swift Sources/WallpaperApp/KeyboardManager.swift Sources/WallpaperApp/KeyboardHelperBridge.swift Sources/KeyboardHelper/main.swift -o "$APP/Contents/MacOS/TactoraKeyboardHelper"
+mkdir -p "$APP/Contents/Library/LaunchDaemons"
+cp Resources/LaunchDaemons/local.tango.macbglive.keyboard-helper.plist "$APP/Contents/Library/LaunchDaemons/"
+codesign --force --sign "$SIGNING_IDENTITY" --identifier local.tango.macbglive.keyboard-helper "$APP/Contents/MacOS/TactoraKeyboardHelper"
 xcrun swiftc Sources/WallpaperApp/ToolIcon.swift scripts/icon.swift -o .build/icon-builder
 .build/icon-builder .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
@@ -28,5 +32,5 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 # Default designated requirement is certificate-bound for a real signing identity.
 # Never replace it with an identifier-only requirement (which would weaken trust).
 codesign --force --sign "$SIGNING_IDENTITY" "$APP"
-codesign --verify --strict "$APP"
+codesign --verify --deep --strict "$APP"
 printf 'Built: %s/%s\n' "$PWD" "$APP"
