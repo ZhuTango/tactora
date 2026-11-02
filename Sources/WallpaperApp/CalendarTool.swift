@@ -135,7 +135,7 @@ final class CalendarPanel: NSView {
         self.firstWeekday = firstWeekday; self.showWeeks = showWeeks; self.showHolidays = showHolidays
         self.notesStore = notesStore ?? CalendarNotesStore()
         selectedDate = date; month = date
-        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
+        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 638 : 610, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
         heading.isBordered = false; heading.alignment = .left
         heading.target = self; heading.action = #selector(toggleMonthPicker)
@@ -170,6 +170,17 @@ final class CalendarPanel: NSView {
             header.widthAnchor.constraint(equalTo: stack.widthAnchor), grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
             separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+        let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Hover a date to preview\nClick to pin and add tasks" : "悬停日期，预览事项\n点击固定，即可添加和操作")
+        hint.font = .systemFont(ofSize: 12)
+        hint.textColor = .secondaryLabelColor
+        hint.alignment = .center
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.leadingAnchor.constraint(equalTo: leadingAnchor, constant: calendarWidth + 20),
+            hint.widthAnchor.constraint(equalToConstant: 244),
+            hint.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
         notesView.isHidden = true
         addSubview(notesView)
@@ -265,7 +276,7 @@ final class CalendarPanel: NSView {
         }
         detail.toolTip = detail.stringValue
         detail.lineBreakMode = .byTruncatingTail
-        let size = NSSize(width: calendarWidth, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
+        let size = NSSize(width: calendarWidth + 300, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
         setFrameSize(size)
         onSizeChange?(size)
         if notesVisible, let date = notesDate {
@@ -289,17 +300,9 @@ final class CalendarPanel: NSView {
         reload(); notesView.focusInput()
     }
     private func positionNotesCard() {
-        guard let date = notesDate else { return }
-        let calendar = CalendarMonth(containing: date).calendar
-        let count = notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: calendar)).count
-        let desired: CGFloat = notesEditing ? min(260, 150 + CGFloat(min(count, 4)) * 42) : min(180, 76 + CGFloat(min(count, 3)) * 38)
-        let below = notesAnchor.minY - 22
-        let above = bounds.height - notesAnchor.maxY - 22
-        let height = min(desired, max(above, below))
-        let y = below >= height ? notesAnchor.minY - height - 6 : notesAnchor.maxY + 6
-        notesView.frame = NSRect(x: 12, y: max(12, min(y, bounds.height - height - 12)), width: calendarWidth - 24, height: height)
-        // Small in-place card; parent popover dimensions and keyboard focus never change on hover.
+        notesView.frame = NSRect(x: calendarWidth, y: 16, width: 284, height: bounds.height - 32)
     }
+
     private func hoverDate(_ date: Date, anchor: NSView, entered: Bool) {
         guard !notesEditing, selectionMode == .days else { return }
         cancelHover()
@@ -309,9 +312,6 @@ final class CalendarPanel: NSView {
         }
         hoveredDate = date
         let calendar = CalendarMonth(containing: date).calendar
-        guard !notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: calendar)).isEmpty else {
-            hideNotes(); return
-        }
         layoutSubtreeIfNeeded()
         let rect = convert(anchor.bounds, from: anchor)
         let generation = hoverGeneration
@@ -414,9 +414,8 @@ final class CalendarPanel: NSView {
     }
     @objc private func selectDay(_ sender: NSButton) {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)
-        hideNotes()
-        selectedDate = model.days[sender.tag]; reload()
-        window?.makeFirstResponder(self)
+        layoutSubtreeIfNeeded()
+        beginQuickNote(on: model.days[sender.tag], anchor: convert(sender.bounds, from: sender))
     }
     func moveMonth(_ delta: Int) {
         hideNotes()

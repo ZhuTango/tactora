@@ -1,6 +1,6 @@
 import AppKit
 
-/// In-place hover preview and quick-entry card; no polling, and only submitted changes touch disk.
+/// Right-side hover preview and pinned quick-entry panel; no polling, and only submitted changes touch disk.
 @MainActor
 final class CalendarNotesView: NSView, NSTextFieldDelegate {
     private let store: CalendarNotesStore
@@ -26,7 +26,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         identifier = NSUserInterfaceItemIdentifier("calendar.notes")
         wantsLayer = true
         layer?.cornerRadius = 12; layer?.borderWidth = 1
-        layer?.shadowOpacity = 0.2; layer?.shadowRadius = 12; layer?.shadowOffset = NSSize(width: 0, height: -3)
+        layer?.shadowOpacity = 0; layer?.shadowRadius = 12; layer?.shadowOffset = NSSize(width: 0, height: -3)
         heading.font = .systemFont(ofSize: 14, weight: .semibold)
         summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabelColor
         let close = actionButton("xmark", label: AppLanguage.english ? "Close notes" : "收起事项", action: #selector(closeNotes))
@@ -84,6 +84,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     }
     override func mouseEntered(with event: NSEvent) { onHover?(true) }
     override func mouseExited(with event: NSEvent) { onHover?(false) }
+    override func mouseDown(with event: NSEvent) { if preview { onAdd?() } else { super.mouseDown(with: event) } }
     @objc private func addNote() { onAdd?() }
     func show(date: Date, calendar: Calendar, preview: Bool = false, focus: Bool = false) {
         self.preview = preview
@@ -108,6 +109,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         let entries = store.entries(on: day)
         let remaining = entries.filter { !$0.completed }.count
         summary.stringValue = AppLanguage.english ? "\(entries.count) notes · \(remaining) pending" : "\(entries.count) 项 · \(remaining) 项未完成"
+        summary.stringValue += preview ? (AppLanguage.english ? " · Preview" : " · 预览") : (AppLanguage.english ? " · Pinned" : " · 已固定")
         status.isHidden = store.loadError == nil && editingID == nil
         status.textColor = store.loadError == nil ? .secondaryLabelColor : .systemRed
         status.stringValue = store.loadError == nil
@@ -115,7 +117,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
             : (AppLanguage.english ? "Could not read notes. Original file preserved." : "事项文件读取失败，原文件已保留，暂不能修改。")
         input.isEnabled = store.loadError == nil; submit.isEnabled = store.loadError == nil
         if entries.isEmpty {
-            let empty = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Nothing planned yet.\nWrite something to remember above." : "这一天还没有事项\n在上方记下要做的事")
+            let empty = NSTextField(wrappingLabelWithString: AppLanguage.english ? (preview ? "No tasks. Click the date to add." : "Nothing planned yet.\nWrite something to remember above.") : (preview ? "暂无事项，点击日期即可添加" : "这一天还没有事项\n在上方记下要做的事"))
             empty.font = .systemFont(ofSize: 13); empty.textColor = .secondaryLabelColor
             list.addArrangedSubview(empty); empty.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
         }

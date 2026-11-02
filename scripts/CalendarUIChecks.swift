@@ -80,7 +80,7 @@ import AppKit
   noteWindow.contentView = notePanel
   func noteButton(_ id: String) -> NSButton { views(notePanel).first { $0.identifier?.rawValue == id } as! NSButton }
   noteButton("calendar.notes.open").performClick(nil)
-  precondition(notePanel.frame.width == 310, "Quick entry must not widen calendar")
+  precondition(notePanel.frame.width == 610, "Side panel must reserve stable space")
   let input = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.input" } as! NSTextField
   let day = CalendarNotesStore.dayKey(date,calendar:calendar)
   input.stringValue = "买猫粮，顺路取快递"
@@ -114,14 +114,14 @@ import AppKit
   let model = CalendarMonth(containing:date)
   let another = model.days.firstIndex { calendar.component(.day,from:$0) == 30 && model.contains($0) }!
   noteButton("calendar.day.\(another)").performClick(nil)
-  precondition(notesView.isHidden, "Single click only selects a date")
+  precondition(!notesView.isHidden && !input.isHiddenOrHasHiddenAncestor, "Click pins editable notes")
   noteButton("calendar.notes.open").performClick(nil)
   precondition(input.stringValue.isEmpty)
   let original = model.days.firstIndex { calendar.isDate($0,inSameDayAs:date) }!
   noteButton("calendar.day.\(original)").performClick(nil)
   let doubleClick = NSEvent.mouseEvent(with:.leftMouseDown, location:.zero, modifierFlags:[], timestamp:0, windowNumber:noteWindow.windowNumber, context:nil, eventNumber:0, clickCount:2, pressure:1)!
   noteButton("calendar.day.\(original)").mouseDown(with:doubleClick)
-  precondition(!notesView.isHidden && notePanel.frame.width == 310)
+  precondition(!notesView.isHidden && notePanel.frame.width == 610)
   precondition(input.stringValue == "还没输入完")
   for i in 1...15 { try notesStore.add("待办 \(i)：检查长文本在右侧自动换行，保持日期网格不变。",on:day) }
   notePanel.reload(); notePanel.layoutSubtreeIfNeeded()
@@ -140,8 +140,9 @@ import AppKit
   noteButton("calendar.note.delete.\(item.id)").performClick(nil)
   precondition(!notesStore.entries(on:day).contains { $0.id == item.id })
   noteButton("calendar.notes.close").performClick(nil)
-  precondition(notePanel.frame.width == 310)
+  precondition(notePanel.frame.width == 610)
   noteButton("calendar.day.\(another)").performClick(nil)
+  noteButton("calendar.notes.close").performClick(nil)
   let selectedBeforeHover = notePanel.selectedDate
   let focusBeforeHover = noteWindow.firstResponder
   let pointer = NSEvent.mouseEvent(with:.mouseMoved,location:.zero,modifierFlags:[],timestamp:0,windowNumber:noteWindow.windowNumber,context:nil,eventNumber:0,clickCount:0,pressure:0)!
@@ -154,7 +155,8 @@ import AppKit
   precondition(!notesView.isHidden, "Hover should preview existing notes")
   precondition(input.isHiddenOrHasHiddenAncestor && notePanel.selectedDate == selectedBeforeHover)
   precondition(noteWindow.firstResponder === focusBeforeHover, "Hover must not steal focus")
-  precondition(notePanel.frame.width == 310)
+  precondition(notePanel.frame.width == 610)
+  precondition(notesView.frame.minX >= 310, "Preview must not cover date cells")
   notePanel.layoutSubtreeIfNeeded()
   let hoverImage = notePanel.bitmapImageRepForCachingDisplay(in:notePanel.bounds)!
   notePanel.cacheDisplay(in:notePanel.bounds,to:hoverImage)
@@ -163,7 +165,7 @@ import AppKit
   notesView.mouseEntered(with:pointer)
   RunLoop.main.run(until:Date().addingTimeInterval(0.3))
   precondition(!notesView.isHidden, "Preview remains while pointer enters card")
-  noteButton("calendar.notes.quickAdd").performClick(nil)
+  noteButton("calendar.day.\(original)").performClick(nil)
   precondition(!input.isHiddenOrHasHiddenAncestor && calendar.isDate(notePanel.selectedDate,inSameDayAs:date))
   noteButton("calendar.day.\(another)").mouseEntered(with:pointer)
   RunLoop.main.run(until:Date().addingTimeInterval(0.35))
