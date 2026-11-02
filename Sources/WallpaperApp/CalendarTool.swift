@@ -107,8 +107,11 @@ final class CalendarPanel: NSView {
     private(set) var selectedDate: Date
     private var month: Date
     private let heading = NSButton(title: "", target: nil, action: nil)
-    private let monthPicker = NSDatePicker()
-    private let monthPickerRow = NSStackView()
+    private enum SelectionMode { case days, years, months }
+    private var selectionMode: SelectionMode = .days
+    private var selectionYear = 2026
+    private var yearPage = 2020
+    private var selectionHeight: CGFloat = 0
     private let detail = NSTextField(labelWithString: "")
     private let grid = NSStackView()
     var onSizeChange: ((NSSize) -> Void)?
@@ -125,19 +128,6 @@ final class CalendarPanel: NSView {
         heading.identifier = NSUserInterfaceItemIdentifier("calendar.chooseMonth")
         heading.toolTip = AppLanguage.english ? "Choose year and month" : "选择年份和月份"
         heading.setAccessibilityLabel(heading.toolTip)
-        monthPicker.datePickerStyle = .textFieldAndStepper
-        monthPicker.datePickerElements = .yearMonth
-        monthPicker.calendar = Calendar(identifier: .gregorian)
-        monthPicker.minDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 1, month: 1, day: 1))
-        monthPicker.maxDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 9999, month: 12, day: 1))
-        monthPicker.identifier = NSUserInterfaceItemIdentifier("calendar.monthPicker")
-        monthPicker.setAccessibilityLabel(heading.toolTip)
-        let jump = NSButton(title: AppLanguage.english ? "Go" : "跳转", target: self, action: #selector(applyMonthPicker))
-        jump.bezelStyle = .rounded
-        jump.identifier = NSUserInterfaceItemIdentifier("calendar.jump")
-        monthPickerRow.addArrangedSubview(monthPicker); monthPickerRow.addArrangedSubview(jump)
-        monthPickerRow.spacing = 8; monthPickerRow.alignment = .centerY
-        monthPickerRow.isHidden = true
         detail.font = .systemFont(ofSize: 12); detail.textColor = .secondaryLabelColor
         let previous = icon("chevron.left", label: AppLanguage.english ? "Previous month" : "上个月", action: #selector(previousMonth))
         let next = icon("chevron.right", label: AppLanguage.english ? "Next month" : "下个月", action: #selector(nextMonth))
@@ -153,7 +143,7 @@ final class CalendarPanel: NSView {
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
         let separator = NSBox(); separator.boxType = .separator
-        let stack = NSStackView(views: [header, monthPickerRow, grid, separator, detail])
+        let stack = NSStackView(views: [header, grid, separator, detail])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([
@@ -183,55 +173,105 @@ final class CalendarPanel: NSView {
         formatter.setLocalizedDateFormatFromTemplate("yyyyMMM")
         heading.title = formatter.string(from: model.start)
         for view in grid.arrangedSubviews { grid.removeArrangedSubview(view); view.removeFromSuperview() }
+        if selectionMode != .days {
+            renderSelection()
+            return
+        }
         let weekdays = formatter.shortStandaloneWeekdaySymbols!
         func label(_ text: String) -> NSTextField {
             let value = NSTextField(labelWithString: text); value.alignment = .center
             value.font = .systemFont(ofSize: 11, weight: .medium); value.textColor = .secondaryLabelColor
             return value
         }
-        func row(_ views: [NSView]) {
+        func row(_ views: [NSView], height: CGFloat = 42) {
             let row = NSStackView(views: views); row.spacing = 4; row.distribution = .fillEqually
             grid.addArrangedSubview(row); row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
-            row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            row.heightAnchor.constraint(equalToConstant: height).isActive = true
         }
-        row((showWeeks ? [label(AppLanguage.english ? "Wk" : "周")] : []) + (0..<7).map { label(weekdays[($0 + firstWeekday - 1) % 7]) })
+        row((showWeeks ? [label(AppLanguage.english ? "Wk" : "周")] : []) + (0..<7).map { label(weekdays[($0 + firstWeekday - 1) % 7]) }, height: 28)
         formatter.dateStyle = .full; formatter.timeStyle = .none
         for week in 0..<model.visibleWeeks {
             var cells: [NSView] = showWeeks ? [label(String(model.weekNumbers[week]))] : []
             for offset in 0..<7 {
                 let index = week * 7 + offset, date = model.days[index]
                 let button = CalendarDayButton(title: String(model.calendar.component(.day, from: date)), target: self, action: #selector(selectDay(_:)))
+                let lunar = LunarDate(date, timeZone: model.calendar.timeZone)
+                button.subtitle = lunar.shortLabel
                 button.tag = index
                 button.identifier = NSUserInterfaceItemIdentifier("calendar.day.\(index)")
                 button.selected = model.calendar.isDate(date, inSameDayAs: selectedDate)
                 button.today = model.calendar.isDateInToday(date)
                 button.dimmed = !model.contains(date)
-                button.toolTip = formatter.string(from: date)
-                button.setAccessibilityLabel(formatter.string(from: date) + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
+                button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel
+                button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
                 button.setAccessibilityValue(button.selected ? (AppLanguage.english ? "Selected" : "已选中") : "")
                 cells.append(button)
             }
             row(cells)
         }
-        detail.stringValue = formatter.string(from: selectedDate)
-        let size = NSSize(width: showWeeks ? 338 : 310, height: 332 + CGFloat(model.visibleWeeks - 6) * 32 + (monthPickerRow.isHidden ? 0 : 38))
+        detail.stringValue = formatter.string(from: selectedDate) + " · " + LunarDate(selectedDate).fullLabel
+        detail.toolTip = detail.stringValue
+        detail.lineBreakMode = .byTruncatingTail
+        let size = NSSize(width: showWeeks ? 338 : 310, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
         setFrameSize(size)
         onSizeChange?(size)
     }
     @objc private func toggleMonthPicker() {
-        monthPickerRow.isHidden.toggle()
-        if !monthPickerRow.isHidden { monthPicker.dateValue = month }
+        let calendar = CalendarMonth(containing: month).calendar
+        if selectionMode == .years {
+            selectionMode = .days
+        } else {
+            if selectionMode == .days {
+                selectionHeight = frame.height
+                selectionYear = calendar.component(.year, from: month)
+            }
+            yearPage = max(1, ((selectionYear - 1) / 12) * 12 + 1)
+            selectionMode = .years
+        }
         reload()
-        window?.makeFirstResponder(monthPickerRow.isHidden ? self : monthPicker)
-    }
-    @objc private func applyMonthPicker() {
         window?.makeFirstResponder(self)
-        jumpToMonth(monthPicker.dateValue)
+    }
+    private func renderSelection() {
+        heading.title = selectionMode == .years ? "\(yearPage)–\(min(9999, yearPage + 11))" : "\(selectionYear)"
+        detail.stringValue = selectionMode == .years
+            ? (AppLanguage.english ? "Choose a year · Click title to return" : "选择年份 · 点击标题返回日历")
+            : (AppLanguage.english ? "Choose a month · Click title to choose year" : "选择月份 · 点击标题返回年份")
+        let height = (selectionHeight - 108 - 12) / 4
+        let formatter = DateFormatter()
+        formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
+        let names = formatter.shortStandaloneMonthSymbols!
+        for rowIndex in 0..<4 {
+            let row = NSStackView(); row.spacing = 8; row.distribution = .fillEqually
+            for column in 0..<3 {
+                let index = rowIndex * 3 + column
+                let value = selectionMode == .years ? yearPage + index : index + 1
+                let button = CalendarDayButton(title: selectionMode == .years ? String(value) : names[index], target: self, action: #selector(choosePeriod(_:)))
+                button.tag = value
+                button.identifier = NSUserInterfaceItemIdentifier("calendar.\(selectionMode == .years ? "year" : "month").\(value)")
+                button.selected = selectionMode == .years ? value == selectionYear : selectionYear == Calendar(identifier: .gregorian).component(.year, from: month) && value == Calendar(identifier: .gregorian).component(.month, from: month)
+                button.isEnabled = value <= 9999
+                row.addArrangedSubview(button)
+                button.heightAnchor.constraint(equalToConstant: height - 12).isActive = true
+            }
+            grid.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
+            row.heightAnchor.constraint(equalToConstant: height).isActive = true
+        }
+        // Keep the existing month footprint throughout both selection steps.
+        setFrameSize(NSSize(width: frame.width, height: selectionHeight))
+    }
+    @objc private func choosePeriod(_ sender: NSButton) {
+        if selectionMode == .years {
+            selectionYear = sender.tag; selectionMode = .months; reload()
+        } else {
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = .current
+            if let date = calendar.date(from: DateComponents(year: selectionYear, month: sender.tag, day: 1, hour: 12)) { jumpToMonth(date) }
+        }
     }
     func jumpToMonth(_ date: Date) {
         month = CalendarMonth(containing: date, firstWeekday: firstWeekday).start
         selectedDate = month
-        monthPickerRow.isHidden = true
+        selectionMode = .days
         reload()
     }
     @objc private func selectDay(_ sender: NSButton) {
@@ -240,18 +280,29 @@ final class CalendarPanel: NSView {
         window?.makeFirstResponder(self)
     }
     func moveMonth(_ delta: Int) {
+        if selectionMode == .years {
+            yearPage = min(9988, max(1, yearPage + delta * 12)); reload(); return
+        }
+        if selectionMode == .months {
+            selectionYear = min(9999, max(1, selectionYear + delta)); reload(); return
+        }
         month = CalendarMonth(containing: month, firstWeekday: firstWeekday).moving(months: delta)
         selectedDate = month; reload()
     }
     @objc private func previousMonth() { moveMonth(-1) }
     @objc private func nextMonth() { moveMonth(1) }
-    @objc private func goToday() { selectedDate = Date(); month = selectedDate; reload() }
+    @objc private func goToday() { selectionMode = .days; selectedDate = Date(); month = selectedDate; reload() }
     @objc private func settings() { onSettings?() }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { onClose?(); return }
+        if event.keyCode == 53 { if selectionMode != .days { selectionMode = .days; reload() } else { onClose?() }; return }
         if event.keyCode == 116 { moveMonth(-1); return }
         if event.keyCode == 121 { moveMonth(1); return }
         if event.charactersIgnoringModifiers?.lowercased() == "t" { goToday(); return }
+        if selectionMode != .days {
+            if event.keyCode == 123 { moveMonth(-1) }
+            if event.keyCode == 124 { moveMonth(1) }
+            return
+        }
         let steps: [UInt16: Int] = [123: -1, 124: 1, 125: 7, 126: -7]
         if let step = steps[event.keyCode], event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             selectedDate = CalendarMonth(containing: month).calendar.date(byAdding: .day, value: step, to: selectedDate)!
@@ -263,6 +314,7 @@ final class CalendarPanel: NSView {
 
 @MainActor
 private final class CalendarDayButton: NSButton {
+    var subtitle: String?
     var selected = false
     var today = false
     var dimmed = false
@@ -285,11 +337,18 @@ private final class CalendarDayButton: NSButton {
         }
         if today { NSColor.controlAccentColor.setStroke(); path.lineWidth = 1.5; path.stroke() }
         let color: NSColor = selected ? .white : dimmed ? .tertiaryLabelColor : .labelColor
+        if let subtitle {
+            let main = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: today || selected ? .semibold : .regular), .foregroundColor: color])
+            let sub = NSAttributedString(string: subtitle, attributes: [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: selected ? NSColor.white.withAlphaComponent(0.85) : dimmed ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor])
+            main.draw(at: NSPoint(x: (bounds.width - main.size().width) / 2, y: 4))
+            sub.draw(at: NSPoint(x: (bounds.width - sub.size().width) / 2, y: 24))
+            return
+        }
         attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: today || selected ? .semibold : .regular), .foregroundColor: color])
         contentTintColor = color
         super.draw(dirtyRect)
     }
-    override var intrinsicContentSize: NSSize { NSSize(width: max(28, super.intrinsicContentSize.width), height: 28) }
+    override var intrinsicContentSize: NSSize { NSSize(width: max(28, super.intrinsicContentSize.width), height: subtitle == nil ? 28 : 42) }
 }
 
 @MainActor

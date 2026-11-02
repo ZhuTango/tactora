@@ -46,25 +46,30 @@ import AppKit
    var resized: NSSize?
    panel.onSizeChange = { resized = $0 }
    panel.moveMonth(2) // February 2027 requires four month rows plus two context rows.
-   precondition(resized?.height == 332 && panel.frame.height == 332)
+   precondition(resized?.height == 416 && panel.frame.height == 416)
    precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }.count == 42)
    panel.moveMonth(1)
-   precondition(resized?.height == 364 && panel.frame.height == 364)
+   precondition(resized?.height == 462 && panel.frame.height == 462)
    let choose = views(panel).first { $0.identifier?.rawValue == "calendar.chooseMonth" } as! NSButton
    choose.performClick(nil)
    panel.layoutSubtreeIfNeeded()
-   precondition(panel.frame.height == 402)
-   let picker = views(panel).first { $0.identifier?.rawValue == "calendar.monthPicker" } as! NSDatePicker
-   precondition(panel.bounds.contains(panel.convert(picker.bounds, from: picker)))
+   precondition(panel.frame.height == 462)
+   precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }.isEmpty)
+   panel.moveMonth(1)
+   let year = views(panel).first { $0.identifier?.rawValue == "calendar.year.2032" } as! NSButton
+   year.performClick(nil)
+   panel.layoutSubtreeIfNeeded()
+   precondition(panel.frame.height == 462)
+   let months = views(panel).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("calendar.month.") == true }
+   precondition(months.count == 12)
+   for button in months { precondition(panel.bounds.contains(panel.convert(button.bounds, from: button))) }
    let preview = panel.bitmapImageRepForCachingDisplay(in: panel.bounds)!
    panel.cacheDisplay(in: panel.bounds, to: preview)
    try preview.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/calendar-month-picker.png"))
-   picker.dateValue = calendar.date(from: DateComponents(year: 2032, month: 2, day: 1))!
-   let jump = views(panel).first { $0.identifier?.rawValue == "calendar.jump" } as! NSButton
-   jump.performClick(nil)
+   months.first { $0.tag == 2 }!.performClick(nil)
    precondition(calendar.component(.year, from: panel.selectedDate) == 2032)
    precondition(calendar.component(.month, from: panel.selectedDate) == 2)
-   precondition(picker.superview!.isHidden)
+   precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.month.") == true }.isEmpty)
    window.orderOut(nil)
   }
   let tool = CalendarTool(defaults:defaults)

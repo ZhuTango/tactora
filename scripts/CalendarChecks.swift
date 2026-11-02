@@ -23,6 +23,10 @@ import Foundation
   for pair in zip(dst.days,dst.days.dropFirst()) { precondition(c.dateComponents([.day],from:pair.0,to:pair.1).day == 1) }
   let jan = CalendarMonth(containing:date(2021,1,1), firstWeekday:2, timeZone:c.timeZone)
   precondition(jan.weekNumbers.first == 52)
+  precondition(LunarDate(date(2024,2,10), timeZone:c.timeZone).fullLabel == "正月初一")
+  precondition(LunarDate(date(2023,3,22), timeZone:c.timeZone).fullLabel == "闰二月初一")
+  precondition(LunarDate(date(2024,9,17), timeZone:c.timeZone).fullLabel == "八月十五")
+  precondition(LunarDate(date(2024,2,9), timeZone:c.timeZone).monthName == "腊月")
   print("PASS: leap year, Sunday/Monday grids, year transition, DST and ISO week numbers")
  }
 }
