@@ -8,7 +8,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     private let dateInfo = NSTextField(wrappingLabelWithString: "")
     private let summary = NSTextField(labelWithString: "")
     private let input = CalendarNoteInput()
-    private let submit = NSButton(title: "", target: nil, action: nil)
+    private var quickAdd: NSButton?
     private let status = NSTextField(wrappingLabelWithString: "")
     private let list = NSStackView()
     private let scroll = NSScrollView()
@@ -36,6 +36,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         let close = actionButton("xmark", label: AppLanguage.english ? "Close notes" : "收起事项", action: #selector(closeNotes))
         close.identifier = NSUserInterfaceItemIdentifier("calendar.notes.close")
         let add = actionButton("plus", label: AppLanguage.english ? "Quick add" : "快速添加", action: #selector(addNote))
+        quickAdd = add
         add.identifier = NSUserInterfaceItemIdentifier("calendar.notes.quickAdd")
         let header = NSStackView(views: [heading, NSView(), add, close]); header.alignment = .centerY; header.spacing = 6
         input.placeholderString = AppLanguage.english ? "Type a task, then press Return" : "输入事项，回车保存"
@@ -44,13 +45,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         input.font = .systemFont(ofSize: 13); input.bezelStyle = .roundedBezel
         input.delegate = self
         input.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        submit.image = NSImage(systemSymbolName: "return", accessibilityDescription: AppLanguage.english ? "Save task" : "保存事项")
-        submit.toolTip = AppLanguage.english ? "Return to save" : "回车保存"
-        submit.setAccessibilityLabel(submit.toolTip)
-        submit.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        submit.bezelStyle = .rounded; submit.target = self; submit.action = #selector(saveInput)
-        submit.identifier = NSUserInterfaceItemIdentifier("calendar.notes.add")
-        composer.addArrangedSubview(input); composer.addArrangedSubview(submit); composer.spacing = 6
+        composer.addArrangedSubview(input)
         input.setContentHuggingPriority(.defaultLow, for: .horizontal)
         input.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
@@ -94,6 +89,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     func show(date: Date, calendar: Calendar, preview: Bool = false, showHolidays: Bool = false, focus: Bool = false) {
         self.preview = preview
         composer.isHidden = preview
+        quickAdd?.isHidden = !preview
         let key = CalendarNotesStore.dayKey(date, calendar: calendar)
         if day != key {
             day = key
@@ -124,7 +120,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         status.stringValue = store.loadError == nil
             ? (editingID == nil ? (AppLanguage.english ? "Saved on this Mac · Return to add" : "仅保存在本机 · 回车连续添加") : (AppLanguage.english ? "Editing · Esc to cancel" : "编辑中 · Esc 取消编辑"))
             : (AppLanguage.english ? "Could not read notes. Original file preserved." : "事项文件读取失败，原文件已保留，暂不能修改。")
-        input.isEnabled = store.loadError == nil; submit.isEnabled = store.loadError == nil
+        input.isEnabled = store.loadError == nil
         if entries.isEmpty {
             let empty = NSTextField(wrappingLabelWithString: AppLanguage.english ? (preview ? "No tasks. Click the date to add." : "Nothing planned yet.\nWrite something to remember above.") : (preview ? "暂无事项，点击日期即可添加" : "这一天还没有事项\n在上方记下要做的事"))
             empty.font = .systemFont(ofSize: 13); empty.textColor = .secondaryLabelColor
@@ -142,7 +138,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
             guard !textView.hasMarkedText() else { return false }
-            saveInput(); return true
+            saveText(); return true
         }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)), editingID != nil {
             editingID = nil; store.draftEditingIDs.removeValue(forKey: day)
@@ -152,10 +148,6 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
             closeNotes(); return true
         }
         return false
-    }
-    @objc private func saveInput() {
-        guard (input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
-        saveText()
     }
     private func saveText() {
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -239,7 +231,7 @@ private final class CalendarNoteRow: NSView {
         let marker = NSTextField(labelWithString: item.completed ? "✓" : "•")
         marker.font = .systemFont(ofSize: 12); marker.textColor = .secondaryLabelColor
         marker.widthAnchor.constraint(equalToConstant: 14).isActive = true
-        let row = NSStackView(views: preview ? [marker, text] : [check, text, edit, delete]); row.spacing = 6; row.alignment = .top; row.distribution = .fill
+        let row = NSStackView(views: preview ? [marker, text] : [check, text, edit, delete]); row.spacing = 6; row.alignment = .centerY; row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false; addSubview(row)
         NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), row.topAnchor.constraint(equalTo: topAnchor, constant: 6), row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)])
     }
@@ -254,6 +246,13 @@ private final class CalendarNoteRow: NSView {
 }
 private final class CalendarNotesDocumentView: NSView { override var isFlipped: Bool { true } }
 private final class CalendarNoteInput: NSTextField {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cell = CalendarNoteInputCell(textCell: "")
+        isEditable = true; isSelectable = true; isBezeled = true; drawsBackground = true
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection([.command, .control, .option]) == .command, let editor = currentEditor() as? NSTextView {
             switch event.charactersIgnoringModifiers?.lowercased() {
@@ -265,5 +264,22 @@ private final class CalendarNoteInput: NSTextField {
             }
         }
         return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// Align the placeholder, rendered text and field editor to the same vertical inset.
+private final class CalendarNoteInputCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var result = super.drawingRect(forBounds: rect)
+        let height = min(result.height, (font?.ascender ?? 13) - (font?.descender ?? -3) + 2)
+        result.origin.y += (result.height - height) / 2
+        result.size.height = height
+        return result
+    }
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: drawingRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: drawingRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
     }
 }

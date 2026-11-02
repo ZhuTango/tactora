@@ -92,8 +92,12 @@ import AppKit
   precondition(floatingFrame.height < 240, "Empty editor should be compact")
   let input = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.input" } as! NSTextField
   let day = CalendarNotesStore.dayKey(date,calendar:calendar)
+  precondition(!views(notePanel).contains { $0.identifier?.rawValue == "calendar.notes.add" }, "Return button must be removed")
+  precondition(views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.quickAdd" }!.isHidden)
+  let textRect = input.cell!.drawingRect(forBounds:input.bounds)
+  precondition(abs(textRect.midY - input.bounds.midY) < 2, "Input text must be vertically centered")
   input.stringValue = "买猫粮，顺路取快递"
-  noteButton("calendar.notes.add").performClick(nil)
+  precondition((input.delegate as! CalendarNotesView).control(input,textView:NSTextView(),doCommandBy:#selector(NSResponder.insertNewline(_:))))
   precondition(notesStore.entries(on:day).count == 1 && input.stringValue.isEmpty)
   let compact = noteWindow.childWindows!.first!.contentView!
   compact.layoutSubtreeIfNeeded()
@@ -114,7 +118,7 @@ import AppKit
   }
   noteButton("calendar.note.edit.\(item.id)").performClick(nil)
   input.stringValue = "买猫粮和猫砂"
-  noteButton("calendar.notes.add").performClick(nil)
+  precondition((input.delegate as! CalendarNotesView).control(input,textView:NSTextView(),doCommandBy:#selector(NSResponder.insertNewline(_:))))
   precondition(notesStore.entries(on:day)[0].text == "买猫粮和猫砂")
   precondition(notesStore.entries(on:day)[0].completed)
   // Chinese IME confirmation must not submit unfinished text.
