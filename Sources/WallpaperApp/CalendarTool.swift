@@ -80,6 +80,7 @@ final class CalendarTool: NSObject {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
         if popover.isShown { popover.performClose(nil); return }
         let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks)
+        panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
         panel.onClose = { [weak self] in self?.popover.performClose(nil) }
         panel.onSettings = { [weak self] in self?.popover.performClose(nil); self?.onSettings?() }
         let controller = NSViewController(); controller.view = panel
@@ -108,13 +109,14 @@ final class CalendarPanel: NSView {
     private let heading = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let grid = NSStackView()
+    var onSizeChange: ((NSSize) -> Void)?
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
     init(firstWeekday: Int, showWeeks: Bool, date: Date = Date()) {
         self.firstWeekday = firstWeekday; self.showWeeks = showWeeks
         selectedDate = date; month = date
-        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332 + CGFloat(CalendarMonth.visibleWeeks - 6) * 32))
+        super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
         detail.font = .systemFont(ofSize: 12); detail.textColor = .secondaryLabelColor
         let previous = icon("chevron.left", label: AppLanguage.english ? "Previous month" : "上个月", action: #selector(previousMonth))
@@ -127,7 +129,7 @@ final class CalendarPanel: NSView {
         let spacer = NSView()
         let settings = icon("gearshape", label: AppLanguage.english ? "Calendar settings" : "日历设置", action: #selector(settings))
         settings.identifier = NSUserInterfaceItemIdentifier("calendar.settings")
-        let header = NSStackView(views: [heading, spacer, previous, today, next, settings]); header.spacing = 2; header.alignment = .centerY
+        let header = NSStackView(views: [heading, spacer, settings, previous, today, next]); header.spacing = 2; header.alignment = .centerY
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
         let separator = NSBox(); separator.boxType = .separator
@@ -174,7 +176,7 @@ final class CalendarPanel: NSView {
         }
         row((showWeeks ? [label(AppLanguage.english ? "Wk" : "周")] : []) + (0..<7).map { label(weekdays[($0 + firstWeekday - 1) % 7]) })
         formatter.dateStyle = .full; formatter.timeStyle = .none
-        for week in 0..<CalendarMonth.visibleWeeks {
+        for week in 0..<model.visibleWeeks {
             var cells: [NSView] = showWeeks ? [label(String(model.weekNumbers[week]))] : []
             for offset in 0..<7 {
                 let index = week * 7 + offset, date = model.days[index]
@@ -192,6 +194,9 @@ final class CalendarPanel: NSView {
             row(cells)
         }
         detail.stringValue = formatter.string(from: selectedDate)
+        let size = NSSize(width: showWeeks ? 338 : 310, height: 332 + CGFloat(model.visibleWeeks - 6) * 32)
+        setFrameSize(size)
+        onSizeChange?(size)
     }
     @objc private func selectDay(_ sender: NSButton) {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)

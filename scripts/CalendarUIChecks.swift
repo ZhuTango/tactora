@@ -15,7 +15,7 @@ import AppKit
     window.appearance = NSAppearance(named:appearance)
     panel.layoutSubtreeIfNeeded(); panel.displayIfNeeded()
     let days = views(panel).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }
-    precondition(days.count == 56)
+    precondition(days.count == 49)
     for button in days {
      let rect = panel.convert(button.bounds,from:button)
      precondition(panel.bounds.contains(rect), "Date cell clipped")
@@ -32,7 +32,7 @@ import AppKit
     let prevRect = buttonRect("previous"), todayRect = buttonRect("today")
     let nextRect = buttonRect("next"), settingsRect = buttonRect("settings")
     precondition(prevRect.maxX <= todayRect.minX && todayRect.maxX <= nextRect.minX)
-    precondition(nextRect.maxX <= settingsRect.minX && abs(settingsRect.midY - todayRect.midY) <= 1, "\(nextRect) \(settingsRect) \(todayRect)")
+    precondition(settingsRect.maxX <= prevRect.minX && abs(settingsRect.midY - todayRect.midY) <= 1, "\(nextRect) \(settingsRect) \(todayRect)")
     precondition(today.title.isEmpty && today.toolTip != nil)
     let bitmap = panel.bitmapImageRepForCachingDisplay(in:panel.bounds)!
     panel.cacheDisplay(in:panel.bounds,to:bitmap)
@@ -43,6 +43,13 @@ import AppKit
    precondition(calendar.component(.year,from:panel.selectedDate) == 2027 && calendar.component(.day,from:panel.selectedDate) == 1)
    panel.moveMonth(-1)
    precondition(calendar.component(.month,from:panel.selectedDate) == 12)
+   var resized: NSSize?
+   panel.onSizeChange = { resized = $0 }
+   panel.moveMonth(2) // February 2027 requires four month rows plus two context rows.
+   precondition(resized?.height == 332 && panel.frame.height == 332)
+   precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.day.") == true }.count == 42)
+   panel.moveMonth(1)
+   precondition(resized?.height == 364 && panel.frame.height == 364)
    window.orderOut(nil)
   }
   let tool = CalendarTool(defaults:defaults)
