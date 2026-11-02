@@ -195,7 +195,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil, calendar: CalendarTool? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -261,6 +261,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             let item = NSTabViewItem(identifier: "text")
             item.label = AppLanguage.english ? "Text" : "文本处理"
             item.view = TextToolsSettingsView(manager: textShortcut)
+            tabs.addTabViewItem(item)
+        }
+        if let calendar {
+            let item = NSTabViewItem(identifier: "calendar")
+            item.label = AppLanguage.english ? "Calendar" : "日历"
+            item.view = CalendarSettingsView(manager: calendar)
             tabs.addTabViewItem(item)
         }
         if let keyboard {
@@ -371,6 +377,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let featureButtons = ToolFeature.allCases.map { feature -> NSView in
             let title: String
             switch feature {
+            case .calendar: title = AppLanguage.english ? "Calendar" : "日历"
             case .keyboard: title = AppLanguage.english ? "Keyboard" : "键盘管理"
             case .clipboard: title = AppLanguage.text("剪贴板")
             case .wallpaper: title = AppLanguage.text("桌面背景")
@@ -380,7 +387,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let symbols: [ToolFeature: String] = [.keyboard: "keyboard", .clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
+            let symbols: [ToolFeature: String] = [.calendar: "calendar", .keyboard: "keyboard", .clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
             let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
             row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off

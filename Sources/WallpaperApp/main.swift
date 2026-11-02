@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let lidDisplaySleep = LidDisplaySleep()
     private let keepAwake = KeepAwake()
     private let keyboardManager = KeyboardManager()
+    private let calendarTool = CalendarTool()
     private var ocr: OCRManager!
     private var textWindow: TextProcessingWindow?
     private let textShortcut = TextToolsShortcut()
@@ -45,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         keyboardManager.start()
+        calendarTool.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("calendar") }
+        calendarTool.refresh()
         lidDisplaySleep.refresh()
         clipboard = ClipboardStore()
         clipboard.onChange = { [weak self] in self?.clipboardWindow?.refresh(); self?.clipboardSettings?.refresh(); self?.updateMenu() }
@@ -100,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshDisplays()
         if let url = pendingOpenURLs.last { openFile(url); pendingOpenURLs.removeAll() }
         if CommandLine.arguments.contains("--settings") { showSettings() }
+        if CommandLine.arguments.contains("--calendar") { calendarTool.toggle() }
         if CommandLine.arguments.contains("--text-tools") { showTextTools() }
         if CommandLine.arguments.contains("--request-accessibility") {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -609,7 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -617,6 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.clipboardWindow?.close()
                 self.clipboardSettings?.close()
                 self.clipboardSettings = nil
+                self.calendarTool.refresh()
                 self.updateMenu()
                 self.showSettings()
             }
@@ -641,6 +646,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func applyFeature(_ feature: ToolFeature, enabled: Bool) {
         switch feature {
+        case .calendar:
+            calendarTool.refresh()
         case .keyboard:
             keyboardManager.controller.setEnabled(enabled)
         case .clipboard:
@@ -676,6 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTask?.cancel()
         windowManager.setEnabled(false)
         keyboardManager.stop()
+        calendarTool.stop()
         ocr?.stop()
         textShortcut.stop()
         textWindow?.close()

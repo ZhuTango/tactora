@@ -2,7 +2,7 @@ import Foundation
 
 // Absent keys mean enabled, preserving existing installations.
 enum ToolFeature: String, CaseIterable {
-    case clipboard, wallpaper, apps, windows, awake, ocr, text, keyboard
+    case clipboard, wallpaper, apps, windows, awake, ocr, text, keyboard, calendar
     func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: "toolEnabled." + rawValue) as? Bool ?? true
     }
