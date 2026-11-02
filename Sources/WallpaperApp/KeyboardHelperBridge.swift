@@ -1,9 +1,24 @@
 import Foundation
 import ServiceManagement
 
+@MainActor
+func refreshKeyboardHelperRegistration(previous: String?, current: String,
+    unregister: () async throws -> Void, register: () throws -> Void, save: () -> Void) async throws {
+    guard previous != current else { return }
+    try await unregister()
+    try register()
+    save()
+}
+
 /// Asynchronous XPC: neither device scanning nor UI actions block waiting for root.
 @MainActor
 final class KeyboardHelperBridge {
+    private var registrationUpdating = false
+    private var registrationAttempted = false
+    private var registrationError: String?
+    static let registrationKey = "keyboard.helperRegisteredBuild.v1"
+    static var currentBuild: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown" }
+    static func recordRegistration() { UserDefaults.standard.set(currentBuild, forKey: registrationKey) }
     private var connection: NSXPCConnection?
     private var requested: [String] = []
     private var generation = 0
@@ -19,10 +34,38 @@ final class KeyboardHelperBridge {
     func configure(_ ids: [String]) {
         let ids = ids.sorted()
         if ids.isEmpty { disconnect(); return }
+        if registrationUpdating { message = "正在更新屏蔽辅助服务…"; return }
         guard Self.available else {
             disconnect()
             active = false
             message = Self.service.status == .requiresApproval ? "请在系统设置 → 通用 → 登录项中批准方寸辅助服务。" : "屏蔽内置键盘需要启用方寸辅助服务。"
+            return
+        }
+        if UserDefaults.standard.string(forKey: Self.registrationKey) != Self.currentBuild {
+            if registrationAttempted {
+                message = registrationError ?? "辅助服务更新失败，请重新启动方寸重试。"
+                return
+            }
+            registrationAttempted = true; registrationUpdating = true
+            disconnect(); message = "正在更新屏蔽辅助服务…"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let service = Self.service
+                    try await refreshKeyboardHelperRegistration(
+                        previous: UserDefaults.standard.string(forKey: Self.registrationKey), current: Self.currentBuild,
+                        unregister: { try await service.unregister() },
+                        register: { try service.register() }, save: { Self.recordRegistration() })
+                } catch {
+                    self.registrationError = "辅助服务更新失败：" + error.localizedDescription
+                    if Self.service.status == .requiresApproval {
+                        self.registrationError = "请在系统设置 → 通用 → 登录项中批准方寸辅助服务。"
+                    }
+                    self.message = self.registrationError!
+                }
+                self.registrationUpdating = false
+                self.onChange?()
+            }
             return
         }
         guard Date() >= retryAfter else { return }

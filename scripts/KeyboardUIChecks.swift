@@ -1,8 +1,25 @@
 import AppKit
 
 @main struct KeyboardUIChecks {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         _ = NSApplication.shared
+        var registrationEvents: [String] = []
+        try await refreshKeyboardHelperRegistration(previous: "82", current: "84", unregister: {
+            registrationEvents.append("unregister")
+        }, register: { registrationEvents.append("register") }, save: { registrationEvents.append("save") })
+        precondition(registrationEvents == ["unregister", "register", "save"])
+        registrationEvents = []
+        try await refreshKeyboardHelperRegistration(previous: "84", current: "84", unregister: {
+            registrationEvents.append("unregister")
+        }, register: { registrationEvents.append("register") }, save: { registrationEvents.append("save") })
+        precondition(registrationEvents.isEmpty)
+        do {
+            try await refreshKeyboardHelperRegistration(previous: nil, current: "84", unregister: {}, register: {
+                throw KeyboardControlError(message: "denied")
+            }, save: { registrationEvents.append("save") })
+            preconditionFailure("failed registration must propagate")
+        } catch { precondition(registrationEvents.isEmpty) }
+        print("PASS: helper upgrade unregister/register/save order, same-build no-op and failed registration not persisted")
         if CommandLine.arguments.contains("--native") {
             let backend = NativeKeyboardBackend()
             let devices = try backend.devices()
@@ -37,7 +54,7 @@ import AppKit
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = view
         window.orderFront(nil)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        try await Task.sleep(nanoseconds: 150_000_000)
         window.contentView?.layoutSubtreeIfNeeded()
         func descendants(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(descendants) }
         let picker = descendants(view).compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityIdentifier() == "keyboard.device" }!

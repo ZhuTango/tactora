@@ -185,7 +185,7 @@ final class KeyboardSettingsView: NSView {
     @objc private func enableHelper() {
         do {
             let service = KeyboardHelperBridge.service
-            if service.status == .notRegistered || service.status == .notFound { try service.register() }
+            if service.status == .notRegistered || service.status == .notFound { try service.register(); KeyboardHelperBridge.recordRegistration() }
             if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
             controller.refresh(retry: true); update()
         } catch {
