@@ -25,9 +25,9 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier("calendar.notes")
         wantsLayer = true
-        layer?.cornerRadius = 12; layer?.borderWidth = 1
+        layer?.cornerRadius = 16; layer?.borderWidth = 1
         layer?.shadowOpacity = 0; layer?.shadowRadius = 12; layer?.shadowOffset = NSSize(width: 0, height: -3)
-        heading.font = .systemFont(ofSize: 14, weight: .semibold)
+        heading.font = .systemFont(ofSize: 15, weight: .semibold)
         summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabelColor
         let close = actionButton("xmark", label: AppLanguage.english ? "Close notes" : "收起事项", action: #selector(closeNotes))
         close.identifier = NSUserInterfaceItemIdentifier("calendar.notes.close")
@@ -39,6 +39,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         input.setAccessibilityLabel(AppLanguage.english ? "Task text" : "事项内容")
         input.font = .systemFont(ofSize: 13); input.bezelStyle = .roundedBezel
         input.delegate = self
+        input.heightAnchor.constraint(equalToConstant: 30).isActive = true
         submit.image = NSImage(systemSymbolName: "return", accessibilityDescription: AppLanguage.english ? "Save task" : "保存事项")
         submit.toolTip = AppLanguage.english ? "Return to save" : "回车保存"
         submit.setAccessibilityLabel(submit.toolTip)
@@ -50,14 +51,14 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         input.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
         status.setAccessibilityRole(.staticText)
-        list.orientation = .vertical; list.alignment = .leading; list.spacing = 4
+        list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
         list.translatesAutoresizingMaskIntoConstraints = false
         let document = CalendarNotesDocumentView()
         document.translatesAutoresizingMaskIntoConstraints = false; document.addSubview(list)
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false; scroll.borderType = .noBorder; scroll.documentView = document
         let top = NSStackView(views: [header, summary, composer, status])
-        top.orientation = .vertical; top.alignment = .leading; top.spacing = 6
+        top.orientation = .vertical; top.alignment = .leading; top.spacing = 10
         for view in [top, scroll] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             top.topAnchor.constraint(equalTo: topAnchor, constant: 12), top.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
@@ -73,7 +74,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("Not used") }
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
+        NSBezierPath(roundedRect: bounds, xRadius: 16, yRadius: 16).fill()
         layer?.borderColor = NSColor.separatorColor.cgColor
     }
     override func updateTrackingAreas() {
@@ -109,7 +110,7 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         let entries = store.entries(on: day)
         let remaining = entries.filter { !$0.completed }.count
         summary.stringValue = AppLanguage.english ? "\(entries.count) notes · \(remaining) pending" : "\(entries.count) 项 · \(remaining) 项未完成"
-        summary.stringValue += preview ? (AppLanguage.english ? " · Preview" : " · 预览") : (AppLanguage.english ? " · Pinned" : " · 已固定")
+        summary.stringValue += preview ? (AppLanguage.english ? " · Click to pin" : " · 点击固定") : ""
         status.isHidden = store.loadError == nil && editingID == nil
         status.textColor = store.loadError == nil ? .secondaryLabelColor : .systemRed
         status.stringValue = store.loadError == nil
@@ -207,6 +208,7 @@ private final class CalendarNoteRow: NSView {
     var onDelete: (() -> Void)?
     init(item: CalendarNote, preview: Bool) {
         super.init(frame: .zero)
+        wantsLayer = true; layer?.cornerRadius = 8
         let check = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggle))
         check.state = item.completed ? .on : .off
         check.isEnabled = !preview
@@ -231,9 +233,13 @@ private final class CalendarNoteRow: NSView {
         marker.widthAnchor.constraint(equalToConstant: 14).isActive = true
         let row = NSStackView(views: preview ? [marker, text] : [check, text, edit, delete]); row.spacing = 6; row.alignment = .top; row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false; addSubview(row)
-        NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: leadingAnchor), row.trailingAnchor.constraint(equalTo: trailingAnchor), row.topAnchor.constraint(equalTo: topAnchor, constant: 6), row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)])
+        NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), row.topAnchor.constraint(equalTo: topAnchor, constant: 6), row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)])
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.05).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+    }
     @objc private func toggle() { onToggle?() }
     @objc private func edit() { onEdit?() }
     @objc private func delete() { onDelete?() }

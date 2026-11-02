@@ -83,11 +83,24 @@ import AppKit
   func noteButton(_ id: String) -> NSButton { views(notePanel).first { $0.identifier?.rawValue == id } as! NSButton }
   noteButton("calendar.notes.open").performClick(nil)
   precondition(notePanel.frame.width == 310, "Floating notes must not widen calendar")
+  precondition(notePanel.containsCalendarWindow(noteWindow))
+  precondition(notePanel.containsCalendarWindow(noteWindow.childWindows!.first!))
+  let outsideWindow = NSWindow(contentRect:.zero,styleMask:[.titled],backing:.buffered,defer:false)
+  precondition(!notePanel.containsCalendarWindow(outsideWindow), "Other app windows must count as outside")
+  precondition(!notePanel.containsCalendarWindow(nil))
+  let floatingFrame = noteWindow.childWindows!.first!.frame
+  precondition(abs(floatingFrame.midY - noteWindow.frame.midY) < 1, "Floating notes must be vertically centered")
+  precondition(floatingFrame.height < 240, "Empty editor should be compact")
   let input = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.input" } as! NSTextField
   let day = CalendarNotesStore.dayKey(date,calendar:calendar)
   input.stringValue = "买猫粮，顺路取快递"
   noteButton("calendar.notes.add").performClick(nil)
   precondition(notesStore.entries(on:day).count == 1 && input.stringValue.isEmpty)
+  let compact = noteWindow.childWindows!.first!.contentView!
+  compact.layoutSubtreeIfNeeded()
+  let compactImage = compact.bitmapImageRepForCachingDisplay(in:compact.bounds)!
+  compact.cacheDisplay(in:compact.bounds,to:compactImage)
+  try compactImage.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/calendar-compact-task.png"))
   let item = notesStore.entries(on:day)[0]
   noteButton("calendar.note.toggle.\(item.id)").performClick(nil)
   precondition(notesStore.entries(on:day)[0].completed)

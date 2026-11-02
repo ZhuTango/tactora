@@ -6,6 +6,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
     private(set) var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private lazy var notesStore = CalendarNotesStore(fileURL: CalendarNotesStore.defaultURL)
+    private var outsideMonitors: [Any] = []
     private var midnight: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     var onSettings: (() -> Void)?
@@ -93,11 +94,33 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         panel.window?.makeFirstResponder(panel)
+        monitorOutsideClicks()
+    }
+    private func monitorOutsideClicks() {
+        clearOutsideMonitors()
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            let calendar = self.popover.contentViewController?.view as? CalendarPanel
+            if calendar?.containsCalendarWindow(event.window) != true && event.window !== self.statusItem?.button?.window {
+                self.popover.performClose(nil)
+            }
+            return event
+        }) { outsideMonitors.append(local) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            self?.popover.performClose(nil)
+        }) { outsideMonitors.append(global) }
+    }
+    private func clearOutsideMonitors() {
+        outsideMonitors.forEach { NSEvent.removeMonitor($0) }
+        outsideMonitors.removeAll()
     }
     func popoverDidClose(_ notification: Notification) {
+        clearOutsideMonitors()
         (popover.contentViewController?.view as? CalendarPanel)?.dismissNotes()
     }
     func stop() {
+        clearOutsideMonitors()
         popover.performClose(nil); popover.contentViewController = nil
         midnight?.invalidate(); midnight = nil
         for (center, token) in observers { center.removeObserver(token) }
@@ -309,10 +332,11 @@ final class CalendarPanel: NSView {
         }
         guard let panel = notesWindow else { return }
         let screen = parent.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
-        let height: CGFloat = notesEditing ? 320 : 240
+        let count = notesDate.map { notesStore.entries(on: CalendarNotesStore.dayKey($0, calendar: CalendarMonth(containing: $0).calendar)).count } ?? 0
+        let height: CGFloat = min(360, (notesEditing ? 160 : 110) + CGFloat(max(1, min(count, 4))) * 48)
         let parentFrame = parent.frame
         let x = parentFrame.maxX + 8 + 284 <= screen.maxX ? parentFrame.maxX + 8 : parentFrame.minX - 292
-        panel.setFrame(NSRect(x: max(screen.minX, min(x, screen.maxX - 284)), y: max(screen.minY, min(parentFrame.maxY - height, screen.maxY - height)), width: 284, height: height), display: true)
+        panel.setFrame(NSRect(x: max(screen.minX, min(x, screen.maxX - 284)), y: max(screen.minY, min(parentFrame.midY - height / 2, screen.maxY - height)), width: 284, height: height), display: true)
         if panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
         panel.orderFront(nil)
     }
@@ -352,6 +376,10 @@ final class CalendarPanel: NSView {
     }
     private func cancelHover() {
         hoverGeneration += 1; hoverTimer?.invalidate(); hoverTimer = nil
+    }
+    func containsCalendarWindow(_ candidate: NSWindow?) -> Bool {
+        guard let candidate else { return false }
+        return candidate === window || (notesVisible && candidate === notesWindow)
     }
     func dismissNotes() { hideNotes() }
     private func hideNotes() {
