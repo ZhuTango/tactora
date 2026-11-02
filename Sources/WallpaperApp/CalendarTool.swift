@@ -5,6 +5,7 @@ final class CalendarTool: NSObject {
     let defaults: UserDefaults
     private(set) var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private lazy var notesStore = CalendarNotesStore(fileURL: CalendarNotesStore.defaultURL)
     private var midnight: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     var onSettings: (() -> Void)?
@@ -80,7 +81,7 @@ final class CalendarTool: NSObject {
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
         if popover.isShown { popover.performClose(nil); return }
-        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays)
+        let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays, notesStore: notesStore)
         panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
         panel.onClose = { [weak self] in self?.popover.performClose(nil) }
         panel.onSettings = { [weak self] in self?.popover.performClose(nil); self?.onSettings?() }
@@ -106,8 +107,12 @@ final class CalendarPanel: NSView {
     private let firstWeekday: Int
     private let showWeeks: Bool
     private let showHolidays: Bool
+    private let notesStore: CalendarNotesStore
+    private lazy var notesView = CalendarNotesView(store: notesStore)
+    private var notesVisible = false
+    private var calendarWidth: CGFloat { showWeeks ? 338 : 310 }
     private(set) var selectedDate: Date
-    private var month: Date
+    private(set) var month: Date
     private let heading = NSButton(title: "", target: nil, action: nil)
     private enum SelectionMode { case days, years, months }
     private var selectionMode: SelectionMode = .days
@@ -120,8 +125,9 @@ final class CalendarPanel: NSView {
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
-    init(firstWeekday: Int, showWeeks: Bool, showHolidays: Bool = false, date: Date = Date()) {
+    init(firstWeekday: Int, showWeeks: Bool, showHolidays: Bool = false, date: Date = Date(), notesStore: CalendarNotesStore? = nil) {
         self.firstWeekday = firstWeekday; self.showWeeks = showWeeks; self.showHolidays = showHolidays
+        self.notesStore = notesStore ?? CalendarNotesStore()
         selectedDate = date; month = date
         super.init(frame: NSRect(x: 0, y: 0, width: showWeeks ? 338 : 310, height: 332))
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -145,16 +151,29 @@ final class CalendarPanel: NSView {
         heading.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.orientation = .vertical; grid.spacing = 4
         let separator = NSBox(); separator.boxType = .separator
-        let stack = NSStackView(views: [header, grid, separator, detail])
+        let notesButton = icon("text.badge.plus", label: AppLanguage.english ? "Date notes · Return to add" : "日期事项 · 回车快速添加", action: #selector(openNotes))
+        notesButton.identifier = NSUserInterfaceItemIdentifier("calendar.notes.open")
+        let footer = NSStackView(views: [detail, notesButton]); footer.spacing = 6; footer.alignment = .centerY
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let stack = NSStackView(views: [header, grid, separator, footer])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 16), stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            stack.widthAnchor.constraint(equalToConstant: calendarWidth - 32),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor), grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
             separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            footer.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
+        notesView.translatesAutoresizingMaskIntoConstraints = false; notesView.isHidden = true
+        addSubview(notesView)
+        NSLayoutConstraint.activate([
+            notesView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: calendarWidth),
+            notesView.widthAnchor.constraint(equalToConstant: 300), notesView.topAnchor.constraint(equalTo: topAnchor),
+            notesView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        notesView.onChange = { [weak self] in self?.reload() }
+        notesView.onClose = { [weak self] in self?.hideNotes() }
         reload()
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -201,13 +220,17 @@ final class CalendarPanel: NSView {
                 let holiday = showHolidays ? ChinaHolidays.entry(on: date, calendar: model.calendar) : nil
                 button.holiday = holiday
                 button.subtitle = lunar.shortLabel
+                let notes = notesStore.entries(on: CalendarNotesStore.dayKey(date, calendar: model.calendar))
+                button.hasNotes = !notes.isEmpty
+                button.allNotesCompleted = !notes.isEmpty && notes.allSatisfy { $0.completed }
                 button.tag = index
                 button.identifier = NSUserInterfaceItemIdentifier("calendar.day.\(index)")
                 button.selected = model.calendar.isDate(date, inSameDayAs: selectedDate)
                 button.today = model.calendar.isDateInToday(date)
                 button.dimmed = !model.contains(date)
                 button.toolTip = formatter.string(from: date) + " · " + lunar.fullLabel + (holiday.map { " · " + $0.label } ?? "")
-                button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (holiday.map { "，" + $0.label } ?? "") + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
+                button.setAccessibilityLabel(formatter.string(from: date) + "，" + lunar.fullLabel + (holiday.map { "，" + $0.label } ?? "") + (notes.isEmpty ? "" : (AppLanguage.english ? ", \(notes.count) notes" : "，\(notes.count) 项事项")) + (button.today ? (AppLanguage.english ? ", Today" : "，今天") : ""))
+                if !notes.isEmpty { button.toolTip = (button.toolTip ?? "") + (AppLanguage.english ? " · \(notes.count) notes" : " · \(notes.count) 项事项") }
                 button.setAccessibilityValue(button.selected ? (AppLanguage.english ? "Selected" : "已选中") : "")
                 cells.append(button)
             }
@@ -223,9 +246,20 @@ final class CalendarPanel: NSView {
         }
         detail.toolTip = detail.stringValue
         detail.lineBreakMode = .byTruncatingTail
-        let size = NSSize(width: showWeeks ? 338 : 310, height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
+        let size = NSSize(width: calendarWidth + (notesVisible ? 300 : 0), height: 416 + CGFloat(model.visibleWeeks - 6) * 46)
         setFrameSize(size)
         onSizeChange?(size)
+        if notesVisible { notesView.show(date: selectedDate, calendar: model.calendar) }
+    }
+    @objc private func openNotes() {
+        selectionMode = .days; notesVisible = true; notesView.isHidden = false
+        reload(); notesView.focusInput()
+    }
+    private func hideNotes() {
+        notesVisible = false; notesView.isHidden = true
+        setFrameSize(NSSize(width: calendarWidth, height: frame.height))
+        onSizeChange?(frame.size)
+        window?.makeFirstResponder(self)
     }
     @objc private func toggleMonthPicker() {
         let calendar = CalendarMonth(containing: month).calendar
@@ -281,13 +315,13 @@ final class CalendarPanel: NSView {
     }
     func jumpToMonth(_ date: Date) {
         month = CalendarMonth(containing: date, firstWeekday: firstWeekday).start
-        selectedDate = month
         selectionMode = .days
         reload()
     }
     @objc private func selectDay(_ sender: NSButton) {
         let model = CalendarMonth(containing: month, firstWeekday: firstWeekday)
-        selectedDate = model.days[sender.tag]; month = selectedDate; reload()
+        selectedDate = model.days[sender.tag]; month = selectedDate
+        notesVisible = true; notesView.isHidden = false; reload()
         window?.makeFirstResponder(self)
     }
     func moveMonth(_ delta: Int) {
@@ -298,13 +332,14 @@ final class CalendarPanel: NSView {
             selectionYear = min(9999, max(1, selectionYear + delta)); reload(); return
         }
         month = CalendarMonth(containing: month, firstWeekday: firstWeekday).moving(months: delta)
-        selectedDate = month; reload()
+        reload()
     }
     @objc private func previousMonth() { moveMonth(-1) }
     @objc private func nextMonth() { moveMonth(1) }
     @objc private func goToday() { selectionMode = .days; selectedDate = Date(); month = selectedDate; reload() }
     @objc private func settings() { onSettings?() }
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 && selectionMode == .days { openNotes(); return }
         if event.keyCode == 53 { if selectionMode != .days { selectionMode = .days; reload() } else { onClose?() }; return }
         if event.keyCode == 116 { moveMonth(-1); return }
         if event.keyCode == 121 { moveMonth(1); return }
@@ -327,6 +362,8 @@ final class CalendarPanel: NSView {
 private final class CalendarDayButton: NSButton {
     var holiday: ChinaHolidays.Entry?
     var subtitle: String?
+    var hasNotes = false
+    var allNotesCompleted = false
     var selected = false
     var today = false
     var dimmed = false
@@ -357,7 +394,11 @@ private final class CalendarDayButton: NSButton {
                 let badge = NSAttributedString(string: holiday.badge, attributes: [.font: NSFont.systemFont(ofSize: 7, weight: .semibold), .foregroundColor: selected ? NSColor.white : holiday.isWorkday ? NSColor.systemOrange : NSColor.systemRed])
                 badge.draw(at: NSPoint(x: bounds.width - badge.size().width - 1, y: 3))
             }
-            sub.draw(at: NSPoint(x: (bounds.width - sub.size().width) / 2, y: 24))
+            sub.draw(at: NSPoint(x: (bounds.width - sub.size().width) / 2, y: 22))
+            if hasNotes {
+                (selected ? NSColor.white : allNotesCompleted ? NSColor.secondaryLabelColor : NSColor.controlAccentColor).setFill()
+                NSBezierPath(ovalIn: NSRect(x: bounds.midX - 1.5, y: 37, width: 3, height: 3)).fill()
+            }
             return
         }
         attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: today || selected ? .semibold : .regular), .foregroundColor: color])

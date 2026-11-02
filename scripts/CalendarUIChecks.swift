@@ -38,11 +38,12 @@ import AppKit
     panel.cacheDisplay(in:panel.bounds,to:bitmap)
     try bitmap.representation(using:.png,properties:[:])!.write(to: URL(fileURLWithPath:".build/calendar-\(weeks)-\(appearance.rawValue).png"))
    }
+   precondition(views(panel).contains { $0.identifier?.rawValue == "calendar.notes.open" }, "Date notes entry missing")
    let right = NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:window.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:124)!
    panel.keyDown(with:right)
    precondition(calendar.component(.year,from:panel.selectedDate) == 2027 && calendar.component(.day,from:panel.selectedDate) == 1)
    panel.moveMonth(-1)
-   precondition(calendar.component(.month,from:panel.selectedDate) == 12)
+   precondition(calendar.component(.month,from:panel.selectedDate) == 1, "Browsing months must preserve the selected date")
    var resized: NSSize?
    panel.onSizeChange = { resized = $0 }
    panel.moveMonth(2) // February 2027 requires four month rows plus two context rows.
@@ -67,11 +68,72 @@ import AppKit
    panel.cacheDisplay(in: panel.bounds, to: preview)
    try preview.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/calendar-month-picker.png"))
    months.first { $0.tag == 2 }!.performClick(nil)
-   precondition(calendar.component(.year, from: panel.selectedDate) == 2032)
-   precondition(calendar.component(.month, from: panel.selectedDate) == 2)
+   precondition(calendar.component(.year, from: panel.month) == 2032)
+   precondition(calendar.component(.month, from: panel.month) == 2)
+   precondition(calendar.component(.year,from:panel.selectedDate) == 2027 && calendar.component(.day,from:panel.selectedDate) == 1)
    precondition(views(panel).filter { $0.identifier?.rawValue.hasPrefix("calendar.month.") == true }.isEmpty)
    window.orderOut(nil)
   }
+  let notesStore = CalendarNotesStore()
+  let notePanel = CalendarPanel(firstWeekday:2, showWeeks:false, date:date, notesStore:notesStore)
+  let noteWindow = NSWindow(contentRect:notePanel.frame,styleMask:[.titled],backing:.buffered,defer:false)
+  noteWindow.contentView = notePanel
+  func noteButton(_ id: String) -> NSButton { views(notePanel).first { $0.identifier?.rawValue == id } as! NSButton }
+  noteButton("calendar.notes.open").performClick(nil)
+  precondition(notePanel.frame.width == 610)
+  let input = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.input" } as! NSTextField
+  let day = CalendarNotesStore.dayKey(date,calendar:calendar)
+  input.stringValue = "买猫粮，顺路取快递"
+  noteButton("calendar.notes.add").performClick(nil)
+  precondition(notesStore.entries(on:day).count == 1 && input.stringValue.isEmpty)
+  let item = notesStore.entries(on:day)[0]
+  noteButton("calendar.note.toggle.\(item.id)").performClick(nil)
+  precondition(notesStore.entries(on:day)[0].completed)
+  input.stringValue = "尚未提交的新事项"
+  notesViewDraftCheck: do {
+   let detailView = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes" } as! CalendarNotesView
+   detailView.controlTextDidChange(Notification(name:NSControl.textDidChangeNotification,object:input))
+   noteButton("calendar.note.edit.\(item.id)").performClick(nil)
+   precondition(input.stringValue == "尚未提交的新事项", "Edit must not overwrite a new draft")
+   input.stringValue = ""
+   detailView.controlTextDidChange(Notification(name:NSControl.textDidChangeNotification,object:input))
+  }
+  noteButton("calendar.note.edit.\(item.id)").performClick(nil)
+  input.stringValue = "买猫粮和猫砂"
+  noteButton("calendar.notes.add").performClick(nil)
+  precondition(notesStore.entries(on:day)[0].text == "买猫粮和猫砂")
+  precondition(notesStore.entries(on:day)[0].completed)
+  // Chinese IME confirmation must not submit unfinished text.
+  let notesView = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes" } as! CalendarNotesView
+  let ime = NSTextView()
+  ime.setMarkedText("待确认", selectedRange:NSRange(location:0,length:3), replacementRange:NSRange(location:NSNotFound,length:0))
+  precondition(!notesView.control(input,textView:ime,doCommandBy:#selector(NSResponder.insertNewline(_:))))
+  precondition(notesStore.entries(on:day).count == 1)
+  input.stringValue = "还没输入完"
+  notesView.controlTextDidChange(Notification(name:NSControl.textDidChangeNotification,object:input))
+  let model = CalendarMonth(containing:date)
+  let another = model.days.firstIndex { calendar.component(.day,from:$0) == 30 && model.contains($0) }!
+  noteButton("calendar.day.\(another)").performClick(nil)
+  precondition(input.stringValue.isEmpty)
+  let original = model.days.firstIndex { calendar.isDate($0,inSameDayAs:date) }!
+  noteButton("calendar.day.\(original)").performClick(nil)
+  precondition(input.stringValue == "还没输入完")
+  for i in 1...15 { try notesStore.add("待办 \(i)：检查长文本在右侧自动换行，保持日期网格不变。",on:day) }
+  notePanel.reload(); notePanel.layoutSubtreeIfNeeded()
+  for appearance in [NSAppearance.Name.aqua,.darkAqua] {
+   noteWindow.appearance = NSAppearance(named:appearance)
+   notePanel.layoutSubtreeIfNeeded(); notePanel.displayIfNeeded()
+   let rect = notePanel.convert(input.bounds,from:input)
+   precondition(notePanel.bounds.contains(rect) && rect.width > 150)
+   let bitmap = notePanel.bitmapImageRepForCachingDisplay(in:notePanel.bounds)!
+   notePanel.cacheDisplay(in:notePanel.bounds,to:bitmap)
+   try bitmap.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/calendar-notes-\(appearance.rawValue).png"))
+  }
+  noteButton("calendar.note.delete.\(item.id)").performClick(nil)
+  precondition(!notesStore.entries(on:day).contains { $0.id == item.id })
+  noteButton("calendar.notes.close").performClick(nil)
+  precondition(notePanel.frame.width == 310)
+  noteWindow.orderOut(nil)
   let tool = CalendarTool(defaults:defaults)
   precondition(!tool.showHolidays)
   let settings = CalendarSettingsView(manager:tool)
