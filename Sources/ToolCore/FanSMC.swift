@@ -136,11 +136,8 @@ final class NativeFanHardware: FanHardware {
             throw FanControlError(message: "无效风扇目标。")
         }
         // Never disable thermalmonitord / write Ftst to bypass the system's thermal management.
-        if try smc.number(fan.modeKey) != 1 { try smc.write(fan.modeKey, bytes: [1]) }
-        try smc.write("F\(fan.id)Tg", bytes: floatBytes(rpm))
-        guard try smc.number(fan.modeKey) == 1, abs(try smc.number("F\(fan.id)Tg") - rpm) <= 2 else {
-            throw FanControlError(message: "风扇未接受目标转速，正在恢复系统控制。")
-        }
+        try confirmFanTarget(fan, rpm: rpm, read: smc.number, write: smc.write,
+            pause: { Thread.sleep(forTimeInterval: 0.05) })
     }
     func restore(_ ids: [Int]) throws {
         var failures: [String] = []
@@ -154,5 +151,32 @@ final class NativeFanHardware: FanHardware {
             } catch { failures.append(error.localizedDescription) }
         }
         if !failures.isEmpty { throw FanControlError(message: failures.joined(separator: "；")) }
+    }
+}
+
+/// SMC mode/target changes can settle after the write returns. Never send a target
+/// until manual mode is confirmed, and bound the wait so recovery is not delayed indefinitely.
+func confirmFanTarget(_ fan: FanReading, rpm: Double,
+    read: (String) throws -> Double, write: (String, [UInt8]) throws -> Void,
+    pause: () -> Void) throws {
+    func waitFor(_ key: String, expected: Double, tolerance: Double) throws -> Double {
+        var value = try read(key)
+        for _ in 0..<10 {
+            if abs(value - expected) <= tolerance { return value }
+            pause(); value = try read(key)
+        }
+        return value
+    }
+    if try read(fan.modeKey) != 1 { try write(fan.modeKey, [1]) }
+    let mode = try waitFor(fan.modeKey, expected: 1, tolerance: 0)
+    guard mode == 1 else {
+        throw FanControlError(message: "风扇 \(fan.id + 1) 手动模式未生效（等待 500ms 后仍为 \(Int(mode))）；正在恢复系统控制。")
+    }
+    let bits = Float(rpm).bitPattern
+    try write("F\(fan.id)Tg", (0..<4).map { UInt8(truncatingIfNeeded: bits >> ($0 * 8)) })
+    let target = try waitFor("F\(fan.id)Tg", expected: rpm, tolerance: 2)
+    let finalMode = try read(fan.modeKey)
+    guard finalMode == 1, abs(target - rpm) <= 2 else {
+        throw FanControlError(message: "风扇 \(fan.id + 1) 未接受目标：模式 \(Int(finalMode))，目标 \(Int(target))/\(Int(rpm)) RPM；正在恢复系统控制。")
     }
 }

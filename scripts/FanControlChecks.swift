@@ -1,6 +1,21 @@
 import Foundation
 @main struct FanControlChecks {
  static func main() throws {
+  precondition(FanCurve().low == 50 && FanCurve().high == 80)
+  let fan = FanReading(id:0, minimum:1500, maximum:5500, actual:1500, target:1500, mode:0, modeKey:"F0Md")
+  var mode: Double = 0, target: Double = 1500
+  var waits = 0, writes: [String] = []
+  try confirmFanTarget(fan, rpm:3000, read: { $0 == "F0Md" ? mode : target }, write: { key, _ in
+   writes.append(key)
+   if key == "F0Tg" { precondition(mode == 1, "Confirm mode before writing target") }
+  }, pause: { waits += 1; if waits == 2 { mode = 1 }; if waits == 4 { target = 3000 } })
+  precondition(waits == 4 && writes == ["F0Md", "F0Tg"])
+  waits = 0; writes = []
+  do {
+   try confirmFanTarget(fan, rpm:3000, read: { _ in 0 }, write: { key, _ in writes.append(key) }, pause: { waits += 1 })
+   preconditionFailure("Unaccepted mode must fail")
+  } catch {}
+  precondition(waits == 10 && writes == ["F0Md"], "Do not write target when mode fails")
   let curve = FanCurve(low: 50, high: 85)
   precondition(curve.valid)
   precondition(!FanCurve(low: 80, high: 85).valid)

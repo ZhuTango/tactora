@@ -1,7 +1,19 @@
 import AppKit
 import ServiceManagement
 
+@MainActor
+func refreshFanHelperRegistration(previous: String?, current: String,
+    unregister: () async throws -> Void, register: () throws -> Void, save: () -> Void) async throws {
+    guard previous != current else { return }
+    try await unregister()
+    try register()
+    save()
+}
+
 @MainActor final class FanControlManager {
+    private static let registrationKey = "fans.helperRegisteredBuild.v1"
+    private static var currentBuild: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown" }
+    private var registrationUpdating = false
     private let defaults: UserDefaults
     private let serviceEnabled: () -> Bool
     private var connection: NSXPCConnection?
@@ -21,7 +33,7 @@ import ServiceManagement
     var enabled: Bool { ToolFeature.fans.isEnabled(in: defaults) }
     var curve: FanCurve {
         let low = defaults.object(forKey: "fans.low") as? Double ?? 50
-        let high = defaults.object(forKey: "fans.high") as? Double ?? 85
+        let high = defaults.object(forKey: "fans.high") as? Double ?? FanCurve().high
         let value = FanCurve(low: low, high: high)
         return value.valid ? value : FanCurve()
     }
@@ -42,6 +54,7 @@ import ServiceManagement
             if self?.enabled == true { self?.connectAndConfigure() }
         } })
         if enabled { setEnabled(true) }
+        else if serviceEnabled(), defaults.string(forKey: Self.registrationKey) != Self.currentBuild { authorize() }
     }
     func setEnabled(_ value: Bool) {
         requested = value
@@ -67,16 +80,39 @@ import ServiceManagement
         changed(); return true
     }
     func authorize() {
-        do {
-            try Self.service.register()
-            message = Self.service.status == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许方寸风扇辅助服务。" : "辅助服务已注册。"
-            if enabled || requested { connectAndConfigure() }
-        } catch { message = error.localizedDescription }
-        changed()
+        guard !registrationUpdating else { return }
+        preserveControlStatus = true
+        registrationUpdating = true
+        let resume = enabled || requested
+        disconnect(); requested = resume
+        ToolFeature.fans.setEnabled(false, in: defaults)
+        message = "正在更新风扇辅助服务…"; changed()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let service = Self.service
+                if service.status == .enabled || service.status == .requiresApproval {
+                    try await refreshFanHelperRegistration(previous: self.defaults.string(forKey: Self.registrationKey), current: Self.currentBuild,
+                        unregister: { try await service.unregister() }, register: { try service.register() },
+                        save: { self.defaults.set(Self.currentBuild, forKey: Self.registrationKey) })
+                } else {
+                    try service.register()
+                    self.defaults.set(Self.currentBuild, forKey: Self.registrationKey)
+                }
+                self.registrationUpdating = false
+                self.message = service.status == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许方寸风扇辅助服务。" : "辅助服务已注册。"
+                if self.requested { self.connectAndConfigure() }
+            } catch {
+                self.registrationUpdating = false
+                self.message = "辅助服务更新失败：" + error.localizedDescription
+            }
+            self.changed()
+        }
     }
     func openSystemSettings() { SMAppService.openSystemSettingsLoginItems() }
     private func connectAndConfigure() {
         guard requested || enabled else { return }
+        guard !registrationUpdating else { return }
         guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.crystalidea.macsfancontrol").isEmpty else {
             message = "Macs Fan Control 正在运行，请先恢复自动模式并退出它。"; changed(); return
         }
@@ -84,6 +120,7 @@ import ServiceManagement
             message = Self.service.status == .requiresApproval ? "等待系统批准风扇辅助服务。" : "请先点击“授权辅助服务”，再开启温控。"
             changed(); return
         }
+        if defaults.string(forKey: Self.registrationKey) != Self.currentBuild { authorize(); return }
         do {
             if connection == nil {
                 let candidate = NSXPCConnection(machServiceName: FanHelperIdentity.label, options: .privileged)

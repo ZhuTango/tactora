@@ -7,7 +7,7 @@ import AppKit
     private let readings = NSTextField(wrappingLabelWithString: "正在读取…")
     private let status = NSTextField(wrappingLabelWithString: "")
     private let low = NSTextField(string: "50")
-    private let high = NSTextField(string: "85")
+    private let high = NSTextField(string: "80")
     var onToggle: ((Bool) -> Void)?
     init(manager: FanControlManager) {
         self.manager = manager

@@ -6,7 +6,7 @@ struct FanControlError: LocalizedError {
 }
 struct FanCurve: Codable, Equatable {
     var low: Double = 50
-    var high: Double = 85
+    var high: Double = 80
     var valid: Bool { low.isFinite && high.isFinite && low >= 40 && high <= 95 && high - low >= 10 }
     func rpm(temperature: Double, minimum: Double, maximum: Double) -> Double {
         minimum + (maximum - minimum) * min(1, max(0, (temperature - low) / (high - low)))
