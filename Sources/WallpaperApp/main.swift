@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         keyboardManager.start()
+        fanControl.onTelemetryChange = { [weak self] in self?.updateFanMenuReading() }
         fanControl.start()
         calendarTool.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("calendar") }
         calendarTool.refresh()
@@ -134,7 +135,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateMenu()
     }
 
-    func menuWillOpen(_ menu: NSMenu) { updateMenu() }
+    func menuWillOpen(_ menu: NSMenu) {
+        updateMenu()
+        if menu === self.menu { fanControl.menuVisible = true; fanControl.poll() }
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === self.menu { fanControl.menuVisible = false }
+    }
+    private func updateFanMenuReading() {
+        menu.items.first { $0.identifier?.rawValue == "fans.menu-reading" }?.title = fanControl.menuTitle
+    }
+    @objc private func showFanSettings() {
+        showClipboardSettings(); clipboardSettings?.selectSection("fans")
+    }
 
     private func updateMenu() {
         guard controller != nil, clipboard != nil else { return }
@@ -216,6 +229,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         self.menu.addItem(.separator())
+        #if arch(arm64)
+        let fanEntry = add(fanControl.menuTitle, to: self.menu, action: #selector(showFanSettings))
+        fanEntry.identifier = NSUserInterfaceItemIdentifier("fans.menu-reading")
+        fanEntry.toolTip = AppLanguage.english ? "CPU hottest core · actual fan speeds in fan order. Click for fan settings." : "CPU 核心最高温度 · 按风扇顺序显示实际转速，点击打开温控设置。"
+        #endif
         if ToolFeature.awake.isEnabled() {
             let entry = NSMenuItem(title: keepAwake.active ? (AppLanguage.english ? "Keep Awake · On" : "防休眠 · 已开启") : (AppLanguage.english ? "Keep Awake · Off" : "防休眠 · 未开启"), action: nil, keyEquivalent: "")
             entry.state = keepAwake.active ? .on : .off

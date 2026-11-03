@@ -29,6 +29,15 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     private(set) var message = "系统自动控制"
     private(set) var active = false
     var onChange: (() -> Void)?
+    var onTelemetryChange: (() -> Void)?
+    var menuVisible = false
+    var menuTitle: String {
+        guard let snapshot, let temperature = snapshot.maximumTemperature else {
+            return AppLanguage.english ? "CPU —°C · Fans — RPM" : "CPU —°C · 风扇 — RPM"
+        }
+        let speeds = snapshot.fans.sorted { $0.id < $1.id }.map { String(Int($0.actual.rounded())) }.joined(separator: " / ")
+        return String(format: "CPU %.1f°C · ", temperature) + (AppLanguage.english ? "Fans " : "风扇 ") + speeds + " RPM"
+    }
     var shouldMonitor: (() -> Bool)?
     var enabled: Bool { ToolFeature.fans.isEnabled(in: defaults) }
     var curve: FanCurve {
@@ -43,9 +52,10 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }) { self.defaults = defaults; self.serviceEnabled = serviceEnabled }
     func start() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
+        if let timer { RunLoop.main.add(timer, forMode: .common) }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
             self?.disconnect(); self?.active = false
@@ -164,7 +174,7 @@ func refreshFanHelperRegistration(previous: String?, current: String,
                 self.message = status; self.changed()
             } }
         }
-        guard (enabled || shouldMonitor?() == true), !reading else { return }
+        guard (enabled || menuVisible || shouldMonitor?() == true), !reading else { return }
         reading = true
         readQueue.async { [weak self] in
             let result = Result { try FanSMC().snapshot() }
@@ -182,5 +192,5 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }
     func stop() { timer?.invalidate(); timer = nil; disconnect(); for token in observers { NSWorkspace.shared.notificationCenter.removeObserver(token) }; observers = [] }
     private func disconnect() { generation += 1; connection?.invalidate(); connection = nil; inFlight = false; active = false }
-    private func changed() { onChange?() }
+    private func changed() { onChange?(); onTelemetryChange?() }
 }
