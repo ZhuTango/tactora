@@ -12,7 +12,11 @@ import AppKit
   precondition(!restored.showInMenu && restored.showInMenuBar && !restored.enabled)
   manager.setDisplay(menu: true, menuBar: false)
   manager.setEnabled(true)
-  precondition(!manager.enabled && !manager.active, "Unauthorized or blocked activation must stay off")
+  precondition(manager.enabled && !manager.active, "Remember user intent without claiming control")
+  manager.poll()
+  precondition(manager.enabled, "Polling must not erase the requested setting")
+  let intentRestored = FanControlManager(defaults: defaults, serviceEnabled: { false })
+  precondition(intentRestored.enabled && !intentRestored.active, "Restart retains intent, not runtime state")
   manager.setEnabled(false)
   let recoveryMessage = manager.message
   manager.shouldMonitor = { true }; manager.poll()

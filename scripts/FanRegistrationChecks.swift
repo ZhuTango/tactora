@@ -21,6 +21,12 @@ import Foundation
    preconditionFailure("must fail")
   } catch {}
   precondition(events == ["unregister", "register"], "Failed registration must be retryable")
+  var attempts = 0, saved = false
+  try await refreshFanHelperRegistration(previous: "106", current: "107", unregister: {}, register: {
+   attempts += 1
+   if attempts < 3 { throw NSError(domain: "SMAppServiceErrorDomain", code: 1) }
+  }, save: { saved = true })
+  precondition(attempts == 3 && saved, "Retry transient registration failure after unregister")
   print("Fan helper build refresh, legacy registration and failure checks passed")
  }
 }

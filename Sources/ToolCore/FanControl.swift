@@ -127,6 +127,7 @@ final class FanEngine {
         snapshot?.active = true; message = "正在按 CPU 核心最高温度调速"; snapshot?.message = message
     }
     func stop(reason: String) {
+        if active { NSLog("Tactora fan control stopped: %@", reason) }
         active = false; snapshot?.active = false
         guard !owned.isEmpty else { message = reason; return }
         do {
