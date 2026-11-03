@@ -30,6 +30,14 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     private(set) var active = false
     var onChange: (() -> Void)?
     var onTelemetryChange: (() -> Void)?
+    var onDisplayChange: (() -> Void)?
+    var showInMenu: Bool { defaults.object(forKey: "fans.showInMenu") as? Bool ?? true }
+    var showInMenuBar: Bool { defaults.bool(forKey: "fans.showInMenuBar") }
+    func setDisplay(menu: Bool, menuBar: Bool) {
+        defaults.set(menu, forKey: "fans.showInMenu")
+        defaults.set(menuBar, forKey: "fans.showInMenuBar")
+        onDisplayChange?(); changed(); poll()
+    }
     var menuVisible = false
     var menuTitle: String {
         guard let snapshot, let temperature = snapshot.maximumTemperature else {
@@ -174,7 +182,7 @@ func refreshFanHelperRegistration(previous: String?, current: String,
                 self.message = status; self.changed()
             } }
         }
-        guard (enabled || menuVisible || shouldMonitor?() == true), !reading else { return }
+        guard (enabled || showInMenuBar || menuVisible || shouldMonitor?() == true), !reading else { return }
         reading = true
         readQueue.async { [weak self] in
             let result = Result { try FanSMC().snapshot() }

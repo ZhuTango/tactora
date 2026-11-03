@@ -6,6 +6,11 @@ import AppKit
   defaults.removePersistentDomain(forName: "tactora-fan-ui-checks")
   defer { defaults.removePersistentDomain(forName: "tactora-fan-ui-checks") }
   let manager = FanControlManager(defaults: defaults, serviceEnabled: { false })
+  precondition(manager.showInMenu && !manager.showInMenuBar)
+  manager.setDisplay(menu: false, menuBar: true)
+  let restored = FanControlManager(defaults: defaults, serviceEnabled: { false })
+  precondition(!restored.showInMenu && restored.showInMenuBar && !restored.enabled)
+  manager.setDisplay(menu: true, menuBar: false)
   manager.setEnabled(true)
   precondition(!manager.enabled && !manager.active, "Unauthorized or blocked activation must stay off")
   manager.setEnabled(false)

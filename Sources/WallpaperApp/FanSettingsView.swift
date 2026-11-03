@@ -3,6 +3,8 @@ import AppKit
 @MainActor final class FanSettingsView: NSView {
     private let manager: FanControlManager
     private let toggle = NSSwitch()
+    private let showMenu = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let showBar = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let temperature = NSTextField(labelWithString: "— °C")
     private let readings = NSTextField(wrappingLabelWithString: "正在读取…")
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -21,6 +23,12 @@ import AppKit
         toggle.identifier = NSUserInterfaceItemIdentifier("fans.enabled")
         let switchRow = NSStackView(views: [NSTextField(labelWithString: AppLanguage.english ? "Temperature control" : "启用温度调速"), toggle])
         switchRow.spacing = 16
+        showMenu.title = AppLanguage.english ? "Show in Tactora menu" : "在方寸菜单中显示"
+        showBar.title = AppLanguage.english ? "Show in menu bar" : "在系统菜单栏显示"
+        showMenu.identifier = NSUserInterfaceItemIdentifier("fans.showInMenu")
+        showBar.identifier = NSUserInterfaceItemIdentifier("fans.showInMenuBar")
+        for checkbox in [showMenu, showBar] { checkbox.target = self; checkbox.action = #selector(changeDisplay) }
+        let displayRow = NSStackView(views: [showMenu, showBar]); displayRow.spacing = 20
         temperature.font = .monospacedDigitSystemFont(ofSize: 32, weight: .medium)
         temperature.setAccessibilityLabel("CPU 核心最高温度")
         readings.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
@@ -43,8 +51,8 @@ import AppKit
         status.setAccessibilityLabel("温控状态"); status.identifier = NSUserInterfaceItemIdentifier("fans.status")
         let caution = NSTextField(wrappingLabelWithString: "关闭后恢复系统自动控制。CPU 温度不代表 GPU 等全部热源，系统热压力异常时自动让出控制。请勿同时运行其他风扇控制软件。未验证机型无法启用。")
         caution.font = .systemFont(ofSize: 12); caution.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [title, note, switchRow, temperature, readings, thresholds, explanation, buttons, status, caution])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
+        let stack = NSStackView(views: [title, note, displayRow, switchRow, temperature, readings, thresholds, explanation, buttons, status, caution])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
@@ -59,6 +67,8 @@ import AppKit
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     private func refresh() {
+        showMenu.state = manager.showInMenu ? .on : .off
+        showBar.state = manager.showInMenuBar ? .on : .off
         toggle.state = manager.active ? .on : .off
         onToggle?(manager.enabled)
         status.stringValue = manager.message
@@ -69,6 +79,7 @@ import AppKit
             }.joined(separator: "\n")
         } else { temperature.stringValue = "— °C"; readings.stringValue = "尚无可用的核心温度和风扇数据" }
     }
+    @objc private func changeDisplay() { manager.setDisplay(menu: showMenu.state == .on, menuBar: showBar.state == .on) }
     @objc private func toggleControl() { manager.setEnabled(toggle.state == .on); onToggle?(manager.enabled) }
     @objc private func applyCurve() {
         guard let start = Double(low.stringValue), let end = Double(high.stringValue) else {

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var controller: WallpaperController!
     private var statusItem: NSStatusItem!
+    private var fanStatusItem: NSStatusItem?
     private let menu = ToolStatusMenu()
     private let backgroundMenu = NSMenu()
     private var clipboard: ClipboardStore!
@@ -48,7 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         keyboardManager.start()
         fanControl.onTelemetryChange = { [weak self] in self?.updateFanMenuReading() }
+        fanControl.onDisplayChange = { [weak self] in self?.updateMenu(); self?.updateFanMenuReading() }
         fanControl.start()
+        updateFanMenuReading()
         calendarTool.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("calendar") }
         calendarTool.refresh()
         lidDisplaySleep.refresh()
@@ -144,6 +147,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private func updateFanMenuReading() {
         menu.items.first { $0.identifier?.rawValue == "fans.menu-reading" }?.title = fanControl.menuTitle
+        #if arch(arm64)
+        if fanControl.showInMenuBar {
+            if fanStatusItem == nil {
+                fanStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                fanStatusItem?.autosaveName = "TactoraFanReadings"
+                fanStatusItem?.button?.target = self
+                fanStatusItem?.button?.action = #selector(showFanSettings)
+                fanStatusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            }
+            fanStatusItem?.button?.title = fanControl.menuTitle
+            fanStatusItem?.button?.toolTip = AppLanguage.english ? "CPU hottest core and actual fan speeds · Click for settings" : "CPU 核心最高温度与实际风扇转速 · 点击设置"
+            fanStatusItem?.button?.setAccessibilityLabel(fanControl.menuTitle)
+        } else if let item = fanStatusItem {
+            NSStatusBar.system.removeStatusItem(item); fanStatusItem = nil
+        }
+        #endif
     }
     @objc private func showFanSettings() {
         showClipboardSettings(); clipboardSettings?.selectSection("fans")
@@ -230,9 +249,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         self.menu.addItem(.separator())
         #if arch(arm64)
+        if fanControl.showInMenu {
         let fanEntry = add(fanControl.menuTitle, to: self.menu, action: #selector(showFanSettings))
         fanEntry.identifier = NSUserInterfaceItemIdentifier("fans.menu-reading")
         fanEntry.toolTip = AppLanguage.english ? "CPU hottest core · actual fan speeds in fan order. Click for fan settings." : "CPU 核心最高温度 · 按风扇顺序显示实际转速，点击打开温控设置。"
+        }
         #endif
         if ToolFeature.awake.isEnabled() {
             let entry = NSMenuItem(title: keepAwake.active ? (AppLanguage.english ? "Keep Awake · On" : "防休眠 · 已开启") : (AppLanguage.english ? "Keep Awake · Off" : "防休眠 · 未开启"), action: nil, keyEquivalent: "")
