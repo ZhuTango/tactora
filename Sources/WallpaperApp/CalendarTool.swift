@@ -337,8 +337,8 @@ final class CalendarPanel: NSView {
         let screen = parent.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
         let count = notesDate.map { notesStore.entries(on: CalendarNotesStore.dayKey($0, calendar: CalendarMonth(containing: $0).calendar)).count } ?? 0
         let height: CGFloat = min(360, (notesEditing ? 180 : 130) + CGFloat(max(1, min(count, 4))) * 48)
-        let parentFrame = parent.frame
-        let x = parentFrame.maxX + 8 + 284 <= screen.maxX ? parentFrame.maxX + 8 : parentFrame.minX - 292
+        let parentFrame = parent.convertToScreen(convert(bounds, to: nil))
+        let x = parentFrame.maxX + 4 + 284 <= screen.maxX ? parentFrame.maxX + 4 : parentFrame.minX - 288
         panel.setFrame(NSRect(x: max(screen.minX, min(x, screen.maxX - 284)), y: max(screen.minY, min(parentFrame.midY - height / 2, screen.maxY - height)), width: 284, height: height), display: true)
         if panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
         panel.orderFront(nil)

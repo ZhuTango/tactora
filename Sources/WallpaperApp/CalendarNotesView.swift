@@ -17,6 +17,10 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     private var tracking: NSTrackingArea?
     private var day = ""
     private var editingID: UUID?
+    private var rowDrafts: [UUID: String] {
+        get { store.inlineDrafts }
+        set { store.inlineDrafts = newValue }
+    }
     var onChange: (() -> Void)?
     var onClose: (() -> Void)?
     var onAdd: (() -> Void)?
@@ -127,7 +131,12 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
             list.addArrangedSubview(empty); empty.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
         }
         for item in entries {
-            let row = CalendarNoteRow(item: item, preview: preview)
+            let row = CalendarNoteRow(item: item, preview: preview, draft: !preview && editingID == item.id ? (rowDrafts[item.id] ?? item.text) : nil)
+            row.onDraft = { [weak self] text in self?.rowDrafts[item.id] = text }
+            row.onSave = { [weak self] text in self?.saveRow(item, text: text) }
+            row.onCancel = { [weak self] in
+                guard let self else { return }; self.rowDrafts.removeValue(forKey: item.id); self.editingID = nil; self.store.draftEditingIDs.removeValue(forKey: self.day); self.render()
+            }
             row.onToggle = { [weak self] in self?.change(item, completed: !item.completed) }
             row.onEdit = { [weak self] in self?.edit(item) }
             row.onDelete = { [weak self] in self?.delete(item) }
@@ -140,10 +149,6 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
             guard !textView.hasMarkedText() else { return false }
             saveText(); return true
         }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)), editingID != nil {
-            editingID = nil; store.draftEditingIDs.removeValue(forKey: day)
-            input.stringValue = ""; store.drafts.removeValue(forKey: day); render(); return true
-        }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             closeNotes(); return true
         }
@@ -153,27 +158,28 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {
-            if let id = editingID, let item = store.entries(on: day).first(where: { $0.id == id }) {
-                try store.update(id, text: text, completed: item.completed, on: day)
-            } else { try store.add(text, on: day) }
-            editingID = nil; store.draftEditingIDs.removeValue(forKey: day)
+            try store.add(text, on: day)
             input.stringValue = ""; store.drafts.removeValue(forKey: day)
             render(); onChange?(); focusInput()
         } catch { showError() }
     }
     private func edit(_ item: CalendarNote) {
-        if editingID == item.id { focusInput(); return }
-        let current = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let original = editingID.flatMap { id in store.entries(on: day).first { $0.id == id }?.text }
-        if !current.isEmpty && current != original {
-            status.isHidden = false
-            status.textColor = .secondaryLabelColor
-            status.stringValue = AppLanguage.english ? "Save or clear the current draft before editing another item." : "请先保存或清空当前草稿，再编辑其他事项。"
-            focusInput(); return
-        }
         editingID = item.id; store.draftEditingIDs[day] = item.id
-        input.stringValue = item.text; store.drafts[day] = item.text
-        render(); focusInput()
+        if rowDrafts[item.id] == nil { rowDrafts[item.id] = item.text }
+        render(); layoutSubtreeIfNeeded()
+        if let row = list.arrangedSubviews.compactMap({ $0 as? CalendarNoteRow }).first(where: { $0.inlineInput != nil }) {
+            row.scrollToVisible(row.bounds)
+            window?.makeFirstResponder(row.inlineInput)
+        }
+    }
+    private func saveRow(_ item: CalendarNote, text: String) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        do {
+            try store.update(item.id, text: value, completed: item.completed, on: day)
+            rowDrafts.removeValue(forKey: item.id); editingID = nil; store.draftEditingIDs.removeValue(forKey: day)
+            render(); onChange?()
+        } catch { showError() }
     }
     private func change(_ item: CalendarNote, completed: Bool) {
         do { try store.update(item.id, text: item.text, completed: completed, on: day); render(); onChange?() }
@@ -182,7 +188,8 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
     private func delete(_ item: CalendarNote) {
         do {
             try store.remove(item.id, on: day)
-            if editingID == item.id { editingID = nil; store.draftEditingIDs.removeValue(forKey: day); input.stringValue = ""; store.drafts.removeValue(forKey: day) }
+            rowDrafts.removeValue(forKey: item.id)
+            if editingID == item.id { editingID = nil; store.draftEditingIDs.removeValue(forKey: day) }
             render(); onChange?()
         } catch { showError() }
     }
@@ -202,11 +209,15 @@ final class CalendarNotesView: NSView, NSTextFieldDelegate {
 }
 
 @MainActor
-private final class CalendarNoteRow: NSView {
+private final class CalendarNoteRow: NSView, NSTextFieldDelegate {
+    var inlineInput: NSTextField?
+    var onDraft: ((String) -> Void)?
+    var onSave: ((String) -> Void)?
+    var onCancel: (() -> Void)?
     var onToggle: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
-    init(item: CalendarNote, preview: Bool) {
+    init(item: CalendarNote, preview: Bool, draft: String? = nil) {
         super.init(frame: .zero)
         wantsLayer = true; layer?.cornerRadius = 8
         let check = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggle))
@@ -231,7 +242,18 @@ private final class CalendarNoteRow: NSView {
         let marker = NSTextField(labelWithString: item.completed ? "✓" : "•")
         marker.font = .systemFont(ofSize: 12); marker.textColor = .secondaryLabelColor
         marker.widthAnchor.constraint(equalToConstant: 14).isActive = true
-        let row = NSStackView(views: preview ? [marker, text] : [check, text, edit, delete]); row.spacing = 6; row.alignment = .centerY; row.distribution = .fill
+        var content: NSView = text
+        if let draft {
+            let field = CalendarNoteInput()
+            field.stringValue = draft; field.font = .systemFont(ofSize: 13); field.bezelStyle = .roundedBezel
+            field.identifier = NSUserInterfaceItemIdentifier("calendar.note.input.\(item.id)")
+            field.setAccessibilityLabel(AppLanguage.english ? "Edit task" : "编辑事项")
+            field.toolTip = AppLanguage.english ? "Return to save · Esc to cancel" : "回车保存 · Esc 取消"
+            field.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            field.delegate = self; inlineInput = field; content = field
+            edit.isHidden = true
+        }
+        let row = NSStackView(views: preview ? [marker, content] : [check, content, edit, delete]); row.spacing = 6; row.alignment = .centerY; row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false; addSubview(row)
         NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), row.topAnchor.constraint(equalTo: topAnchor, constant: 6), row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)])
     }
@@ -239,6 +261,17 @@ private final class CalendarNoteRow: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.quaternaryLabelColor.withAlphaComponent(0.05).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+    }
+    func controlTextDidChange(_ notification: Notification) {
+        if let input = inlineInput { onDraft?(input.stringValue) }
+    }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
+        if selector == #selector(NSResponder.insertNewline(_:)), let input = inlineInput {
+            onDraft?(input.stringValue); onSave?(input.stringValue); return true
+        }
+        if selector == #selector(NSResponder.cancelOperation(_:)) { onCancel?(); return true }
+        return false
     }
     @objc private func toggle() { onToggle?() }
     @objc private func edit() { onEdit?() }

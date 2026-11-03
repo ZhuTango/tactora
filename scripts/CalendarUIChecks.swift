@@ -88,7 +88,7 @@ import AppKit
   precondition(!notePanel.containsCalendarWindow(outsideWindow), "Other app windows must count as outside")
   precondition(!notePanel.containsCalendarWindow(nil))
   let floatingFrame = noteWindow.childWindows!.first!.frame
-  precondition(abs(floatingFrame.midY - noteWindow.frame.midY) < 1, "Floating notes must be vertically centered")
+  precondition(abs(floatingFrame.midY - noteWindow.convertToScreen(notePanel.convert(notePanel.bounds,to:nil)).midY) < 1, "Floating notes must be vertically centered")
   precondition(floatingFrame.height < 240, "Empty editor should be compact")
   let input = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes.input" } as! NSTextField
   let day = CalendarNotesStore.dayKey(date,calendar:calendar)
@@ -117,10 +117,24 @@ import AppKit
    detailView.controlTextDidChange(Notification(name:NSControl.textDidChangeNotification,object:input))
   }
   noteButton("calendar.note.edit.\(item.id)").performClick(nil)
-  input.stringValue = "买猫粮和猫砂"
-  precondition((input.delegate as! CalendarNotesView).control(input,textView:NSTextView(),doCommandBy:#selector(NSResponder.insertNewline(_:))))
+  let inline = views(notePanel).first { $0.identifier?.rawValue == "calendar.note.input.\(item.id)" } as! NSTextField
+  precondition(input.stringValue.isEmpty, "Editing a row must not use the new-task input")
+  inline.stringValue = "买猫粮和猫砂"
+  precondition(inline.delegate!.control!(inline,textView:NSTextView(),doCommandBy:#selector(NSResponder.insertNewline(_:))))
   precondition(notesStore.entries(on:day)[0].text == "买猫粮和猫砂")
   precondition(notesStore.entries(on:day)[0].completed)
+  noteButton("calendar.note.edit.\(item.id)").performClick(nil)
+  let canceled = views(notePanel).first { $0.identifier?.rawValue == "calendar.note.input.\(item.id)" } as! NSTextField
+  canceled.stringValue = "不应保存"
+  let marked = NSTextView(); marked.setMarkedText("中文",selectedRange:NSRange(location:0,length:2),replacementRange:NSRange(location:NSNotFound,length:0))
+  precondition(!canceled.delegate!.control!(canceled,textView:marked,doCommandBy:#selector(NSResponder.insertNewline(_:))))
+  let inlineView = canceled.window!.contentView!
+  inlineView.layoutSubtreeIfNeeded()
+  let inlineImage = inlineView.bitmapImageRepForCachingDisplay(in:inlineView.bounds)!
+  inlineView.cacheDisplay(in:inlineView.bounds,to:inlineImage)
+  try inlineImage.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/calendar-inline.png"))
+  precondition(canceled.delegate!.control!(canceled,textView:NSTextView(),doCommandBy:#selector(NSResponder.cancelOperation(_:))))
+  precondition(notesStore.entries(on:day)[0].text == "买猫粮和猫砂")
   // Chinese IME confirmation must not submit unfinished text.
   let notesView = views(notePanel).first { $0.identifier?.rawValue == "calendar.notes" } as! CalendarNotesView
   let ime = NSTextView()

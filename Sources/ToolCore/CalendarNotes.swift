@@ -22,6 +22,7 @@ final class CalendarNotesStore {
     private(set) var loadError: Error?
     // Unsubmitted input survives date changes and reopening the popover in this app session.
     var drafts: [String: String] = [:]
+    var inlineDrafts: [UUID: String] = [:]
     var draftEditingIDs: [String: UUID] = [:]
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL
