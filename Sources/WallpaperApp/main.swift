@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let keepAwake = KeepAwake()
     private let keyboardManager = KeyboardManager()
     private let calendarTool = CalendarTool()
+    private let fanControl = FanControlManager()
     private var ocr: OCRManager!
     private var textWindow: TextProcessingWindow?
     private let textShortcut = TextToolsShortcut()
@@ -46,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         keyboardManager.start()
+        fanControl.start()
         calendarTool.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("calendar") }
         calendarTool.refresh()
         lidDisplaySleep.refresh()
@@ -613,7 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool, fans: fanControl)
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -646,6 +648,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func applyFeature(_ feature: ToolFeature, enabled: Bool) {
         switch feature {
+        case .fans:
+            fanControl.setEnabled(enabled)
         case .calendar:
             calendarTool.refresh()
         case .keyboard:
@@ -684,6 +688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowManager.setEnabled(false)
         keyboardManager.stop()
         calendarTool.stop()
+        fanControl.stop()
         ocr?.stop()
         textShortcut.stop()
         textWindow?.close()

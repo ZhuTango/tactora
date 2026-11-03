@@ -727,19 +727,19 @@ struct Preview {
         let awakeManager = KeepAwake(defaults: switcherDefaults)
         let ocrManager = OCRManager(store: store, defaults: switcherDefaults)
         let textShortcut = TextToolsShortcut(defaults: switcherDefaults)
-        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager, ocr: ocrManager, textShortcut: textShortcut, keyboard: KeyboardManager(defaults: switcherDefaults), calendar: CalendarTool(defaults: switcherDefaults))
+        unified.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: switcher, windowManager: windowManager, keepAwake: awakeManager, ocr: ocrManager, textShortcut: textShortcut, keyboard: KeyboardManager(defaults: switcherDefaults), calendar: CalendarTool(defaults: switcherDefaults), fans: FanControlManager(defaults: switcherDefaults, serviceEnabled: { false }))
         unified.present()
         let unifiedView = unified.window!.contentView!
         let tabs = allViews(unifiedView).compactMap { $0 as? NSTabView }.first!
-        precondition(tabs.numberOfTabViewItems == 10)
-        precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) })
+        precondition(tabs.numberOfTabViewItems == 11)
+        precondition(ToolFeature.allCases.allSatisfy { $0.isEnabled(in: switcherDefaults) == ($0 != .fans) })
         var featureChanges = 0
         unified.onFeatureChange = { feature, enabled in
             featureChanges += 1
             precondition(feature.isEnabled(in: switcherDefaults) == enabled)
         }
         let featureButtons = allViews(tabs.tabViewItems[0].view!).compactMap { $0 as? NSSwitch }.filter { $0.identifier?.rawValue.hasPrefix("toolEnabled.") == true }
-        precondition(featureButtons.count == 9)
+        precondition(featureButtons.count == 10)
         let manyTools = SettingsFeatureGrid(items: (0..<18).map { NSButton(title: "Tool \($0)", target: nil, action: nil) })
         manyTools.frame = NSRect(x: 0, y: 0, width: 700, height: 108)
         manyTools.layoutSubtreeIfNeeded()
@@ -757,14 +757,14 @@ struct Preview {
         precondition(manyTools.documentView!.subviews.allSatisfy { !$0.isHidden })
         print("PASS: 18 compact tool rows fit adaptive columns with bounded height and reachable overflow")
 
-        for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 1 && featureChanges == 9)
+        for button in featureButtons { button.state = .off; button.sendAction(button.action!, to: button.target) }
+        precondition(tabs.numberOfTabViewItems == 2 && featureChanges == 10)
         precondition(ToolFeature.allCases.allSatisfy { !$0.isEnabled(in: switcherDefaults) })
         unified.selectSection("apps")
         precondition(tabs.selectedTabViewItem?.identifier as? String == "general")
         for button in featureButtons { button.state = button.state == .on ? .off : .on; button.sendAction(button.action!, to: button.target) }
-        precondition(tabs.numberOfTabViewItems == 10 && featureChanges == 18)
-        print("PASS: default-on feature switches persist, hide settings and restore sections")
+        precondition(tabs.numberOfTabViewItems == 11 && featureChanges == 20)
+        print("PASS: legacy tools default on, fan control defaults off and remains reachable for setup")
         func settingsSnapshot(_ name: String) throws {
             unifiedView.layoutSubtreeIfNeeded(); unifiedView.displayIfNeeded()
             let bitmap = unifiedView.bitmapImageRepForCachingDisplay(in: unifiedView.bounds)!

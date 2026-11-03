@@ -25,6 +25,10 @@ xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O Sources/
 mkdir -p "$APP/Contents/Library/LaunchDaemons"
 cp Resources/LaunchDaemons/local.tango.macbglive.keyboard-helper.plist "$APP/Contents/Library/LaunchDaemons/"
 codesign --force --sign "$SIGNING_IDENTITY" --identifier local.tango.macbglive.keyboard-helper "$APP/Contents/MacOS/TactoraKeyboardHelper"
+xcrun swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O Sources/ToolCore/FanControl.swift Sources/ToolCore/FanSMC.swift Sources/ToolCore/FanHelperProtocol.swift Sources/FanHelper/main.swift -o "$APP/Contents/MacOS/TactoraFanHelper"
+cp Resources/LaunchDaemons/local.tango.macbglive.fan-helper.plist "$APP/Contents/Library/LaunchDaemons/"
+codesign --force --sign "$SIGNING_IDENTITY" --identifier local.tango.macbglive.fan-helper "$APP/Contents/MacOS/TactoraFanHelper"
+
 xcrun swiftc Sources/WallpaperApp/ToolIcon.swift scripts/icon.swift -o .build/icon-builder
 .build/icon-builder .build/AppIcon.iconset
 iconutil -c icns .build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
