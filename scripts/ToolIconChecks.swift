@@ -14,7 +14,7 @@ struct ToolIconChecks {
         let idle = ToolIcon.statusImage(awake: false)
         let active = ToolIcon.statusImage(awake: true)
         precondition(idle.isTemplate && active.isTemplate)
-        precondition(idle.size == active.size && active.size.width == 34)
+        precondition(idle.size.width == 18 && active.size.width == 34)
         let a = bitmap(idle), b = bitmap(active)
         var indicatorPixels = 0
         for y in 0..<18 {

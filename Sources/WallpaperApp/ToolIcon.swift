@@ -189,7 +189,7 @@ enum ToolIcon {
     private static let awake = makeStatusImage(awake: true)
     static func statusImage(awake: Bool) -> NSImage { awake ? self.awake : idle }
     private static func makeStatusImage(awake: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 34, height: 18), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: awake ? 34 : 18, height: 18), flipped: false) { _ in
             mark(NSRect(x: 1, y: 1, width: 16, height: 16))
             if awake {
                 let sun = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)
