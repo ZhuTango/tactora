@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fanStatusItem?.autosaveName = "TactoraFanReadings"
                 fanStatusItem?.button?.target = self
                 fanStatusItem?.button?.action = #selector(showFanSettings)
-                fanStatusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+                fanStatusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
             }
             fanStatusItem?.button?.title = fanControl.statusBarTitle
             fanStatusItem?.button?.toolTip = fanControl.statusBarDetails
