@@ -4,6 +4,9 @@ import AppKit
 final class CalendarTool: NSObject, NSPopoverDelegate {
     let defaults: UserDefaults
     private(set) var statusItem: NSStatusItem?
+    weak var embeddedButton: NSButton?
+    var onVisibilityChange: (() -> Void)?
+    private var anchorButton: NSButton? { embeddedButton ?? statusItem?.button }
     private let popover = NSPopover()
     private lazy var notesStore = CalendarNotesStore(fileURL: CalendarNotesStore.defaultURL)
     private var outsideMonitors: [Any] = []
@@ -23,10 +26,14 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
     }
     func refresh() {
         stop()
+        defer { onVisibilityChange?() }
         guard ToolFeature.calendar.isEnabled(in: defaults) else { return }
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem = item
-        item.button?.target = self; item.button?.action = #selector(toggle)
+        if let embeddedButton {
+            embeddedButton.isHidden = false
+        } else {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        }
+        anchorButton?.target = self; anchorButton?.action = #selector(toggle)
         for name in [Notification.Name.NSCalendarDayChanged, NSNotification.Name.NSSystemTimeZoneDidChange, NSLocale.currentLocaleDidChangeNotification, NSNotification.Name.NSSystemClockDidChange] {
             watch(.default, name)
         }
@@ -66,7 +73,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         return image
     }
     private func updateDate() {
-        guard let button = statusItem?.button else { return }
+        guard let button = anchorButton else { return }
         let now = Date(), model = CalendarMonth(containing: now, firstWeekday: firstWeekday)
         button.image = Self.dateIcon(day: model.calendar.component(.day, from: now))
         button.imagePosition = .imageOnly
@@ -85,7 +92,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         midnight = timer; RunLoop.main.add(timer, forMode: .common)
     }
     @objc func toggle() {
-        guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
+        guard ToolFeature.calendar.isEnabled(in: defaults), let button = anchorButton else { return }
         if popover.isShown { closeCalendar(); return }
         let panel = CalendarPanel(firstWeekday: firstWeekday, showWeeks: showWeeks, showHolidays: showHolidays, notesEnabled: notesEnabled, notesStore: notesStore)
         panel.onSizeChange = { [weak self] size in self?.popover.contentSize = size }
@@ -99,7 +106,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         panel.window?.makeFirstResponder(panel)
         monitorOutsideClicks()
     }
-    private func closeCalendar() {
+    func closeCalendar() {
         clearOutsideMonitors()
         (popover.contentViewController?.view as? CalendarPanel)?.dismissNotes()
         popover.close()
@@ -110,7 +117,11 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
             guard let self else { return event }
             let calendar = self.popover.contentViewController?.view as? CalendarPanel
-            if calendar?.containsCalendarWindow(event.window) != true && event.window !== self.statusItem?.button?.window {
+            let anchor = self.anchorButton
+            let clickedAnchor = anchor.map { button in
+                event.window === button.window && button.bounds.contains(button.convert(event.locationInWindow, from: nil))
+            } ?? false
+            if calendar?.containsCalendarWindow(event.window) != true && !clickedAnchor {
                 self.closeCalendar()
             }
             return event
@@ -135,6 +146,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         observers.removeAll()
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
+        embeddedButton?.isHidden = true
     }
 }
 

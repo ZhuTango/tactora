@@ -189,11 +189,11 @@ enum ToolIcon {
     private static let awake = makeStatusImage(awake: true)
     static func statusImage(awake: Bool) -> NSImage { awake ? self.awake : idle }
     private static func makeStatusImage(awake: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 34, height: 18), flipped: false) { _ in
             mark(NSRect(x: 1, y: 1, width: 16, height: 16))
             if awake {
-                NSColor.black.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 20, y: 7, width: 3, height: 3)).fill()
+                let sun = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)
+                sun?.draw(in: NSRect(x: 21, y: 3, width: 12, height: 12))
             }
             return true
         }

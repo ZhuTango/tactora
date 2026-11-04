@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var controller: WallpaperController!
     private var statusItem: NSStatusItem!
-    private var fanStatusItem: NSStatusItem?
+    private let statusGroup = StatusGroupView(frame: .zero)
     private let menu = ToolStatusMenu()
     private let backgroundMenu = NSMenu()
     private var clipboard: ClipboardStore!
@@ -46,6 +46,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         NSApp.applicationIconImage = ToolIcon.appImage(size: 256)
+        statusItem = NSStatusBar.system.statusItem(withLength: 48)
+        statusItem.autosaveName = "TactoraStatusGroup"
+        if let button = statusItem.button {
+            button.title = ""
+            button.image = nil
+            button.setAccessibilityElement(false)
+            statusGroup.frame = button.bounds
+            statusGroup.autoresizingMask = [.width, .height]
+            button.addSubview(statusGroup)
+        }
+        statusGroup.onWidthChange = { [weak self] width in self?.statusItem.length = width }
+        statusGroup.mainButton.image = ToolIcon.statusImage(awake: false)
+        statusGroup.mainButton.target = self
+        statusGroup.mainButton.action = #selector(showStatusMenu)
+        statusGroup.fanButton.target = self
+        statusGroup.fanButton.action = #selector(showFanSettings)
+        calendarTool.embeddedButton = statusGroup.calendarButton
+        calendarTool.onVisibilityChange = { [weak self] in self?.statusGroup.refreshLayout() }
+        menu.delegate = self
+        statusGroup.refreshLayout()
         keepAwake.onChange = { [weak self] in self?.updateMenu() }
         keyboardManager.start()
         fanControl.onTelemetryChange = { [weak self] in self?.updateFanMenuReading() }
@@ -89,11 +109,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         textShortcut.onOpen = { [weak self] in self?.showTextTools() }
         textShortcut.refreshEnabled()
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = ToolIcon.statusImage(awake: false)
-        statusItem.button?.toolTip = "方寸 · 背景与剪贴板"
-        menu.delegate = self
-        statusItem.menu = menu
         controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         controller.onChange = { [weak self] in self?.updateMenu() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidSleepNotification) { $0.controller.policy.displayAsleep = true }
@@ -148,33 +163,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateFanMenuReading() {
         menu.items.first { $0.identifier?.rawValue == "fans.menu-reading" }?.title = fanControl.menuTitle
         #if arch(arm64)
-        if fanControl.showInMenuBar {
-            if fanStatusItem == nil {
-                fanStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-                fanStatusItem?.autosaveName = "TactoraFanReadings"
-                fanStatusItem?.button?.target = self
-                fanStatusItem?.button?.action = #selector(showFanSettings)
-                fanStatusItem?.button?.imagePosition = .imageOnly
-            }
-            fanStatusItem?.button?.title = ""
-            fanStatusItem?.button?.image = ToolIcon.fanReadingsImage(fanControl.statusBarTitle)
-            fanStatusItem?.button?.toolTip = fanControl.statusBarDetails
-            fanStatusItem?.button?.setAccessibilityLabel(fanControl.statusBarDetails)
-        } else if let item = fanStatusItem {
-            NSStatusBar.system.removeStatusItem(item); fanStatusItem = nil
-        }
+        statusGroup.fanButton.isHidden = !fanControl.showInMenuBar
+        statusGroup.fanButton.image = ToolIcon.fanReadingsImage(fanControl.statusBarTitle)
+        statusGroup.fanButton.toolTip = fanControl.statusBarDetails
+        statusGroup.fanButton.setAccessibilityLabel(fanControl.statusBarDetails)
+        statusGroup.refreshLayout()
         #endif
     }
+    @objc private func showStatusMenu() {
+        calendarTool.closeCalendar()
+        let button = statusGroup.mainButton
+        button.highlight(true)
+        defer { button.highlight(false) }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+    }
     @objc private func showFanSettings() {
+        calendarTool.closeCalendar()
         showClipboardSettings(); clipboardSettings?.selectSection("fans")
     }
 
     private func updateMenu() {
         guard controller != nil, clipboard != nil else { return }
         let awake = ToolFeature.awake.isEnabled() && keepAwake.active
-        statusItem?.button?.image = ToolIcon.statusImage(awake: awake)
-        statusItem?.button?.toolTip = awake ? "方寸 · " + keepAwake.status : "方寸 · 防休眠未开启"
-        statusItem?.button?.setAccessibilityLabel(awake ? "方寸 · 防休眠已开启" : "方寸 · 防休眠未开启")
+        statusGroup.mainButton.image = ToolIcon.statusImage(awake: awake)
+        statusGroup.mainButton.toolTip = awake ? "方寸 · " + keepAwake.status : "方寸 · 防休眠未开启"
+        statusGroup.mainButton.setAccessibilityLabel(awake ? "方寸 · 防休眠已开启" : "方寸 · 防休眠未开启")
         backgroundMenu.removeAllItems()
         backgroundMenu.autoenablesItems = false
         add("桌面背景 · 每屏独立配置", to: backgroundMenu)
