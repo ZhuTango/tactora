@@ -254,13 +254,6 @@ import AppKit
   }
   tool.refresh(); precondition(tool.statusItem != nil)
   ToolFeature.calendar.setEnabled(false,in:defaults); tool.refresh(); precondition(tool.statusItem == nil)
-  let embedded = NSButton(frame: NSRect(x:0,y:0,width:28,height:24))
-  tool.embeddedButton = embedded
-  ToolFeature.calendar.setEnabled(true,in:defaults); tool.refresh()
-  precondition(tool.statusItem == nil && !embedded.isHidden && embedded.image != nil, "Grouped calendar must reuse its anchor without adding a status item")
-  precondition(embedded.target === tool && embedded.action == #selector(CalendarTool.toggle))
-  ToolFeature.calendar.setEnabled(false,in:defaults); tool.refresh()
-  precondition(embedded.isHidden && tool.statusItem == nil)
   defaults.set(1,forKey:"calendar.firstWeekday"); defaults.set(true,forKey:"calendar.showWeeks")
   let restored = CalendarTool(defaults:defaults)
   precondition(restored.firstWeekday == 1 && restored.showWeeks)
