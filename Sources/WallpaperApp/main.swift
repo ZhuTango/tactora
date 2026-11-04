@@ -253,6 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if fanControl.showInMenu {
         let fanEntry = add(fanControl.menuTitle, to: self.menu, action: #selector(showFanSettings))
         fanEntry.identifier = NSUserInterfaceItemIdentifier("fans.menu-reading")
+        self.menu.addItem(.separator())
         fanEntry.toolTip = AppLanguage.english ? "CPU hottest core · actual fan speeds in fan order. Click for fan settings." : "CPU 核心最高温度 · 按风扇顺序显示实际转速，点击打开温控设置。"
         }
         #endif
