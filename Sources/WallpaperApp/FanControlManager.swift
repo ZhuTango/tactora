@@ -17,16 +17,33 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }
 }
 
+/// Bounded retry frequency, without a terminal retry count. No hardware writes here.
+struct FanConnectionRecovery {
+    static let configurationTimeout: TimeInterval = 30
+    private var delay: TimeInterval = 0
+    private var nextAttempt = Date.distantPast
+    func canAttempt(at now: Date) -> Bool { now >= nextAttempt }
+    mutating func reset() { delay = 0; nextAttempt = .distantPast }
+    mutating func scheduleRetry(after now: Date) {
+        delay = delay == 0 ? 10 : min(60, delay * 2)
+        deferRetry(after: now)
+    }
+    mutating func deferRetry(after now: Date) {
+        nextAttempt = now.addingTimeInterval(max(10, delay))
+    }
+}
+
 @MainActor final class FanControlManager {
     private static let registrationKey = "fans.helperRegisteredBuild.v1"
     private static var currentBuild: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown" }
     private var registrationUpdating = false
     private var configuring = false
-    private var nextRetry = Date.distantPast
-    private var retryCount = 0
+    private var recovery = FanConnectionRecovery()
+    private var configureTimeout: Task<Void, Never>?
     private var sleeping = false
     private let defaults: UserDefaults
     private let serviceEnabled: () -> Bool
+    private let now: () -> Date
     private var connection: NSXPCConnection?
     private var timer: Timer?
     private var inFlight = false
@@ -66,9 +83,9 @@ func refreshFanHelperRegistration(previous: String?, current: String,
         return value.valid ? value : FanCurve()
     }
     static var service: SMAppService { .daemon(plistName: FanHelperIdentity.plist) }
-    init(defaults: UserDefaults = .standard, serviceEnabled: @escaping () -> Bool = {
+    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init, serviceEnabled: @escaping () -> Bool = {
         SMAppService.daemon(plistName: FanHelperIdentity.plist).status == .enabled
-    }) { self.defaults = defaults; self.serviceEnabled = serviceEnabled }
+    }) { self.defaults = defaults; self.now = now; self.serviceEnabled = serviceEnabled }
     func start() {
         guard timer == nil else { return }
         timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -80,7 +97,7 @@ func refreshFanHelperRegistration(previous: String?, current: String,
             self?.sleeping = true; self?.disconnect(); self?.active = false
         } })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
-            self?.sleeping = false; self?.retryCount = 0
+            self?.sleeping = false; self?.recovery.reset()
             if self?.enabled == true { self?.connectAndConfigure() }
         } })
         if enabled { setEnabled(true) }
@@ -88,7 +105,7 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }
     func setEnabled(_ value: Bool) {
         generation += 1; configuring = false; inFlight = false
-        retryCount = 0; nextRetry = .distantPast
+        recovery.reset()
         requested = value
         preserveControlStatus = true
         ToolFeature.fans.setEnabled(value, in: defaults)
@@ -144,7 +161,7 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     private func connectAndConfigure() {
         guard requested || enabled else { return }
         guard !registrationUpdating, !configuring, !sleeping else { return }
-        nextRetry = Date().addingTimeInterval(10)
+        recovery.scheduleRetry(after: now())
         guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.crystalidea.macsfancontrol").isEmpty else {
             message = "Macs Fan Control 正在运行，请先恢复自动模式并退出它。"; changed(); return
         }
@@ -160,24 +177,29 @@ func refreshFanHelperRegistration(previous: String?, current: String,
                 candidate.setCodeSigningRequirement(try FanHelperIdentity.requirement(identifier: FanHelperIdentity.label))
                 candidate.invalidationHandler = { [weak self, weak candidate] in Task { @MainActor in
                     guard let self, let candidate, self.connection === candidate else { return }
-                    self.connection = nil; self.active = false; self.inFlight = false
-                    self.configuring = false; self.nextRetry = Date().addingTimeInterval(10)
+                    self.disconnect()
                     self.message = "辅助服务连接中断，正在等待自动恢复。"; self.changed()
                 } }
                 candidate.interruptionHandler = candidate.invalidationHandler
                 connection = candidate; candidate.resume()
             }
+            configureTimeout?.cancel()
+            generation += 1; inFlight = false
             configuring = true
+            message = "正在连接风扇辅助服务…"; changed()
             let token = generation
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            configureTimeout = Task { @MainActor [weak self] in
+                do { try await Task.sleep(nanoseconds: UInt64(FanConnectionRecovery.configurationTimeout * 1_000_000_000)) }
+                catch { return }
                 guard let self, token == self.generation, self.configuring else { return }
                 self.disconnect(); self.message = "辅助服务响应超时，等待自动重连。"; self.changed()
             }
             proxy()?.configure(true, low: curve.low, high: curve.high) { [weak self] ok, status in Task { @MainActor in
                 guard let self, token == self.generation else { return }
+                self.configureTimeout?.cancel(); self.configureTimeout = nil
                 self.configuring = false; self.active = ok
-                if ok { self.retryCount = 0 }
+                if ok { self.recovery.reset() }
+                self.recovery.deferRetry(after: self.now())
                 self.message = status; self.changed()
             } }
         } catch { message = error.localizedDescription; changed() }
@@ -191,8 +213,8 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }
     func poll() {
         if enabled, !active, !configuring, !registrationUpdating, !sleeping,
-           Date() >= nextRetry, retryCount < 3 {
-            retryCount += 1; connectAndConfigure()
+           recovery.canAttempt(at: now()) {
+            connectAndConfigure()
         }
         if connection != nil, !inFlight {
             inFlight = true; let token = generation
@@ -223,10 +245,11 @@ func refreshFanHelperRegistration(previous: String?, current: String,
     }
     func stop() { timer?.invalidate(); timer = nil; disconnect(); for token in observers { NSWorkspace.shared.notificationCenter.removeObserver(token) }; observers = [] }
     private func disconnect() {
+        configureTimeout?.cancel(); configureTimeout = nil
         generation += 1
         let old = connection; connection = nil; old?.invalidate()
         inFlight = false; configuring = false; active = false
-        nextRetry = Date().addingTimeInterval(10)
+        recovery.deferRetry(after: now())
     }
     private func changed() { onChange?(); onTelemetryChange?() }
 }

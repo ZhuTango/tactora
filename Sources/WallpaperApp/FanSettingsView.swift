@@ -71,7 +71,7 @@ import AppKit
         showBar.state = manager.showInMenuBar ? .on : .off
         toggle.state = manager.enabled ? .on : .off
         onToggle?(manager.enabled)
-        status.stringValue = (manager.enabled && !manager.active ? "已开启，当前未接管（最多自动重试 3 次，可点“重新连接”重试）：\n" : "") + manager.message
+        status.stringValue = (manager.enabled && !manager.active ? "已开启，当前未接管（将持续自动重连，也可点“重新连接”立即重试）：\n" : "") + manager.message
         if let snapshot = manager.snapshot, let hottest = snapshot.maximumTemperature {
             temperature.stringValue = String(format: "%.1f °C", hottest)
             readings.stringValue = "\(snapshot.chip) · \(snapshot.temperatures.count) 个核心温度传感器\n" + snapshot.fans.map {

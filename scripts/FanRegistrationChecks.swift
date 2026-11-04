@@ -1,6 +1,37 @@
 import Foundation
 @main struct FanRegistrationChecks {
  @MainActor static func main() async throws {
+  var recovery = FanConnectionRecovery()
+  let start = Date(timeIntervalSince1970: 1_000)
+  precondition(recovery.canAttempt(at: start))
+  for delay: TimeInterval in [10, 20, 40, 60, 60, 60, 60, 60] {
+   recovery.scheduleRetry(after: start)
+   precondition(!recovery.canAttempt(at: start.addingTimeInterval(delay - 0.1)))
+   precondition(recovery.canAttempt(at: start.addingTimeInterval(delay)), "Failures must never exhaust recovery")
+  }
+  recovery.reset()
+  recovery.scheduleRetry(after: start)
+  precondition(recovery.canAttempt(at: start.addingTimeInterval(10)), "Success/manual retry resets backoff")
+  precondition(FanConnectionRecovery.configurationTimeout >= 30, "Cold launch can take 26 seconds")
+  let suite = "tactora-fan-recovery-checks"
+  let defaults = UserDefaults(suiteName: suite)!
+  defaults.removePersistentDomain(forName: suite)
+  defer { defaults.removePersistentDomain(forName: suite) }
+  var now = start, probes = 0
+  let manager = FanControlManager(defaults: defaults, now: { now }, serviceEnabled: { probes += 1; return false })
+  manager.setEnabled(true)
+  precondition(probes == 1 && manager.enabled && !manager.active)
+  for delay: TimeInterval in [10, 20, 40, 60, 60, 60, 60, 60] {
+   let previous = probes
+   now = now.addingTimeInterval(delay - 0.1); manager.poll()
+   precondition(probes == previous, "No busy retry loop")
+   now = now.addingTimeInterval(0.1); manager.poll()
+   precondition(probes == previous + 1, "Manager must retry beyond three failures")
+  }
+  manager.setEnabled(false)
+  let stopped = probes
+  now = now.addingTimeInterval(600); manager.poll()
+  precondition(probes == stopped && !manager.enabled, "Explicit off cancels automatic recovery")
   var events: [String] = []
   func refresh(_ previous: String?, fail: Bool = false) async throws {
    try await refreshFanHelperRegistration(previous: previous, current: "102", unregister: {
