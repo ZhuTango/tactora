@@ -165,13 +165,36 @@ enum ToolIcon {
         return image
     }
 
+    /// A fixed canvas keeps neighbouring menu items still as readings change.
+    static func fanReadingsImage(_ title: String) -> NSImage {
+        let values = title.split(separator: " ").map(String.init)
+        let image = NSImage(size: NSSize(width: 32, height: 22), flipped: false) { _ in
+            for (index, value) in values.prefix(2).enumerated() {
+                let text = NSAttributedString(string: value, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold),
+                    .foregroundColor: NSColor.black
+                ])
+                let size = text.size()
+                let rowY: CGFloat = index == 0 ? 11 : 0
+                text.draw(at: NSPoint(x: (32 - size.width) / 2,
+                                      y: rowY + (11 - size.height) / 2))
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     private static let idle = makeStatusImage(awake: false)
     private static let awake = makeStatusImage(awake: true)
     static func statusImage(awake: Bool) -> NSImage { awake ? self.awake : idle }
     private static func makeStatusImage(awake: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: awake ? 40 : 18, height: 18), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
             mark(NSRect(x: 1, y: 1, width: 16, height: 16))
-            if awake { awakeDisplay(NSRect(x: 23, y: 1, width: 16, height: 16)) }
+            if awake {
+                NSColor.black.setFill()
+                NSBezierPath(ovalIn: NSRect(x: 20, y: 7, width: 3, height: 3)).fill()
+            }
             return true
         }
         image.isTemplate = true

@@ -41,7 +41,10 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
     }
     /// Template artwork lets macOS tint the date and outline together in any menu bar appearance.
     static func dateIcon(day: Int) -> NSImage {
-        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            NSAffineTransform(transform: AffineTransform(scale: 0.9)).concat()
             NSColor.black.setStroke()
             let outline = NSBezierPath(roundedRect: NSRect(x: 1.5, y: 1.5, width: 17, height: 16), xRadius: 3, yRadius: 3)
             outline.lineWidth = 1.25; outline.stroke()

@@ -154,9 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fanStatusItem?.autosaveName = "TactoraFanReadings"
                 fanStatusItem?.button?.target = self
                 fanStatusItem?.button?.action = #selector(showFanSettings)
-                fanStatusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+                fanStatusItem?.button?.imagePosition = .imageOnly
             }
-            fanStatusItem?.button?.title = fanControl.statusBarTitle
+            fanStatusItem?.button?.title = ""
+            fanStatusItem?.button?.image = ToolIcon.fanReadingsImage(fanControl.statusBarTitle)
             fanStatusItem?.button?.toolTip = fanControl.statusBarDetails
             fanStatusItem?.button?.setAccessibilityLabel(fanControl.statusBarDetails)
         } else if let item = fanStatusItem {
