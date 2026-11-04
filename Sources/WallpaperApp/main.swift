@@ -156,9 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fanStatusItem?.button?.action = #selector(showFanSettings)
                 fanStatusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             }
-            fanStatusItem?.button?.title = fanControl.menuTitle
-            fanStatusItem?.button?.toolTip = AppLanguage.english ? "CPU hottest core and actual fan speeds · Click for settings" : "CPU 核心最高温度与实际风扇转速 · 点击设置"
-            fanStatusItem?.button?.setAccessibilityLabel(fanControl.menuTitle)
+            fanStatusItem?.button?.title = fanControl.statusBarTitle
+            fanStatusItem?.button?.toolTip = fanControl.statusBarDetails
+            fanStatusItem?.button?.setAccessibilityLabel(fanControl.statusBarDetails)
         } else if let item = fanStatusItem {
             NSStatusBar.system.removeStatusItem(item); fanStatusItem = nil
         }

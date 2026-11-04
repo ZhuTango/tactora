@@ -74,6 +74,16 @@ struct FanConnectionRecovery {
         let speeds = snapshot.fans.sorted { $0.id < $1.id }.map { String(Int($0.actual.rounded())) }.joined(separator: " / ")
         return (enabled && !active ? (AppLanguage.english ? "Paused · " : "温控暂停 · ") : "") + String(format: "CPU %.1f°C · ", temperature) + (AppLanguage.english ? "Fans " : "风扇 ") + speeds + " RPM"
     }
+    var statusBarTitle: String {
+        guard let snapshot, let temperature = snapshot.maximumTemperature,
+              let fan = snapshot.fans.min(by: { $0.id < $1.id }) else { return "—° —" }
+        return "\(Int(temperature.rounded()))° \(Int(fan.actual.rounded()))"
+    }
+    var statusBarDetails: String {
+        menuTitle + "\n" + message + "\n" + (AppLanguage.english
+            ? "Menu bar shows Fan 1 · Click for settings"
+            : "菜单栏显示风扇 1 转速 · 点击打开设置")
+    }
     var shouldMonitor: (() -> Bool)?
     var enabled: Bool { ToolFeature.fans.isEnabled(in: defaults) }
     var curve: FanCurve {
