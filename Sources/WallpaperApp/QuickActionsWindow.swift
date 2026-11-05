@@ -16,6 +16,62 @@ final class QuickActionRowView: NSTableRowView {
 }
 
 @MainActor
+final class QuickActionIconView: NSView {
+    private static let appIcons = NSCache<NSString, NSImage>()
+    private static func loadAppIcon(_ path: String) -> NSImage {
+        if let bundle = Bundle(path: path),
+           let name = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String {
+            let file = name as NSString
+            let ext = file.pathExtension.isEmpty ? "icns" : file.pathExtension
+            let base = file.pathExtension.isEmpty ? name : file.deletingPathExtension
+            if let url = bundle.url(forResource: base, withExtension: ext),
+               let image = NSImage(contentsOf: url) { return image }
+        }
+        return NSWorkspace.shared.icon(forFile: path)
+    }
+    private let applicationIcon: Bool
+
+    init(action: QuickAction) {
+        if case .application = action.destination { applicationIcon = true }
+        else { applicationIcon = false }
+        super.init(frame: .zero)
+        let imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        if case .application(let path) = action.destination {
+            Self.appIcons.countLimit = 256
+            let key = path as NSString
+            let image = Self.appIcons.object(forKey: key) ?? Self.loadAppIcon(path)
+            Self.appIcons.setObject(image, forKey: key)
+            imageView.image = image
+            // Preserve the application's original colors and proportions.
+        } else {
+            imageView.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
+            imageView.contentTintColor = .white
+        }
+        setAccessibilityElement(false)
+        imageView.setAccessibilityElement(false)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        let size: CGFloat = applicationIcon ? 28 : 16
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 28),
+            heightAnchor.constraint(equalToConstant: 28),
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: size),
+            imageView.heightAnchor.constraint(equalToConstant: size)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    override func draw(_ dirtyRect: NSRect) {
+        guard !applicationIcon else { return }
+        NSColor.systemIndigo.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6).fill()
+    }
+}
+
+@MainActor
 struct QuickActionContext {
     let application: NSRunningApplication?
     let window: AXUIElement?
@@ -301,10 +357,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard results.indices.contains(row) else { return nil }
         let action = results[row]
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil)
-        icon.contentTintColor = .secondaryLabelColor
-        icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        let icon = QuickActionIconView(action: action)
         let title = NSTextField(labelWithString: action.title)
         title.font = .systemFont(ofSize: 13, weight: .regular)
         title.lineBreakMode = .byTruncatingTail

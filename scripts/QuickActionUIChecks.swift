@@ -69,6 +69,22 @@ import AppKit
   panel.search.stringValue = "最大化"; panel.rebuild()
   precondition(panel.results.count == 3, "Search still finds actions outside initial suggestions")
   panel.close()
+  panel.commandProvider = { [
+   QuickAction(id:"app.finder",title:"Finder",detail:"打开应用",destination:.application("/System/Library/CoreServices/Finder.app")),
+   QuickAction(id:"clipboard",title:"搜索剪贴板历史",symbol:"doc.on.clipboard",destination:.command("clipboard")),
+   QuickAction(id:"ocr",title:"截图识字",symbol:"text.viewfinder",destination:.command("ocr")),
+   QuickAction(id:"fans",title:"风扇温控设置",symbol:"fan",destination:.command("fans"))
+  ] }
+  panel.present()
+  for appearance in [NSAppearance.Name.aqua,.darkAqua] {
+   panel.window!.appearance = NSAppearance(named:appearance)
+   let view = panel.window!.contentView!
+   view.layoutSubtreeIfNeeded()
+   let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds)!
+   view.cacheDisplay(in:view.bounds,to:bitmap)
+   try bitmap.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/quick-actions-icons-\(appearance.rawValue).png"))
+  }
+  panel.close()
   let shortcut = QuickActionsShortcut(defaults:defaults)
   shortcut.conflicts = { _ in true }
   precondition(!shortcut.setShortcut(QuickActionsShortcut.defaultShortcut))
