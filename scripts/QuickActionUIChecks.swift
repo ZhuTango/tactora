@@ -55,6 +55,20 @@ import AppKit
   panel.present(); panel.dismiss(restoreFocus:true)
   precondition(panel.context == nil && panel.search.stringValue.isEmpty)
   panel.close()
+  panel.commandProvider = { (0..<12).map { QuickAction(id:"item.\($0)",title:["搜索剪贴板历史", "最大化", "截图识字", "文本处理"][$0 % 4],symbol:["doc.on.clipboard", "macwindow", "text.viewfinder", "text.alignleft"][$0 % 4],destination:.command("item")) } }
+  panel.present()
+  precondition(panel.results.count == 4, "Initial view limits suggestions")
+  for appearance in [NSAppearance.Name.aqua,.darkAqua] {
+   panel.window!.appearance = NSAppearance(named:appearance)
+   let view = panel.window!.contentView!
+   view.layoutSubtreeIfNeeded()
+   let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds)!
+   view.cacheDisplay(in:view.bounds,to:bitmap)
+   try bitmap.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/quick-actions-home-\(appearance.rawValue).png"))
+  }
+  panel.search.stringValue = "最大化"; panel.rebuild()
+  precondition(panel.results.count == 3, "Search still finds actions outside initial suggestions")
+  panel.close()
   let shortcut = QuickActionsShortcut(defaults:defaults)
   shortcut.conflicts = { _ in true }
   precondition(!shortcut.setShortcut(QuickActionsShortcut.defaultShortcut))
