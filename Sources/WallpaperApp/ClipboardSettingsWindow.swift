@@ -195,7 +195,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil, calendar: CalendarTool? = nil, fans: FanControlManager? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil, calendar: CalendarTool? = nil, fans: FanControlManager? = nil, quickActionsView: NSView? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -231,6 +231,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
                                    ("wallpaper", AppLanguage.text("桌面背景"), makeBackgroundView())] {
             let item = NSTabViewItem(identifier: id)
             item.label = AppLanguage.text(title); item.view = view
+            tabs.addTabViewItem(item)
+        }
+        if let quickActionsView {
+            let item = NSTabViewItem(identifier: "quickActions")
+            item.label = AppLanguage.english ? "Actions" : "快捷操作"
+            item.view = quickActionsView
             tabs.addTabViewItem(item)
         }
         if let appSwitcher {

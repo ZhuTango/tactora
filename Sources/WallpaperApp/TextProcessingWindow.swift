@@ -159,6 +159,11 @@ final class TextProcessingWindow: NSWindowController, NSWindowDelegate, NSTextVi
         guard ToolFeature.text.isEnabled(in: defaults), let window else { return }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); window.makeFirstResponder(input)
     }
+    func setAutomaticInput(_ value: String) {
+        selectedMode = .automatic
+        modeChanged()
+        setInput(value)
+    }
     func setInput(_ value: String) {
         guard value.utf8.count <= TextProcessor.maximumBytes else { setStatus(AppLanguage.english ? "Text exceeds 1 MB; original kept." : "文字超过 1 MB，已保留原文。"); return }
         input.string = value; input.undoManager?.removeAllActions(); schedule()

@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var ocr: OCRManager!
     private var textWindow: TextProcessingWindow?
     private let textShortcut = TextToolsShortcut()
+    private let quickShortcut = QuickActionsShortcut()
+    private var quickWindow: QuickActionsWindow?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var selections: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
@@ -62,11 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clipboardShortcut.action = { [weak self] in self?.showClipboard() }
         shortcutRegistered = ToolFeature.clipboard.isEnabled() && clipboardShortcut.register()
         appSwitcher = AppSwitcher(start: ToolFeature.apps.isEnabled())
+        appSwitcher.conflicts = { [weak self] in self?.quickShortcut.contains($0) == true }
         appSwitcher.setFeatureEnabled(ToolFeature.apps.isEnabled())
         ocr = OCRManager(store: clipboard)
         ocr.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.containsShortcut(value) == true || self?.windowManager.contains(value) == true
         }
@@ -74,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ocr.onShowHistory = { [weak self] in self?.presentClipboard() }
         windowManager.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.bindings.values.contains(where: { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }) == true
         }
@@ -82,12 +85,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ocr.refreshEnabled()
         textShortcut.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || OCRManager.savedContains(value) || self?.windowManager.contains(value) == true
                 || self?.appSwitcher.containsShortcut(value) == true
         }
         textShortcut.onOpen = { [weak self] in self?.showTextTools() }
         textShortcut.refreshEnabled()
+        quickShortcut.conflicts = { [weak self] value in
+            guard let self else { return true }
+            let clipboard = ClipboardShortcut.saved()
+            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+                || self.appSwitcher.containsShortcut(value) || self.windowManager.contains(value)
+                || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value)
+        }
+        quickShortcut.onOpen = { [weak self] in self?.showQuickActions() }
+        quickShortcut.onChange = { [weak self] in self?.updateMenu() }
+        quickShortcut.start()
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = ToolIcon.statusImage(awake: false)
@@ -108,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         observe(.default, NSApplication.didChangeScreenParametersNotification) { $0.refreshDisplays(); $0.lidDisplaySleep.displaysChanged() }
         refreshDisplays()
         if let url = pendingOpenURLs.last { openFile(url); pendingOpenURLs.removeAll() }
+        if CommandLine.arguments.contains("--quick-actions") { showQuickActions() }
         if CommandLine.arguments.contains("--settings") { showSettings() }
         if CommandLine.arguments.contains("--calendar") { calendarTool.toggle() }
         if CommandLine.arguments.contains("--text-tools") { showTextTools() }
@@ -213,6 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         options.addItem(pause.copy() as! NSMenuItem)
         backgroundMenu.addItem(.separator())
         self.menu.removeAllItems()
+        let quickEntry = add(AppLanguage.english ? "Quick Actions…" : "快捷操作…", to: self.menu, action: #selector(showQuickActions))
+        if let shortcut = quickShortcut.shortcut { applyShortcut(shortcut, to: quickEntry) }
+        self.menu.addItem(.separator())
         self.menu.autoenablesItems = false
         if ToolFeature.clipboard.isEnabled() {
             let item = add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
@@ -638,6 +655,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showClipboardSettings(); clipboardSettings?.selectSection("awake")
     }
 
+    @objc private func showQuickActions() {
+        if quickWindow == nil {
+            let panel = QuickActionsWindow()
+            panel.commandProvider = { [weak self] in self?.quickActions() ?? [] }
+            panel.configuredApps = { [weak self] in self?.appSwitcher.configuredApps ?? [] }
+            panel.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("quickActions") }
+            panel.onExecute = { [weak self] action, context, completion in
+                self?.executeQuickAction(action, context: context, completion: completion)
+            }
+            quickWindow = panel
+        }
+        quickWindow?.present()
+    }
+
+    private func quickActions() -> [QuickAction] {
+        let english = AppLanguage.english
+        func command(_ id: String, _ title: String, _ en: String, _ keywords: String, _ symbol: String, feature: ToolFeature? = nil) -> QuickAction {
+            var detail = ""
+            if let feature, !feature.isEnabled() { detail = english ? "Enable in General settings" : "功能已关闭 · 前往通用设置启用" }
+            else if feature == .windows && !AXIsProcessTrusted() { detail = english ? "Accessibility permission required" : "需要辅助功能授权" }
+            return QuickAction(id: id, title: english ? en : title, detail: detail, keywords: keywords + " " + en + " " + title, symbol: symbol, destination: .command(id))
+        }
+        let windowActions = WindowLayout.allCases.map { layout in
+            command("window." + layout.rawValue, layout.title, layout.title, layout.rawValue + (layout == .maximize ? " 放大 zdh maximize" : ""), "macwindow", feature: .windows)
+        }
+        var actions = Array(windowActions.prefix(3))
+        actions += [
+            command("ocr", "截图识字", "Capture Text", "OCR 截图 提取文字", "text.viewfinder", feature: .ocr),
+            command("clipboard", "搜索剪贴板历史", "Clipboard History", "复制 粘贴 clipboard", "doc.on.clipboard", feature: .clipboard),
+            command("text", "文本处理", "Text Tools", "JSON 时间戳 timestamp 格式化 对比", "text.alignleft", feature: .text),
+            command("today", "今天的日期事项", "Today's Calendar", "日历 今天 日期 calendar today", "calendar", feature: .calendar),
+            command("fans", "风扇温控设置", "Fan Settings", "风扇 温度 temperature fan", "fan"),
+            command("awake.30", "防休眠 30 分钟", "Keep Awake 30 Minutes", "待机 唤醒 awake", "sun.max", feature: .awake),
+            command("awake.stop", "停止防休眠", "Stop Keep Awake", "关闭 停止 awake", "moon", feature: .awake),
+            command("apps", "应用切换设置", "App Switcher Settings", "应用 启动 application", "app", feature: .apps),
+            command("settings", "方寸设置", "Tactora Settings", "设置 preferences", "gearshape")
+        ]
+        return actions + windowActions.dropFirst(3)
+    }
+
+    private func executeQuickAction(_ action: QuickAction, context: QuickActionContext, completion: @escaping (Result<Void, Error>) -> Void) {
+        func fail(_ message: String) { completion(.failure(NSError(domain: "QuickActions", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))) }
+        func settings(_ section: String) { showClipboardSettings(); clipboardSettings?.selectSection(section) }
+        func available(_ feature: ToolFeature) -> Bool {
+            if feature.isEnabled() { return true }
+            settings("general"); completion(.success(())); return false
+        }
+        switch action.destination {
+        case .application(let path):
+            guard available(.apps) else { return }
+            AppSwitcher.openApplication(at: URL(fileURLWithPath: path)) { error in
+                if let error { completion(.failure(error)) } else { completion(.success(())) }
+            }
+            return
+        case .text(let content):
+            guard available(.text) else { return }
+            showTextTools(); textWindow?.setAutomaticInput(content)
+        case .awake(let minutes):
+            guard available(.awake) else { return }
+            do { try keepAwake.start(minutes: minutes) } catch { completion(.failure(error)); return }
+            context.application?.activate(options: [])
+        case .command(let id):
+            if id.hasPrefix("window."), let layout = WindowLayout(rawValue: String(id.dropFirst(7))) {
+                guard available(.windows) else { return }
+                guard AXIsProcessTrusted() else { settings("windows"); completion(.success(())); return }
+                guard context.application?.isTerminated == false, let target = context.window else { fail("原应用没有可调整的窗口，或窗口已关闭。"); return }
+                windowManager.perform(layout, on: target)
+                guard windowManager.lastActionSucceeded else { fail(windowManager.status); return }
+                context.application?.activate(options: [])
+            } else {
+                switch id {
+                case "ocr": guard available(.ocr) else { return }; completion(.success(())); context.application?.activate(options: []); captureText(); return
+                case "clipboard": guard available(.clipboard) else { return }; presentClipboard()
+                case "text": guard available(.text) else { return }; showTextTools()
+                case "today": guard available(.calendar) else { return }; calendarTool.showToday()
+                case "fans": showFanSettings()
+                case "apps": guard available(.apps) else { return }; settings("apps")
+                case "awake.30":
+                    guard available(.awake) else { return }
+                    do { try keepAwake.start(minutes: 30) } catch { completion(.failure(error)); return }
+                    context.application?.activate(options: [])
+                case "awake.stop": guard available(.awake) else { return }; keepAwake.stop(); context.application?.activate(options: [])
+                case "settings": settings("general")
+                default: fail("此操作已不可用。"); return
+                }
+            }
+        }
+        completion(.success(()))
+    }
+
     @objc private func showTextTools() {
         guard ToolFeature.text.isEnabled() else { return }
         if textWindow == nil {
@@ -656,7 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool, fans: fanControl)
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool, fans: fanControl, quickActionsView: QuickActionsSettingsView(manager: quickShortcut))
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -664,12 +771,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.clipboardWindow?.close()
                 self.clipboardSettings?.close()
                 self.clipboardSettings = nil
+                self.quickWindow?.close()
+                self.quickWindow = nil
                 self.calendarTool.refresh()
                 self.updateMenu()
                 self.showSettings()
             }
             settings.onShortcutChange = { [weak self] value in
-                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), !TextToolsShortcut.savedContains(value), self.clipboardShortcut.register(value) else { return false }
+                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), !TextToolsShortcut.savedContains(value), !self.quickShortcut.contains(value), self.clipboardShortcut.register(value) else { return false }
                 value.save()
                 self.shortcutRegistered = true
                 self.updateMenu()
@@ -731,6 +840,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         calendarTool.stop()
         fanControl.stop()
         ocr?.stop()
+        quickShortcut.stop()
+        quickWindow?.close()
         textShortcut.stop()
         textWindow?.close()
         lidDisplaySleep.stop()

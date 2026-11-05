@@ -84,6 +84,7 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         timer.tolerance = 1
         midnight = timer; RunLoop.main.add(timer, forMode: .common)
     }
+    func showToday() { closeCalendar(); toggle() }
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
         if popover.isShown { closeCalendar(); return }

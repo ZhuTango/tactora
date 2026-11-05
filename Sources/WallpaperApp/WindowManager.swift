@@ -32,6 +32,7 @@ final class WindowManager {
     private var originals: [(AXUIElement, CGRect)] = []
     private(set) var enabled = false
     private(set) var status = ""
+    private(set) var lastActionSucceeded = false
     private(set) var loadError = false
     var onChange: (() -> Void)?
     var conflicts: ((ClipboardShortcut) -> Bool)?
@@ -111,21 +112,27 @@ final class WindowManager {
         return CGRect(origin: point, size: size)
     }
     private func report(_ message: String) { status = message; NSSound.beep(); onChange?() }
-    func perform(_ action: WindowLayout) {
-        guard enabled else { return }
-        guard AXIsProcessTrusted() else {
-            // Permission is live state, not a sticky action error.
-            status = ""; NSSound.beep(); onChange?(); return
-        }
-        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+    static func captureFocusedWindow() -> AXUIElement? {
+        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let application = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(application, 0.5)
-        guard let raw = attribute(application, kAXFocusedWindowAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else { report("当前应用没有可调整的窗口。"); return }
-        let window = raw as! AXUIElement
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return (raw as! AXUIElement)
+    }
+    func perform(_ action: WindowLayout, on capturedWindow: AXUIElement? = nil) {
+        lastActionSucceeded = false
+        guard enabled else { report("窗口管理已关闭。"); return }
+        guard AXIsProcessTrusted() else {
+            status = "需要辅助功能权限。"; NSSound.beep(); onChange?(); return
+        }
+        guard let window = capturedWindow ?? Self.captureFocusedWindow() else { report("当前应用没有可调整的窗口。"); return }
         AXUIElementSetMessagingTimeout(window, 0.5)
         if action == .fullscreen {
             let fullscreen = attribute(window, "AXFullScreen") as? Bool ?? false
             guard AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, (!fullscreen) as CFBoolean) == .success else { report("此窗口不支持系统全屏。"); return }
+            lastActionSucceeded = true
             status = ""; onChange?(); return
         }
         guard attribute(window, "AXFullScreen") as? Bool != true else { report("请先退出系统全屏，再调整窗口布局。"); return }
@@ -167,6 +174,7 @@ final class WindowManager {
         if let actual = rect(window), abs(actual.width - target.width) > 3 || abs(actual.height - target.height) > 3 {
             status = "已调整；应用自身的最小窗口尺寸限制了分屏大小。"
         } else { status = "" }
+        lastActionSucceeded = true
         onChange?()
     }
 }

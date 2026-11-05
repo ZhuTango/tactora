@@ -34,6 +34,7 @@ struct OptionHoldState {
 
 @MainActor
 final class AppSwitcher: NSObject {
+    var conflicts: ((ClipboardShortcut) -> Bool)?
     private let defaults: UserDefaults
     private(set) var bindings: [String: SwitcherBinding] = [:]
     private var shortcuts: [String: GlobalClipboardShortcut] = [:]
@@ -220,7 +221,7 @@ final class AppSwitcher: NSObject {
         if let shortcut {
             guard shortcut.isValid else { throw error("请选择包含 ⌥、⌃ 或 ⌘ 的快捷键。") }
             let same: (ClipboardShortcut) -> Bool = { $0.keyCode == shortcut.keyCode && $0.modifiers == shortcut.modifiers }
-            guard !same(.saved()), !OCRManager.savedContains(shortcut, defaults: defaults), !TextToolsShortcut.savedContains(shortcut, defaults: defaults), !WindowManager.savedContains(shortcut, defaults: defaults), !bindings.contains(where: { $0.key != app.id && $0.value.shortcut.map(same) == true }) else {
+            guard conflicts?(shortcut) != true, !same(.saved()), !OCRManager.savedContains(shortcut, defaults: defaults), !TextToolsShortcut.savedContains(shortcut, defaults: defaults), !WindowManager.savedContains(shortcut, defaults: defaults), !bindings.contains(where: { $0.key != app.id && $0.value.shortcut.map(same) == true }) else {
                 throw error("此快捷键已用于剪贴板或其他应用，原配置已保留。")
             }
             guard !featureEnabled || install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }
@@ -273,9 +274,18 @@ final class AppSwitcher: NSObject {
                 return
             }
         }
-        let config = NSWorkspace.OpenConfiguration(); config.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, error in
-            if let error { Task { @MainActor in self?.failures[id] = error.localizedDescription; self?.onChange?() } }
+        Self.openApplication(at: url) { [weak self] error in
+            if let error { self?.failures[id] = error.localizedDescription; self?.onChange?() }
+        }
+    }
+    static func openApplication(at url: URL, completion: @escaping (Error?) -> Void) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            completion(NSError(domain: "AppSwitcher", code: 1, userInfo: [NSLocalizedDescriptionKey: "应用已移动或卸载，请稍后刷新列表。"])); return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            Task { @MainActor in completion(error) }
         }
     }
     func setFeatureEnabled(_ enabled: Bool) {
