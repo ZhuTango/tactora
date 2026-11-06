@@ -5,6 +5,9 @@ import AppKit
   let suite = "quick-actions.ui." + UUID().uuidString
   let defaults = UserDefaults(suiteName:suite)!
   defer { defaults.removePersistentDomain(forName:suite) }
+  let app = SwitcherApp(id:"test.wechat",name:"WeChat",path:"/Applications/WeChat.app")
+  precondition(QuickActionsWindow.appTitle(app,alias:"微信") == "微信（WeChat）")
+  precondition(QuickActionsWindow.appTitle(app,alias:" wechat ") == "WeChat")
   let panel = QuickActionsWindow(defaults:defaults)
   panel.commandProvider = { [QuickAction(id:"maximize",title:"最大化",keywords:"maximize",destination:.command("maximize"))] }
   panel.present()
@@ -70,12 +73,13 @@ import AppKit
   precondition(panel.results.count == 3, "Search still finds actions outside initial suggestions")
   panel.close()
   panel.commandProvider = { [
-   QuickAction(id:"app.finder",title:"Finder",detail:"打开应用",destination:.application("/System/Library/CoreServices/Finder.app")),
+   QuickAction(id:"app.finder",title:"访达（Finder）",detail:"打开应用",destination:.application("/System/Library/CoreServices/Finder.app")),
    QuickAction(id:"clipboard",title:"搜索剪贴板历史",symbol:"doc.on.clipboard",destination:.command("clipboard")),
    QuickAction(id:"ocr",title:"截图识字",symbol:"text.viewfinder",destination:.command("ocr")),
    QuickAction(id:"fans",title:"风扇温控设置",symbol:"fan",destination:.command("fans"))
   ] }
   panel.present()
+  panel.search.stringValue = "fd"; panel.rebuild()
   for appearance in [NSAppearance.Name.aqua,.darkAqua] {
    panel.window!.appearance = NSAppearance(named:appearance)
    let view = panel.window!.contentView!
@@ -85,6 +89,21 @@ import AppKit
    try bitmap.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:".build/quick-actions-icons-\(appearance.rawValue).png"))
   }
   panel.close()
+  let aliasPanel = QuickActionsWindow(defaults:defaults)
+  var alias = "微信"
+  aliasPanel.configuredApps = { [SwitcherApp(id:"alias.fixture",name:"WeChat",path:"/System/Library/CoreServices/Finder.app")] }
+  aliasPanel.appAlias = { _ in alias }
+  aliasPanel.present()
+  aliasPanel.search.stringValue = "weixin"; aliasPanel.rebuild()
+  precondition(aliasPanel.results.first?.title == "微信（WeChat）")
+  aliasPanel.dismiss(restoreFocus:false)
+  alias = "聊天"
+  aliasPanel.present()
+  aliasPanel.search.stringValue = "liaotian"; aliasPanel.rebuild()
+  precondition(aliasPanel.results.first?.title == "聊天（WeChat）", "Alias refresh must bypass inventory cache")
+  aliasPanel.search.stringValue = "weixin"; aliasPanel.rebuild()
+  precondition(aliasPanel.results.isEmpty, "Old alias is removed from search")
+  aliasPanel.close()
   let shortcut = QuickActionsShortcut(defaults:defaults)
   shortcut.conflicts = { _ in true }
   precondition(!shortcut.setShortcut(QuickActionsShortcut.defaultShortcut))

@@ -87,6 +87,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     private let history: QuickActionHistory
     private var commands: [QuickAction] = []
     private var appActions: [QuickAction] = []
+    private var appInventory: [SwitcherApp] = []
     private(set) var results: [QuickAction] = []
     private var monitors: [Any] = []
     private var generation = 0
@@ -98,6 +99,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     var onExecute: ((QuickAction, QuickActionContext, @escaping (Result<Void, Error>) -> Void) -> Void)?
     var onSettings: (() -> Void)?
     var configuredApps: (() -> [SwitcherApp])?
+    var appAlias: ((SwitcherApp) -> String?)?
 
     init(defaults: UserDefaults = .standard) {
         history = QuickActionHistory(defaults: defaults)
@@ -200,6 +202,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         search.isEnabled = true
         search.stringValue = ""
         commands = commandProvider?() ?? []
+        rebuildAppActions()
         rebuild()
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         if let area = screen?.visibleFrame {
@@ -361,6 +364,11 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let title = NSTextField(labelWithString: action.title)
         title.font = .systemFont(ofSize: 13, weight: .regular)
         title.lineBreakMode = .byTruncatingTail
+        let highlighted = NSMutableAttributedString(string: action.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+        for range in action.highlightRanges(search.stringValue) {
+            highlighted.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.22)], range: range)
+        }
+        title.attributedStringValue = highlighted
         let detail = NSTextField(labelWithString: action.detail)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
@@ -375,20 +383,28 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         content.setAccessibilityLabel(action.title + " " + action.detail)
         return content
     }
+    static func appTitle(_ app: SwitcherApp, alias: String?) -> String {
+        let alias = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !alias.isEmpty, alias.caseInsensitiveCompare(app.displayName) != .orderedSame else { return app.displayName }
+        return "\(alias)（\(app.displayName)）"
+    }
+    private func rebuildAppActions() {
+        let discovered = Dictionary(appInventory.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let configured = (configuredApps?() ?? []).compactMap { app in
+            discovered[app.id] ?? (FileManager.default.fileExists(atPath: app.path) ? app : nil)
+        }
+        var seen = Set<String>()
+        appActions = (configured + appInventory).filter { seen.insert($0.id).inserted }.map { app in
+            QuickAction(id: "app." + app.id, title: Self.appTitle(app, alias: appAlias?(app)), detail: AppLanguage.english ? "Open application" : "打开应用", keywords: app.name, symbol: "app", destination: .application(app.path))
+        }
+    }
     private func refreshApps() {
         guard scan == nil, Date().timeIntervalSince(lastScan) > 60 else { return }
-        let configured = configuredApps?() ?? []
         scan = Task { [weak self] in
             let apps = await Task.detached(priority: .utility) { AppSwitcher.discover() }.value
             guard let self, !Task.isCancelled else { return }
-            let discovered = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let currentConfigured = configured.compactMap { app in
-                discovered[app.id] ?? (FileManager.default.fileExists(atPath: app.path) ? app : nil)
-            }
-            var seen = Set<String>()
-            self.appActions = (currentConfigured + apps).filter { seen.insert($0.id).inserted }.map {
-                QuickAction(id: "app." + $0.id, title: $0.displayName, detail: AppLanguage.english ? "Open application" : "打开应用", keywords: $0.name, symbol: "app", destination: .application($0.path))
-            }
+            self.appInventory = apps
+            self.rebuildAppActions()
             self.lastScan = Date()
             self.scan = nil
             if self.window?.isVisible == true, !self.isComposing, !self.executing { self.rebuild(preservingSelection: true) }

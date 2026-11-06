@@ -4,6 +4,17 @@ import Foundation
   let name = "quick-actions.test." + UUID().uuidString
   let defaults = UserDefaults(suiteName: name)!
   defer { defaults.removePersistentDomain(forName: name) }
+  let aliasAction = QuickAction(id:"wechat",title:"微信（WeChat）",destination:.application("/Applications/WeChat.app"))
+  for query in ["微信", "wechat", "weixin", "wx", "wei xin"] {
+   precondition(aliasAction.matchRank(query) != nil, "Alias and pinyin search: \(query)")
+   precondition(!aliasAction.highlightRanges(query).isEmpty, "Highlight: \(query)")
+  }
+  precondition(aliasAction.highlightRanges("wx") == [NSRange(location:0,length:1), NSRange(location:1,length:1)])
+  precondition(aliasAction.highlightRanges("wechat").count == 6)
+  precondition(aliasAction.highlightRanges("").isEmpty)
+  let unicode = QuickAction(id:"unicode",title:"😀微信 Café",destination:.command("test"))
+  precondition(unicode.highlightRanges("wx").first?.location == 2)
+  precondition(unicode.highlightRanges("cafe").count == 4)
   let history = QuickActionHistory(defaults: defaults)
   let actions = [
    QuickAction(id:"window",title:"最大化",keywords:"maximize 放大",destination:.command("window")),

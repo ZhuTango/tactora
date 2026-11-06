@@ -659,6 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if quickWindow == nil {
             let panel = QuickActionsWindow()
             panel.commandProvider = { [weak self] in self?.quickActions() ?? [] }
+            panel.appAlias = { [weak self] app in self?.appSwitcher.bindings[app.id]?.alias }
             panel.configuredApps = { [weak self] in self?.appSwitcher.configuredApps ?? [] }
             panel.onSettings = { [weak self] in self?.showClipboardSettings(); self?.clipboardSettings?.selectSection("quickActions") }
             panel.onExecute = { [weak self] action, context, completion in
