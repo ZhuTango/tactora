@@ -2,9 +2,9 @@
 
 项目仓库：[ZhuTango/tactora](https://github.com/ZhuTango/tactora)。面向 macOS 的轻量工具合集，后续工具统一接入菜单栏与设置。
 
-原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史、窗口与应用切换、截图识字、文本处理和统一设置。当前开发版本 **1.26.3（build 120，别名搜索与高亮）**，支持 macOS 13 及以上。
+原生 Swift / AppKit macOS 菜单栏工具，包含多屏桌面背景、剪贴板历史、窗口与应用切换、截图识字、文本处理和统一设置。当前版本 **1.27.0（build 121）**，支持 macOS 13 及以上。
 
-正式安装包为 Apple Silicon（arm64），使用固定本地开发证书签名，**不是 Developer ID 签名且未经过 Apple 公证**。下载与已知问题见 [v1.25.0 发布说明](RELEASE-1.25.0.md)。
+正式安装包为 Apple Silicon（arm64），使用固定本地开发证书签名，**不是 Developer ID 签名且未经过 Apple 公证**。下载与已知问题见 [v1.27.0 发布说明](RELEASE-1.27.0.md)。
 
 无第三方运行时依赖，无常驻网页引擎；应用不联网，数据仅保存在本机。
 
