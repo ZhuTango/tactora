@@ -64,7 +64,7 @@ import AppKit
             let toolbar = views.first { $0.identifier?.rawValue == "screenshot.toolbar" }!
             let style = views.first { $0.identifier?.rawValue == "screenshot.style" }!
             let dimensions = views.first { $0.identifier?.rawValue == "screenshot.dimensions" }!
-            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 384)
+            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 664)
             precondition(style.isHidden && dimensions.superview === root)
             let arrow = views.first { $0.identifier?.rawValue == "screenshot.tool.0" } as! NSButton
             arrow.performClick(nil)
@@ -77,7 +77,7 @@ import AppKit
                 precondition(dimensions.isHidden || !dimensions.frame.intersects(toolbar.frame), "Small edge selections must not overlap the dimension badge")
             }
             compact.close()
-            print("PASS: compact one-row toolbar, contextual styles and detached selection dimensions")
+            print("PASS: expanded one-row toolbar, contextual styles and detached selection dimensions")
         }
         if CommandLine.arguments.contains("--overlay"), let screen = NSScreen.main {
             preview.close()

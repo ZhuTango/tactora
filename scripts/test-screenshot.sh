@@ -11,3 +11,6 @@ xcrun swiftc -parse-as-library Sources/WallpaperCore/*.swift Sources/ToolCore/*.
 
 xcrun swiftc -parse-as-library Sources/ToolCore/ToolFeatures.swift Sources/WallpaperApp/AppLanguage.swift Sources/WallpaperApp/ScreenshotSelection.swift Sources/WallpaperApp/ScreenshotWindow.swift scripts/ScreenshotCursorChecks.swift -o .build/screenshot-cursor-checks
 .build/screenshot-cursor-checks
+
+xcrun swiftc -parse-as-library Sources/ToolCore/ToolFeatures.swift Sources/WallpaperApp/AppLanguage.swift Sources/WallpaperApp/ScreenshotSelection.swift Sources/WallpaperApp/ScreenshotWindow.swift scripts/ScreenshotAnnotationChecks.swift -o .build/screenshot-annotation-checks
+.build/screenshot-annotation-checks

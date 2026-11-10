@@ -1,14 +1,21 @@
 import AppKit
 import UniformTypeIdentifiers
+import CoreImage
 
 struct ScreenshotAnnotation {
-    enum Tool: Int, CaseIterable { case arrow, rectangle, text, cover }
+    enum Tool: Int, CaseIterable { case arrow, rectangle, text, cover, ellipse, line, pen, highlight, number }
+    enum CoverEffect { case solid, pixelate }
     let tool: Tool
     let start: NSPoint
-    let end: NSPoint
+    var end: NSPoint
     var text = ""
     var color: NSColor = .systemRed
     var thickness: CGFloat = 1
+    var strokeWidth: CGFloat = 3
+    var fontSize: CGFloat = 18
+    var points: [NSPoint] = []
+    var coverEffect: CoverEffect = .solid
+    var pixelSize: CGFloat = 16
     var rect: NSRect {
         NSRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
     }
@@ -18,11 +25,18 @@ struct ScreenshotAnnotation {
 final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     let image: NSImage
     private(set) var annotations: [ScreenshotAnnotation] = []
-    private var redoItems: [ScreenshotAnnotation] = []
+    private var undoStates: [[ScreenshotAnnotation]] = []
+    private var redoStates: [[ScreenshotAnnotation]] = []
+    private var editingTextIndex: Int?
     private var draft: ScreenshotAnnotation?
     var editing = true
     var color: NSColor = .systemRed
     var thickness: CGFloat = 1
+    var contentScale: CGFloat = 1
+    var textSize: CGFloat = 18
+    var coverEffect: ScreenshotAnnotation.CoverEffect = .pixelate
+    private var pixelatedImages: [Int: NSImage] = [:]
+    private let imageContext = CIContext(options: [.useSoftwareRenderer: false])
     private var textEditor: NSTextField?
     private var textOrigin = NSPoint.zero
     var selectionEnabled = false
@@ -41,6 +55,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             self.image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
         } else { self.image = image }
         super.init(frame: .zero)
+        contentScale = self.image.size.width / max(1, image.size.width)
         setAccessibilityLabel(AppLanguage.english ? "Screenshot canvas" : "截图画布")
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
@@ -98,18 +113,45 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         image.draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .copy, fraction: 1)
         if selectionEnabled, let selection { NSBezierPath(rect: selection).addClip() }
         let items = annotations + (includingDraft ? draft.map { [$0] } ?? [] : [])
-        for item in items {
-            let lineWidth = max(3, min(image.size.width, image.size.height) / 220) * item.thickness
+        for (index, item) in items.enumerated() {
+            if includingDraft && index == editingTextIndex { continue }
+            let lineWidth = item.strokeWidth * item.thickness
             item.color.setStroke()
             let path = NSBezierPath()
             path.lineWidth = lineWidth
             path.lineCapStyle = .round
             switch item.tool {
             case .cover:
-                // Solid coverage exports opaque pixels instead of recoverable visual blur.
-                NSColor.black.setFill(); item.rect.fill()
+                if item.coverEffect == .pixelate, let mosaic = pixelatedImage(blockSize: item.pixelSize) {
+                    mosaic.draw(in: item.rect, from: item.rect, operation: .copy, fraction: 1)
+                } else {
+                    NSColor.black.setFill()
+                    item.rect.fill()
+                }
             case .rectangle:
                 path.appendRect(item.rect); path.stroke()
+            case .ellipse:
+                path.appendOval(in: item.rect)
+                path.stroke()
+            case .line:
+                path.move(to: item.start)
+                path.line(to: item.end)
+                path.stroke()
+            case .pen:
+                path.move(to: item.start)
+                for point in item.points { path.line(to: point) }
+                path.stroke()
+            case .highlight:
+                item.color.withAlphaComponent(0.28).setFill()
+                item.rect.fill()
+            case .number:
+                let diameter = item.fontSize * 1.65
+                let circle = NSRect(x: item.start.x - diameter / 2, y: item.start.y - diameter / 2, width: diameter, height: diameter)
+                item.color.setFill()
+                NSBezierPath(ovalIn: circle).fill()
+                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: item.fontSize, weight: .semibold), .foregroundColor: NSColor.white]
+                let size = (item.text as NSString).size(withAttributes: attributes)
+                (item.text as NSString).draw(at: NSPoint(x: circle.midX - size.width / 2, y: circle.midY - size.height / 2), withAttributes: attributes)
             case .arrow:
                 path.move(to: item.start); path.line(to: item.end)
                 let angle = atan2(item.end.y - item.start.y, item.end.x - item.start.x)
@@ -120,10 +162,26 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                 }
                 path.stroke()
             case .text:
-                let font = NSFont.systemFont(ofSize: max(18, lineWidth * 6), weight: .semibold)
+                let font = NSFont.systemFont(ofSize: item.fontSize, weight: .medium)
                 (item.text as NSString).draw(at: item.start, withAttributes: [.font: font, .foregroundColor: item.color])
             }
         }
+    }
+    private func pixelatedImage(blockSize: CGFloat) -> NSImage? {
+        let size = max(4, Int(blockSize.rounded()))
+        if let cached = pixelatedImages[size] { return cached }
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let source = CIImage(cgImage: cg)
+        let output = source.clampedToExtent().applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: size]).cropped(to: source.extent)
+        guard let result = imageContext.createCGImage(output, from: source.extent) else { return nil }
+        let mosaic = NSImage(cgImage: result, size: image.size)
+        pixelatedImages[size] = mosaic
+        return mosaic
+    }
+    private func annotation(at point: NSPoint) -> ScreenshotAnnotation {
+        ScreenshotAnnotation(tool: tool, start: point, end: point, color: color, thickness: thickness,
+                             strokeWidth: 3 * contentScale, fontSize: textSize * contentScale,
+                             coverEffect: coverEffect, pixelSize: 12 * contentScale * thickness)
     }
     func renderedImage() -> NSImage? {
         if selectionEnabled && selection == nil { return nil }
@@ -170,16 +228,33 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                 return
             }
         }
-        if tool == .text { beginText(at: point); return }
-        draft = ScreenshotAnnotation(tool: tool, start: point, end: point, color: color, thickness: thickness)
+        if tool == .text {
+            if let index = annotations.lastIndex(where: { item in
+                guard item.tool == .text else { return false }
+                let size = (item.text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: item.fontSize, weight: .medium)])
+                return NSRect(origin: item.start, size: size).insetBy(dx: -4, dy: -4).contains(point)
+            }) {
+                beginEditingText(at: index)
+            } else { beginText(at: point) }
+            return
+        }
+        var item = annotation(at: point)
+        if tool == .number {
+            item.text = String(annotations.filter { $0.tool == .number }.count + 1)
+            append(item)
+            return
+        }
+        draft = item
     }
     override func mouseDragged(with event: NSEvent) {
         if let drag = selectionDrag, let point = point(for: event, clamp: true) {
             selection = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: drag.original, bounds: NSRect(origin: .zero, size: image.size))
             return
         }
-        guard let draft, let point = point(for: event, clamp: true) else { return }
-        self.draft = ScreenshotAnnotation(tool: draft.tool, start: draft.start, end: point, color: draft.color, thickness: draft.thickness)
+        guard var draft, let point = point(for: event, clamp: true) else { return }
+        draft.end = point
+        if draft.tool == .pen { draft.points.append(point) }
+        self.draft = draft
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
@@ -189,10 +264,12 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             if let selection, selection.width < 2 || selection.height < 2 { self.selection = nil }
             return
         }
-        guard let draft else { return }
+        guard var draft else { return }
         self.draft = nil
-        if let point = point(for: event, clamp: true), hypot(point.x - draft.start.x, point.y - draft.start.y) >= 2 {
-            append(ScreenshotAnnotation(tool: draft.tool, start: draft.start, end: point, color: draft.color, thickness: draft.thickness))
+        if let point = point(for: event, clamp: true), hypot(point.x - draft.start.x, point.y - draft.start.y) >= 2 || !draft.points.isEmpty {
+            draft.end = point
+            if draft.tool == .pen { draft.points.append(point) }
+            append(draft)
         }
         needsDisplay = true
     }
@@ -217,12 +294,13 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         textOrigin = point
         let field = NSTextField()
         field.placeholderString = AppLanguage.english ? "Type text" : "输入文字"
-        let lineWidth = max(3, min(image.size.width, image.size.height) / 220) * thickness
-        field.font = .systemFont(ofSize: max(18, lineWidth * 6) * imageRect.width / image.size.width, weight: .semibold)
+        field.font = .systemFont(ofSize: max(1, textSize * contentScale * imageRect.width / image.size.width), weight: .medium)
         field.textColor = color
-        field.backgroundColor = .textBackgroundColor
-        field.isBezeled = true
-        field.focusRingType = .exterior
+        field.drawsBackground = false
+        field.isBezeled = false
+        field.isBordered = false
+        field.focusRingType = .none
+        field.lineBreakMode = .byClipping
         field.delegate = self
         field.target = self
         field.action = #selector(finishText)
@@ -232,50 +310,93 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         layoutTextEditor()
         window?.makeFirstResponder(field)
     }
+    func beginEditingText(at index: Int) {
+        commitText()
+        guard annotations.indices.contains(index), annotations[index].tool == .text else { return }
+        let item = annotations[index]
+        color = item.color
+        textSize = item.fontSize / contentScale
+        let font = NSFont.systemFont(ofSize: item.fontSize, weight: .medium)
+        beginText(at: NSPoint(x: item.start.x, y: item.start.y + font.ascender - font.descender + 4 * contentScale))
+        editingTextIndex = index
+        textEditor?.stringValue = item.text
+        layoutTextEditor()
+        needsDisplay = true
+    }
     override func layout() {
         super.layout()
         layoutTextEditor()
     }
     private func layoutTextEditor() {
         guard let field = textEditor else { return }
-        let rect = imageRect
-        let scale = rect.width / image.size.width
-        let width = min(240, rect.width)
-        let x = min(rect.maxX - width, rect.minX + textOrigin.x * scale)
-        let y = min(rect.maxY - 28, rect.minY + textOrigin.y * scale)
-        field.frame = NSRect(x: x, y: max(rect.minY, y), width: width, height: 28)
+        let rect = selectionViewRect ?? imageRect
+        let scale = imageRect.width / image.size.width
+        guard scale > 0 else { return }
+        let measured = ((field.stringValue.isEmpty ? "输入文字" : field.stringValue) as NSString).size(withAttributes: [.font: field.font!])
+        let width = min(rect.width, max(90, measured.width + 12))
+        let height = min(rect.height, ceil(field.font!.ascender - field.font!.descender + field.font!.leading) + 4)
+        let x = min(rect.maxX - width, max(rect.minX, imageRect.minX + textOrigin.x * scale))
+        let y = min(rect.maxY - height, max(rect.minY, imageRect.minY + textOrigin.y * scale - height))
+        field.frame = NSRect(x: x, y: y, width: width, height: height)
     }
+    func controlTextDidChange(_ notification: Notification) { layoutTextEditor() }
     @objc private func finishText() { commitText() }
     func commitText() {
         guard let field = textEditor else { return }
         let value = field.stringValue
+        let scale = max(0.001, imageRect.width / image.size.width)
+        let position = NSPoint(x: (field.frame.minX + 2 - imageRect.minX) / scale,
+                               y: (field.frame.minY + 2 - imageRect.minY) / scale)
         textEditor = nil
         field.removeFromSuperview()
         window?.makeFirstResponder(self)
-        if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            append(ScreenshotAnnotation(tool: .text, start: textOrigin, end: textOrigin, text: value, color: color, thickness: thickness))
+        if let index = editingTextIndex {
+            editingTextIndex = nil
+            if value != annotations[index].text {
+                undoStates.append(annotations)
+                redoStates.removeAll()
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    annotations.remove(at: index)
+                } else { annotations[index].text = value }
+                onChange?()
+            }
+            needsDisplay = true
+        } else if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            append(ScreenshotAnnotation(tool: .text, start: position, end: position, text: value, color: color, fontSize: textSize * contentScale))
         }
     }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
         textEditor?.removeFromSuperview()
         textEditor = nil
+        editingTextIndex = nil
+        needsDisplay = true
         window?.makeFirstResponder(self)
         return true
     }
     func append(_ annotation: ScreenshotAnnotation) {
-        annotations.append(annotation); redoItems.removeAll(); needsDisplay = true; onChange?()
+        undoStates.append(annotations)
+        annotations.append(annotation)
+        redoStates.removeAll()
+        needsDisplay = true
+        onChange?()
     }
     func undoAnnotation() {
-        guard let item = annotations.popLast() else { return }
-        redoItems.append(item); needsDisplay = true; onChange?()
+        guard let state = undoStates.popLast() else { return }
+        redoStates.append(annotations)
+        annotations = state
+        needsDisplay = true
+        onChange?()
     }
     func redoAnnotation() {
-        guard let item = redoItems.popLast() else { return }
-        annotations.append(item); needsDisplay = true; onChange?()
+        guard let state = redoStates.popLast() else { return }
+        undoStates.append(annotations)
+        annotations = state
+        needsDisplay = true
+        onChange?()
     }
-    var canUndo: Bool { !annotations.isEmpty }
-    var canRedo: Bool { !redoItems.isEmpty }
+    var canUndo: Bool { !undoStates.isEmpty }
+    var canRedo: Bool { !redoStates.isEmpty }
 }
 
 @MainActor
@@ -302,23 +423,30 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private let feedback = NSTextField(labelWithString: "")
     private var undoButton: NSButton!
     private var toolButtons: [NSButton] = []
-    private let colorPicker = NSPopUpButton()
+    private var colorButtons: [NSButton] = []
+    private var selectedColor = 0
+    private let palette = NSStackView()
+    private let textSizePicker = NSPopUpButton()
+    private let coverPicker = NSPopUpButton()
+    private let options = NSStackView()
+    private var redoButton: NSButton!
     private let widthPicker = NSPopUpButton()
     private var floatingControls: NSView?
     private var floatingStyle: NSView?
     private var selectionButton: NSButton?
     private var selectionHint: NSTextField?
-    private let colors: [NSColor] = [.systemRed, .systemOrange, .systemBlue, .systemGreen, .white, .black]
+    private let colors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemBlue, .systemGreen, .white, .black]
 
     init(image: NSImage, captureScreen: NSScreen? = nil, selectWhole: Bool = false) {
         canvas = ScreenshotCanvas(image: image)
         canvas.selectionEnabled = captureScreen != nil
+        if let captureScreen { canvas.contentScale = captureScreen.backingScaleFactor }
         if selectWhole { canvas.selection = NSRect(origin: .zero, size: canvas.image.size) }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let available = NSSize(width: min(1100, area.width - 48), height: min(800, area.height - 80))
         let scale = min(1, min((available.width - 24) / image.size.width, (available.height - 100) / image.size.height))
-        let size = NSSize(width: max(600, image.size.width * scale + 24), height: max(220, image.size.height * scale + 100))
+        let size = NSSize(width: max(700, image.size.width * scale + 24), height: max(220, image.size.height * scale + 100))
         let panel = ScreenshotPanel(contentRect: captureScreen?.frame ?? NSRect(origin: .zero, size: size), styleMask: captureScreen == nil ? [.titled, .closable, .resizable, .utilityWindow] : [.borderless], backing: .buffered, defer: false)
         panel.title = AppLanguage.english ? "Screenshot" : "截图"
         panel.titleVisibility = .hidden
@@ -327,7 +455,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.level = captureScreen == nil ? .floating : NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        panel.minSize = NSSize(width: 600, height: 220)
+        panel.minSize = NSSize(width: 700, height: 220)
         super.init(window: panel)
         panel.delegate = self
         panel.onKey = { [weak self] event in self?.handleKey(event) ?? false }
@@ -343,46 +471,75 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             selectionButton = pointer
             toolbar.addArrangedSubview(pointer)
         }
-        let definitions = [
-            ("arrow.up.right", AppLanguage.english ? "Arrow · A" : "箭头 · A"),
-            ("rectangle", AppLanguage.english ? "Rectangle · R" : "矩形 · R"),
-            ("textformat", AppLanguage.english ? "Text · T" : "文字 · T"),
-            ("rectangle.fill", AppLanguage.english ? "Cover · X" : "遮挡 · X")
+        let definitions: [(ScreenshotAnnotation.Tool, String, String, String)] = [
+            (.rectangle, "rectangle", "矩形 · R", "Rectangle · R"),
+            (.ellipse, "circle", "圆形 · E", "Ellipse · E"),
+            (.line, "line.diagonal", "直线 · L", "Line · L"),
+            (.arrow, "arrow.up.right", "箭头 · A", "Arrow · A"),
+            (.pen, "pencil.tip", "画笔 · B", "Pen · B"),
+            (.highlight, "highlighter", "高亮 · H", "Highlight · H"),
+            (.text, "textformat", "文字 · T", "Text · T"),
+            (.number, "1.circle", "序号 · N", "Number · N"),
+            (.cover, "square.grid.3x3.fill", "马赛克 / 遮挡 · X", "Mosaic / Cover · X")
         ]
-        for (index, definition) in definitions.enumerated() {
-            let button = iconButton(definition.0, label: definition.1, action: #selector(selectTool(_:)))
-            button.tag = index
-            button.identifier = NSUserInterfaceItemIdentifier("screenshot.tool.\(index)")
+        for (tool, symbol, chinese, english) in definitions {
+            let button = iconButton(symbol, label: AppLanguage.english ? english : chinese, action: #selector(selectTool(_:)))
+            button.tag = tool.rawValue
+            button.identifier = NSUserInterfaceItemIdentifier("screenshot.tool.\(tool.rawValue)")
             button.setButtonType(.toggle)
+            button.state = captureScreen == nil && tool == .arrow ? .on : .off
             toolbar.addArrangedSubview(button)
             toolButtons.append(button)
         }
-        toolButtons[0].state = captureScreen == nil ? .on : .off
         toolbar.addArrangedSubview(separator())
         undoButton = iconButton("arrow.uturn.backward", label: AppLanguage.english ? "Undo · ⌘Z" : "撤销 · ⌘Z", action: #selector(undoMark))
         toolbar.addArrangedSubview(undoButton)
+        redoButton = iconButton("arrow.uturn.forward", label: AppLanguage.english ? "Redo · ⇧⌘Z" : "重做 · ⇧⌘Z", action: #selector(redoMark))
+        toolbar.addArrangedSubview(redoButton)
         toolbar.addArrangedSubview(separator())
         toolbar.addArrangedSubview(iconButton("pin", label: AppLanguage.english ? "Pin · P" : "贴图 · P", action: #selector(pinImage)))
-        toolbar.addArrangedSubview(iconButton("ellipsis", label: AppLanguage.english ? "More actions" : "更多操作", action: #selector(showMore(_:))))
+        toolbar.addArrangedSubview(iconButton("text.viewfinder", label: AppLanguage.english ? "Recognize text · O" : "识字 · O", action: #selector(recognize)))
+        toolbar.addArrangedSubview(iconButton("square.and.arrow.down", label: AppLanguage.english ? "Save · ⌘S" : "保存 · ⌘S", action: #selector(saveImage)))
+        toolbar.addArrangedSubview(separator())
         toolbar.addArrangedSubview(iconButton("xmark", label: AppLanguage.english ? "Cancel · Esc" : "取消 · Esc", action: #selector(cancelCapture)))
         let copy = iconButton("checkmark", label: AppLanguage.english ? "Copy and close · Enter" : "复制并关闭 · Enter", action: #selector(copyImage))
         copy.bezelStyle = .rounded
         copy.contentTintColor = .controlAccentColor
         copy.toolTip = AppLanguage.english ? "Copy and close · Enter / ⌘C" : "复制并关闭 · Enter / ⌘C"
         toolbar.addArrangedSubview(copy)
-        colorPicker.addItems(withTitles: AppLanguage.english ? ["Red", "Orange", "Blue", "Green", "White", "Black"] : ["红色", "橙色", "蓝色", "绿色", "白色", "黑色"])
-        colorPicker.target = self
-        colorPicker.action = #selector(changeStyle)
-        colorPicker.setAccessibilityLabel(AppLanguage.english ? "Annotation color" : "标注颜色")
+        let names = AppLanguage.english ? ["Red", "Orange", "Yellow", "Blue", "Green", "White", "Black"] : ["红色", "橙色", "黄色", "蓝色", "绿色", "白色", "黑色"]
+        palette.spacing = 4
+        for (index, color) in colors.enumerated() {
+            let button = NSButton(image: NSImage(systemSymbolName: "circle.fill", accessibilityDescription: names[index])!, target: self, action: #selector(changeColor(_:)))
+            button.tag = index
+            button.isBordered = false
+            button.contentTintColor = color
+            button.toolTip = names[index]
+            button.setAccessibilityLabel(names[index])
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 11
+            button.widthAnchor.constraint(equalToConstant: 22).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            palette.addArrangedSubview(button)
+            colorButtons.append(button)
+        }
         widthPicker.addItems(withTitles: AppLanguage.english ? ["Thin", "Medium", "Thick"] : ["细", "中", "粗"])
         widthPicker.selectItem(at: 1)
-        widthPicker.target = self
-        widthPicker.action = #selector(changeStyle)
-        widthPicker.setAccessibilityLabel(AppLanguage.english ? "Stroke width" : "线条粗细")
-        colorPicker.controlSize = .small
-        widthPicker.controlSize = .small
-        let options = NSStackView(views: [colorPicker, widthPicker])
-        options.spacing = 8
+        textSizePicker.addItems(withTitles: ["14 pt", "18 pt", "24 pt", "32 pt"])
+        textSizePicker.selectItem(at: 1)
+        coverPicker.addItems(withTitles: AppLanguage.english ? ["Mosaic", "Solid cover"] : ["马赛克", "纯色遮挡"])
+        for picker in [widthPicker, textSizePicker, coverPicker] {
+            picker.controlSize = .small
+            picker.target = self
+            picker.action = #selector(changeStyle)
+            options.addArrangedSubview(picker)
+        }
+        widthPicker.setAccessibilityLabel(AppLanguage.english ? "Stroke / mosaic size" : "线宽 / 马赛克强度")
+        textSizePicker.setAccessibilityLabel(AppLanguage.english ? "Font size" : "字号")
+        coverPicker.setAccessibilityLabel(AppLanguage.english ? "Cover style" : "遮挡样式")
+        options.insertArrangedSubview(palette, at: 0)
+        options.spacing = 10
+        options.detachesHiddenViews = true
         feedback.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         feedback.textColor = .secondaryLabelColor
         feedback.lineBreakMode = .byTruncatingTail
@@ -390,7 +547,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let divider = NSBox()
         divider.boxType = .separator
         if captureScreen != nil {
-            let card = floatingCard(size: NSSize(width: 384, height: 44))
+            let card = floatingCard(size: NSSize(width: 664, height: 44))
             card.identifier = NSUserInterfaceItemIdentifier("screenshot.toolbar")
             floatingControls = card
             let style = floatingCard(size: NSSize(width: 188, height: 36))
@@ -458,6 +615,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         canvas.onChange = { [weak self] in self?.updateHistory() }
         updateHistory()
         updateToolAppearance()
+        refreshStyleControls()
         if let captureScreen {
             panel.setFrame(captureScreen.frame, display: true)
             root.layoutSubtreeIfNeeded()
@@ -501,17 +659,6 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             button.layer?.backgroundColor = button.state == .on ? NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
         }
     }
-    @objc private func showMore(_ sender: NSButton) {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let save = NSMenuItem(title: AppLanguage.english ? "Save…" : "保存…", action: #selector(saveImage), keyEquivalent: "s")
-        let ocr = NSMenuItem(title: AppLanguage.english ? "Recognize text" : "识别文字", action: #selector(recognize), keyEquivalent: "")
-        let redo = NSMenuItem(title: AppLanguage.english ? "Redo" : "重做", action: #selector(redoMark), keyEquivalent: "z")
-        redo.keyEquivalentModifierMask = [.command, .shift]
-        redo.isEnabled = canvas.canRedo
-        for item in [save, ocr, redo] { item.target = self; menu.addItem(item) }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY), in: sender)
-    }
     private func separator() -> NSView {
         let line = NSBox()
         line.boxType = .separator
@@ -532,8 +679,11 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         card.isHidden = false
         feedback.isHidden = false
         selectionHint?.isHidden = true
-        let showStyle = !canvas.selectionMode && canvas.tool != .cover
+        let showStyle = !canvas.selectionMode
         floatingStyle?.isHidden = !showStyle
+        if let style = floatingStyle {
+            style.setFrameSize(NSSize(width: max(160, options.fittingSize.width + 24), height: 36))
+        }
         let extraHeight: CGFloat = showStyle ? 42 : 0
         let x = min(root.bounds.maxX - card.frame.width - 10, max(10, rect.maxX - card.frame.width))
         let below = rect.minY - card.frame.height - 8
@@ -572,12 +722,35 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     @objc private func cancelCapture() { close() }
     private func updateHistory() {
         undoButton.isEnabled = canvas.canUndo
+        redoButton.isEnabled = canvas.canRedo
+    }
+    @objc private func changeColor(_ sender: NSButton) {
+        canvas.commitText()
+        selectedColor = sender.tag
+        canvas.color = colors[selectedColor]
+        refreshStyleControls()
+        window?.makeFirstResponder(canvas)
     }
     @objc private func changeStyle() {
         canvas.commitText()
-        canvas.color = colors[colorPicker.indexOfSelectedItem]
         canvas.thickness = [CGFloat(0.6), 1, 1.8][widthPicker.indexOfSelectedItem]
+        canvas.textSize = [CGFloat(14), 18, 24, 32][textSizePicker.indexOfSelectedItem]
+        canvas.coverEffect = coverPicker.indexOfSelectedItem == 0 ? .pixelate : .solid
+        refreshStyleControls()
+        positionTools()
         window?.makeFirstResponder(canvas)
+    }
+    private func refreshStyleControls() {
+        let isText = canvas.tool == .text || canvas.tool == .number
+        let isCover = canvas.tool == .cover
+        palette.isHidden = isCover
+        textSizePicker.isHidden = !isText
+        coverPicker.isHidden = !isCover
+        widthPicker.isHidden = isText || (isCover && canvas.coverEffect == .solid)
+        for (index, button) in colorButtons.enumerated() {
+            button.layer?.borderWidth = index == selectedColor ? 1.5 : 0
+            button.layer?.borderColor = NSColor.labelColor.cgColor
+        }
     }
     @objc private func selectTool(_ sender: NSButton) {
         guard let tool = ScreenshotAnnotation.Tool(rawValue: sender.tag) else { return }
@@ -586,8 +759,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         canvas.selectionMode = false
         selectionButton?.state = .off
         toolButtons.forEach { $0.state = $0 === sender ? .on : .off }
-        colorPicker.isEnabled = tool != .cover
-        widthPicker.isEnabled = tool != .cover
+        refreshStyleControls()
         updateToolAppearance()
         positionTools()
         window?.invalidateCursorRects(for: canvas)
@@ -596,6 +768,9 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     func editImage() {
         canvas.editing = true
         window?.makeKeyAndOrderFront(nil)
+    }
+    private func activateTool(_ tool: ScreenshotAnnotation.Tool) {
+        if let button = toolButtons.first(where: { $0.tag == tool.rawValue }) { selectTool(button) }
     }
     private func handleKey(_ event: NSEvent) -> Bool {
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
@@ -615,10 +790,15 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         case "v": selectRegion()
         case "f":
             if canvas.selectionEnabled { canvas.selection = NSRect(origin: .zero, size: canvas.image.size) }
-        case "a": selectTool(toolButtons[0])
-        case "r": selectTool(toolButtons[1])
-        case "t": selectTool(toolButtons[2])
-        case "x": selectTool(toolButtons[3])
+        case "a": activateTool(.arrow)
+        case "r": activateTool(.rectangle)
+        case "t": activateTool(.text)
+        case "x": activateTool(.cover)
+        case "e": activateTool(.ellipse)
+        case "l": activateTool(.line)
+        case "b": activateTool(.pen)
+        case "h": activateTool(.highlight)
+        case "n": activateTool(.number)
         case "p": pinImage()
         case "o": recognize()
         default: return false
