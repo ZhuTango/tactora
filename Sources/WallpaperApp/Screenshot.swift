@@ -115,12 +115,12 @@ final class ScreenshotManager {
             let capture = Process()
             capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             var arguments = ["-x", "-t", "png"]
+            let targetScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
             switch mode {
-            case .area: arguments += ["-i", "-s"]
-            case .window: arguments += ["-i", "-w", "-o"]
-            case .screen:
-                let index = NSScreen.screens.firstIndex { $0.frame.contains(NSEvent.mouseLocation) } ?? 0
+            case .area, .screen:
+                let index = NSScreen.screens.firstIndex { $0 == targetScreen } ?? 0
                 arguments += ["-D", String(index + 1)]
+            case .window: arguments += ["-i", "-w", "-o"]
             }
             capture.arguments = arguments + [url.path]
             capture.standardOutput = FileHandle.nullDevice
@@ -132,8 +132,8 @@ final class ScreenshotManager {
                     self.process = nil; self.pendingCapture = nil; self.busy = false
                     self.restoreWindows()
                     if result.terminationStatus == 0, let image = NSImage(contentsOf: url) {
-                        self.present(image)
-                    } else if mode == .screen {
+                        self.present(image, screen: mode == .window ? nil : targetScreen, selectWhole: mode == .screen)
+                    } else if mode != .window {
                         self.status = AppLanguage.english ? "Capture failed. Check Screen Recording permission." : "截图失败，请检查屏幕录制权限。"
                     }
                     self.onChange?()
@@ -151,9 +151,9 @@ final class ScreenshotManager {
         previews.values.forEach { $0.window?.orderFront(nil) }
         pins.forEach { $0.orderFront(nil) }
     }
-    func present(_ image: NSImage) {
+    func present(_ image: NSImage, screen: NSScreen? = nil, selectWhole: Bool = false) {
         let id = UUID()
-        let preview = ScreenshotWindow(image: image)
+        let preview = ScreenshotWindow(image: image, captureScreen: screen, selectWhole: selectWhole)
         preview.onClose = { [weak self] in self?.previews.removeValue(forKey: id) }
         preview.onPin = { [weak self] image in self?.pin(image) }
         preview.onOCR = { [weak self] data in self?.onOCR?(data) }

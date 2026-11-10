@@ -14,6 +14,27 @@ import AppKit
         precondition(bitmap.pixelsWide == Int(size.width) && bitmap.pixelsHigh == Int(size.height), "Keep Retina pixel dimensions")
         let candidates = [bitmap.colorAt(x: 80, y: 80), bitmap.colorAt(x: 80, y: bitmap.pixelsHigh - 80)]
         precondition(candidates.compactMap { $0?.usingColorSpace(.deviceRGB) }.contains { $0.redComponent < 0.01 && $0.alphaComponent == 1 }, "Redaction exports opaque black pixels")
+        canvas.selectionEnabled = true
+        canvas.selection = NSRect(x: 40, y: 40, width: 110, height: 110)
+        let cropped = NSBitmapImageRep(data: canvas.pngData()!)!
+        precondition(cropped.pixelsWide == 110 && cropped.pixelsHigh == 110)
+        let pixel = cropped.colorAt(x: 50, y: 50)!.usingColorSpace(.deviceRGB)!
+        precondition(pixel.redComponent < 0.01 && pixel.alphaComponent == 1, "Crop excludes selection UI and keeps opaque annotations")
+        canvas.selection = nil
+        precondition(canvas.pngData() == nil, "Unselected display must not export accidentally")
+        canvas.selectionEnabled = false
+        let limits = NSRect(x: 0, y: 0, width: 1000, height: 800)
+        let selected = NSRect(x: 100, y: 100, width: 300, height: 200)
+        for (index, point) in ScreenshotSelection.handles(selected).enumerated() {
+            precondition(ScreenshotSelection.hitHandle(point, rect: selected, tolerance: 8) == index)
+            let resized = ScreenshotSelection.drag(handle: index, start: point, point: NSPoint(x: point.x + 20, y: point.y + 20), original: selected, bounds: limits)
+            precondition(resized != selected && limits.contains(resized))
+        }
+        let moved = ScreenshotSelection.drag(handle: -2, start: .zero, point: NSPoint(x: 2000, y: 2000), original: selected, bounds: limits)
+        precondition(moved.maxX == limits.maxX && moved.maxY == limits.maxY && moved.size == selected.size)
+        let reversed = ScreenshotSelection.drag(handle: -1, start: NSPoint(x: 500, y: 400), point: NSPoint(x: 100, y: 100), original: .zero, bounds: limits)
+        precondition(reversed == NSRect(x: 100, y: 100, width: 400, height: 300))
+        print("PASS: eight resize handles, reverse selection, clamped movement and pixel-accurate cropped export")
         canvas.undoAnnotation(); precondition(canvas.annotations.isEmpty && canvas.canRedo)
         canvas.redoAnnotation(); precondition(canvas.annotations.count == 1)
         canvas.undoAnnotation()
@@ -34,6 +55,16 @@ import AppKit
         preview.canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 450, y: 280), end: NSPoint(x: 320, y: 180)))
         preview.canvas.append(ScreenshotAnnotation(tool: .text, start: NSPoint(x: 180, y: 250), end: .zero, text: "Tactora 截图"))
         preview.editImage()
+        if CommandLine.arguments.contains("--overlay"), let screen = NSScreen.main {
+            preview.close()
+            let overlay = ScreenshotWindow(image: source, captureScreen: screen)
+            overlay.canvas.selection = NSRect(x: 150, y: 120, width: 900, height: 400)
+            NSApp.setActivationPolicy(.regular)
+            overlay.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.run()
+            return
+        }
         if CommandLine.arguments.contains("--interactive") {
             NSApp.setActivationPolicy(.regular)
             preview.showWindow(nil)
