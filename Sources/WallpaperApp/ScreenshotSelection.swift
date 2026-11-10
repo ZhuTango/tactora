@@ -20,7 +20,10 @@ enum ScreenshotSelection {
     }
     static func drag(handle: Int, start: NSPoint, point: NSPoint, original: NSRect, bounds: NSRect) -> NSRect {
         if handle == -1 {
-            return NSRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y)).intersection(bounds)
+            let first = NSPoint(x: min(bounds.maxX, max(bounds.minX, start.x)), y: min(bounds.maxY, max(bounds.minY, start.y)))
+            let last = NSPoint(x: min(bounds.maxX, max(bounds.minX, point.x)), y: min(bounds.maxY, max(bounds.minY, point.y)))
+            // Preserve finite zero-size geometry while a drag starts or follows one axis.
+            return NSRect(x: min(first.x, last.x), y: min(first.y, last.y), width: abs(last.x - first.x), height: abs(last.y - first.y))
         }
         if handle == -2 {
             let x = min(bounds.maxX - original.width, max(bounds.minX, original.minX + point.x - start.x))

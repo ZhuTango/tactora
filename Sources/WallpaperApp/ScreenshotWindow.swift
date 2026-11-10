@@ -65,7 +65,10 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         if selectionEnabled { drawSelection() }
     }
     var selectionViewRect: NSRect? {
-        guard let selection else { return nil }
+        guard let selection, !selection.isEmpty,
+              selection.origin.x.isFinite, selection.origin.y.isFinite,
+              selection.width.isFinite, selection.height.isFinite,
+              imageRect.width > 0 else { return nil }
         let scale = imageRect.width / image.size.width
         return NSRect(x: imageRect.minX + selection.minX * scale, y: imageRect.minY + selection.minY * scale,
                       width: selection.width * scale, height: selection.height * scale)
@@ -195,9 +198,14 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     }
     override var acceptsFirstResponder: Bool { true }
     override func resetCursorRects() {
+        guard !imageRect.isEmpty, imageRect.origin.x.isFinite, imageRect.origin.y.isFinite,
+              imageRect.width.isFinite, imageRect.height.isFinite else { return }
         addCursorRect(imageRect, cursor: selectionEnabled && selectionMode ? .crosshair : tool == .text ? .iBeam : .crosshair)
         if selectionEnabled, let rect = selectionViewRect {
-            if selectionMode { addCursorRect(rect.insetBy(dx: 8, dy: 8), cursor: .openHand) }
+            // CGRect.insetBy returns a null rect with infinite origin when it collapses.
+            if selectionMode, rect.width > 16, rect.height > 16 {
+                addCursorRect(rect.insetBy(dx: 8, dy: 8), cursor: .openHand)
+            }
             addCursorRect(NSRect(x: rect.minX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
             addCursorRect(NSRect(x: rect.maxX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
             addCursorRect(NSRect(x: rect.minX, y: rect.minY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)

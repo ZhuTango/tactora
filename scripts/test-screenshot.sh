@@ -8,3 +8,6 @@ for source in Sources/WallpaperApp/*.swift; do
 done
 xcrun swiftc -parse-as-library Sources/WallpaperCore/*.swift Sources/ToolCore/*.swift "${sources[@]}" scripts/ScreenshotChecks.swift -o .build/screenshot-checks
 .build/screenshot-checks
+
+xcrun swiftc -parse-as-library Sources/ToolCore/ToolFeatures.swift Sources/WallpaperApp/AppLanguage.swift Sources/WallpaperApp/ScreenshotSelection.swift Sources/WallpaperApp/ScreenshotWindow.swift scripts/ScreenshotCursorChecks.swift -o .build/screenshot-cursor-checks
+.build/screenshot-cursor-checks
