@@ -159,6 +159,7 @@ final class ScreenshotManager {
         preview.onOCR = { [weak self] data in self?.onOCR?(data) }
         previews[id] = preview
         preview.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
         preview.window?.makeKeyAndOrderFront(nil)
     }
     private func pin(_ image: NSImage) {

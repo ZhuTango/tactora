@@ -22,6 +22,13 @@ import AppKit
         let preview = ScreenshotWindow(image: source)
         precondition(preview.window?.hidesOnDeactivate == false, "Screenshot preview must stay visible when the captured app is active")
         precondition(preview.window?.collectionBehavior.contains(.canJoinAllSpaces) == true, "Screenshot preview must be reachable on the capture Space")
+        precondition(preview.canvas.editing, "Capture opens directly into annotation")
+        preview.canvas.beginText(at: NSPoint(x: 80, y: 100))
+        let textField = preview.canvas.subviews.compactMap { $0 as? NSTextField }.first!
+        textField.stringValue = "Inline text"
+        preview.canvas.commitText()
+        precondition(preview.canvas.annotations.last?.text == "Inline text")
+        precondition(preview.canvas.subviews.compactMap { $0 as? NSTextField }.isEmpty)
         preview.canvas.append(area)
         preview.canvas.append(ScreenshotAnnotation(tool: .rectangle, start: NSPoint(x: 180, y: 70), end: NSPoint(x: 400, y: 220)))
         preview.canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 450, y: 280), end: NSPoint(x: 320, y: 180)))
