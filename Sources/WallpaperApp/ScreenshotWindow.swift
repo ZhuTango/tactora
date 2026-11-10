@@ -211,11 +211,21 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             switch item.tool {
             case .cover:
                 if item.coverEffect == .pixelate, let mosaic = pixelatedImage(blockSize: item.pixelSize) {
+                    NSGraphicsContext.saveGraphicsState()
+                    // Original-image sampling must never replace an earlier redaction.
+                    // Clip each cover separately so overlapping exclusions stay excluded.
+                    for previous in items.prefix(index) where previous.tool == .cover {
+                        let exclusion = NSBezierPath(rect: NSRect(origin: .zero, size: image.size))
+                        exclusion.appendRect(previous.rect)
+                        exclusion.windingRule = .evenOdd
+                        exclusion.addClip()
+                    }
                     mosaic.draw(in: item.rect, from: item.rect, operation: .copy, fraction: 1)
                     if let tint = item.coverTint {
                         tint.withAlphaComponent(0.35).setFill()
                         item.rect.fill(using: .sourceOver)
                     }
+                    NSGraphicsContext.restoreGraphicsState()
                 } else {
                     (item.coverTint ?? .black).withAlphaComponent(1).setFill()
                     item.rect.fill()
@@ -559,6 +569,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         redoStates.append(annotations)
         annotations = state
         selectedCoverIndex = nil
+        coverDrag = nil
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()
@@ -568,6 +579,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         undoStates.append(annotations)
         annotations = state
         selectedCoverIndex = nil
+        coverDrag = nil
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()

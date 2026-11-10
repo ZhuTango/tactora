@@ -57,6 +57,54 @@ import AppKit
             precondition(editable.selection == NSRect(x: 10, y: 10, width: 90, height: 90), "An outside click must preserve the selection and toolbar")
             editWindow.close()
         }
+        let redactionImage = NSImage(cgImage: bitmap.cgImage!, size: NSSize(width: 128, height: 128))
+        let protectedCanvas = ScreenshotCanvas(image: redactionImage)
+        protectedCanvas.append(ScreenshotAnnotation(tool: .cover, start: .zero, end: NSPoint(x: 128, y: 128), coverEffect: .solid))
+        protectedCanvas.append(ScreenshotAnnotation(tool: .cover, start: NSPoint(x: 40, y: 40), end: NSPoint(x: 90, y: 90), coverEffect: .pixelate))
+        let protectedPixel = NSBitmapImageRep(data: protectedCanvas.pngData()!)!.colorAt(x: 64, y: 64)!.usingColorSpace(.deviceRGB)!
+        precondition(protectedPixel.redComponent < 0.01 && protectedPixel.blueComponent < 0.01, "Mosaic overlap must preserve an existing opaque redaction")
+
+        protectedCanvas.undoAnnotation()
+        protectedCanvas.append(ScreenshotAnnotation(tool: .cover, start: NSPoint(x: 20, y: 20), end: NSPoint(x: 50, y: 50), coverEffect: .solid, coverTint: .green))
+        let coveredBefore = NSBitmapImageRep(data: protectedCanvas.pngData()!)!
+        protectedCanvas.append(ScreenshotAnnotation(tool: .cover, start: .zero, end: NSPoint(x: 128, y: 128), coverEffect: .pixelate, coverTint: .red))
+        let coveredAfter = NSBitmapImageRep(data: protectedCanvas.pngData()!)!
+        for y in 0..<128 {
+            for x in 0..<128 {
+                precondition(coveredBefore.colorAt(x: x, y: y) == coveredAfter.colorAt(x: x, y: y), "Multiple overlapping covers must stay protected even under tinted mosaic")
+            }
+        }
+        let mosaicCanvas = ScreenshotCanvas(image: redactionImage)
+        mosaicCanvas.append(ScreenshotAnnotation(tool: .cover, start: .zero, end: NSPoint(x: 128, y: 128), coverEffect: .pixelate, pixelSize: 32))
+        let mosaicBefore = mosaicCanvas.pngData()!
+        mosaicCanvas.append(ScreenshotAnnotation(tool: .cover, start: .zero, end: NSPoint(x: 128, y: 128), coverEffect: .pixelate, pixelSize: 4))
+        precondition(mosaicBefore == mosaicCanvas.pngData()!, "A weaker overlapping mosaic must not reveal more of the original image")
+
+        let dragging = ScreenshotCanvas(image: image)
+        let dragWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 128, height: 128), styleMask: [.borderless], backing: .buffered, defer: false)
+        dragWindow.isReleasedWhenClosed = false
+        dragWindow.contentView = dragging
+        dragging.tool = .cover
+        let cover = ScreenshotAnnotation(tool: .cover, start: NSPoint(x: 10, y: 10), end: NSPoint(x: 50, y: 50))
+        func dragEvent(_ type: NSEvent.EventType, _ coordinate: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: coordinate, y: coordinate), modifierFlags: [], timestamp: 0, windowNumber: dragWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        dragging.append(cover)
+        dragging.mouseDown(with: dragEvent(.leftMouseDown, 30))
+        dragging.mouseDragged(with: dragEvent(.leftMouseDragged, 35))
+        dragging.undoAnnotation()
+        dragging.mouseDragged(with: dragEvent(.leftMouseDragged, 40))
+        dragging.mouseUp(with: dragEvent(.leftMouseUp, 40))
+        precondition(dragging.annotations.isEmpty, "Undo during drag must remove the cover without stale drag writes")
+        dragging.redoAnnotation()
+        let restored = dragging.annotations[0].rect
+        dragging.mouseDown(with: dragEvent(.leftMouseDown, 35))
+        dragging.undoAnnotation()
+        dragging.redoAnnotation()
+        dragging.mouseUp(with: dragEvent(.leftMouseUp, 45))
+        precondition(dragging.annotations[0].rect == restored, "Redo must not resume an invalidated drag")
+        dragWindow.close()
+        print("PASS: overlapping redactions remain opaque; undo/redo during cover drag is safe")
         print("PASS: mosaic and solid cover move, resize, unchanged effect, exported position and single-step undo/redo")
         canvas.contentScale = 2
         canvas.textSize = 18
