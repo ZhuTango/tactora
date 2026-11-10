@@ -41,52 +41,86 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         engine = ScreenshotStream(framesPerSecond: mode == .scroll ? 5 : fps)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("tactora-recording-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: mode == .scroll ? 340 : 140), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
-        panel.title = mode == .scroll ? "滚动截图" : (mode == .gif ? "录制 GIF · 无音频" : "录制视频 · 无音频")
+        let previewHeight = min(160, max(72, 308 * region.height / max(1, region.width)))
+        let contentSize = NSSize(width: mode == .scroll ? 340 : 302, height: mode == .scroll ? previewHeight + 122 : 56)
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: contentSize), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+        panel.title = mode == .scroll ? "滚动截图" : (mode == .gif ? "GIF · 无音频" : "视频 · 无音频")
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         super.init(window: panel)
         panel.delegate = self
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        let root = NSView()
         panel.contentView = root
-        status.widthAnchor.constraint(equalToConstant: 320).isActive = true
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        status.maximumNumberOfLines = 2
+        status.lineBreakMode = .byTruncatingTail
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
         progress.startAnimation(nil)
+        progress.widthAnchor.constraint(equalToConstant: 16).isActive = true
         let statusRow = NSStackView(views: [progress, status])
-        statusRow.spacing = 8
-        root.addArrangedSubview(statusRow)
-        if mode == .scroll {
-            let hint = NSTextField(wrappingLabelWithString: "在原窗口向下滚动半屏，停稳后点击“添加当前画面”。选区应避开固定页眉和动画。")
-            hint.textColor = .secondaryLabelColor
-            hint.widthAnchor.constraint(equalToConstant: 344).isActive = true
-            root.addArrangedSubview(hint)
-            preview.imageScaling = .scaleProportionallyUpOrDown
-            preview.widthAnchor.constraint(equalToConstant: 344).isActive = true
-            preview.heightAnchor.constraint(equalToConstant: 140).isActive = true
-            root.addArrangedSubview(preview)
-        }
+        statusRow.spacing = 6
+        statusRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
         for button in [appendButton, finishButton, cancelButton] { button.target = self }
+        appendButton.title = "添加一帧"
         appendButton.action = #selector(appendFrame)
+        appendButton.keyEquivalent = "\r"
+        appendButton.toolTip = "向下滚动半屏，停稳后添加 · Enter"
         finishButton.action = #selector(finish)
-        finishButton.title = mode == .scroll ? "完成拼接" : "结束录制"
+        finishButton.title = mode == .scroll ? "完成" : "停止"
         finishButton.bezelStyle = .rounded
         finishButton.bezelColor = .controlAccentColor
+        finishButton.image = NSImage(systemSymbolName: mode == .scroll ? "checkmark" : "stop.fill", accessibilityDescription: nil)
+        finishButton.imagePosition = .imageLeading
+        finishButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
         cancelButton.action = #selector(cancel)
         cancelButton.keyEquivalent = "\u{1b}"
-        root.addArrangedSubview(NSStackView(views: mode == .scroll ? [appendButton, cancelButton, finishButton] : [cancelButton, finishButton]))
+        let stack = NSStackView()
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+        if mode == .scroll {
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            status.widthAnchor.constraint(equalToConstant: 286).isActive = true
+            stack.addArrangedSubview(statusRow)
+            let hint = NSTextField(labelWithString: "向下滚动，停稳后添加")
+            hint.font = .systemFont(ofSize: 11)
+            hint.textColor = .secondaryLabelColor
+            hint.toolTip = "每次向下滚动约半屏，保持窗口与选区位置不变，避开固定页眉和动画。"
+            hint.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            stack.addArrangedSubview(hint)
+            preview.imageScaling = .scaleProportionallyUpOrDown
+            preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            preview.widthAnchor.constraint(equalToConstant: 308).isActive = true
+            preview.heightAnchor.constraint(equalToConstant: previewHeight).isActive = true
+            stack.addArrangedSubview(preview)
+            let spacer = NSView()
+            let actions = NSStackView(views: [spacer, appendButton, finishButton])
+            actions.spacing = 8
+            actions.widthAnchor.constraint(equalToConstant: 308).isActive = true
+            actions.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            stack.addArrangedSubview(actions)
+        } else {
+            status.widthAnchor.constraint(equalToConstant: 160).isActive = true
+            stack.addArrangedSubview(statusRow)
+            stack.addArrangedSubview(finishButton)
+        }
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12)
+        ])
+        panel.setContentSize(contentSize)
         appendButton.isEnabled = false
         finishButton.isEnabled = false
         let area = screen.visibleFrame
-        panel.setFrameTopLeftPoint(NSPoint(x: max(area.minX, area.maxX - 400), y: area.maxY - 20))
+        panel.setFrameTopLeftPoint(NSPoint(x: max(area.minX, area.maxX - contentSize.width - 20), y: area.maxY - 20))
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     func start() {
@@ -129,7 +163,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 preparing = false
                 progress.stopAnimation(nil)
                 if cancelled { cleanup() }
-                else { status.stringValue = error.localizedDescription; ending = true }
+                else { status.stringValue = error.localizedDescription; status.toolTip = error.localizedDescription; ending = true }
             }
         }
     }
@@ -141,7 +175,8 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         } else {
             let seconds = Int(Date().timeIntervalSince(startTime))
             let limit = mode == .gif ? 60 : 1800
-            status.stringValue = String(format: "● %02d:%02d  ·  %d fps  ·  上限 %@", seconds / 60, seconds % 60, fps, mode == .gif ? "60 秒" : "30 分钟")
+            status.stringValue = String(format: "● %02d:%02d", seconds / 60, seconds % 60)
+            status.toolTip = "\(fps) fps · 上限 \(mode == .gif ? "60 秒" : "30 分钟") · 无音频"
             if seconds >= limit { finish() }
         }
     }
@@ -214,6 +249,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 progress.stopAnimation(nil)
                 if cancelled { cleanup(); return }
                 status.stringValue = error.localizedDescription
+                status.toolTip = error.localizedDescription
                 cancelButton.isEnabled = true
             }
         }

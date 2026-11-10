@@ -88,28 +88,44 @@ final class ScreenshotAppearanceSheet: NSWindowController, NSTextFieldDelegate {
     private let padding = NSSlider(value: 48, minValue: 16, maxValue: 120, target: nil, action: nil)
     private let radius = NSSlider(value: 16, minValue: 0, maxValue: 48, target: nil, action: nil)
     private let shadow = NSButton(checkboxWithTitle: "阴影", target: nil, action: nil)
+    private let opacityValue = NSTextField(labelWithString: "")
+    private let paddingValue = NSTextField(labelWithString: "")
+    private let radiusValue = NSTextField(labelWithString: "")
     var onApply: ((ScreenshotAppearance) -> Void)?
 
     init(image: NSImage, value: ScreenshotAppearance) {
         source = image
         self.value = value
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        let previewHeight = min(200, max(100, 528 * image.size.height / max(1, image.size.width)))
+        let size = NSSize(width: 560, height: previewHeight + 216)
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
         panel.title = "水印与美化"
         panel.isReleasedWhenClosed = false
         super.init(window: panel)
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        let root = NSView()
         panel.contentView = root
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16)
+        ])
         preview.imageScaling = .scaleProportionallyUpOrDown
-        preview.widthAnchor.constraint(equalToConstant: 600).isActive = true
-        preview.heightAnchor.constraint(equalToConstant: 240).isActive = true
-        root.addArrangedSubview(preview)
-        watermark.placeholderString = "水印文字（留空关闭，最多 100 字）"
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        preview.widthAnchor.constraint(equalToConstant: 528).isActive = true
+        preview.heightAnchor.constraint(equalToConstant: previewHeight).isActive = true
+        stack.addArrangedSubview(preview)
+        watermark.placeholderString = "输入水印，留空关闭"
         watermark.stringValue = value.watermark
         watermark.delegate = self
-        watermark.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        watermark.widthAnchor.constraint(equalToConstant: 330).isActive = true
         watermark.setAccessibilityLabel("水印文字")
         placement.addItems(withTitles: ["右下角", "平铺"])
         placement.selectItem(at: value.tiled ? 1 : 0)
@@ -119,11 +135,33 @@ final class ScreenshotAppearanceSheet: NSWindowController, NSTextFieldDelegate {
         padding.doubleValue = Double(value.padding)
         radius.doubleValue = Double(value.radius)
         shadow.state = value.shadow ? .on : .off
-        root.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "水印"), watermark, placement]))
-        root.addArrangedSubview(row("透明度", opacity))
-        root.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "背景"), background, shadow]))
-        root.addArrangedSubview(row("边距", padding))
-        root.addArrangedSubview(row("圆角", radius))
+        func row(_ views: [NSView], height: CGFloat) -> NSStackView {
+            let row = NSStackView(views: views)
+            row.spacing = 8
+            row.widthAnchor.constraint(equalToConstant: 528).isActive = true
+            row.heightAnchor.constraint(equalToConstant: height).isActive = true
+            stack.addArrangedSubview(row)
+            return row
+        }
+        func label(_ title: String) -> NSTextField {
+            let field = NSTextField(labelWithString: title)
+            field.textColor = .secondaryLabelColor
+            field.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            return field
+        }
+        _ = row([label("水印"), watermark, placement], height: 28)
+        opacity.widthAnchor.constraint(equalToConstant: 330).isActive = true
+        opacity.setAccessibilityLabel("水印透明度")
+        _ = row([label("透明度"), opacity, opacityValue, NSView()], height: 22)
+        background.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        _ = row([label("背景"), background, shadow, NSView()], height: 28)
+        for (slider, text, name) in [(padding, paddingValue, "边距"), (radius, radiusValue, "圆角")] {
+            slider.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            slider.setAccessibilityLabel(name)
+            text.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            text.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        }
+        _ = row([label("边距"), padding, paddingValue, label("圆角"), radius, radiusValue], height: 24)
         for control in [placement, background, opacity, padding, radius, shadow] as [NSControl] {
             control.target = self
             control.action = #selector(updatePreview)
@@ -132,15 +170,11 @@ final class ScreenshotAppearanceSheet: NSWindowController, NSTextFieldDelegate {
         cancel.keyEquivalent = "\u{1b}"
         let apply = NSButton(title: "应用", target: self, action: #selector(apply))
         apply.keyEquivalent = "\r"
-        root.addArrangedSubview(NSStackView(views: [cancel, apply]))
+        _ = row([NSView(), cancel, apply], height: 32)
+        panel.setContentSize(size)
         updatePreview()
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
-    private func row(_ name: String, _ slider: NSSlider) -> NSStackView {
-        slider.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        slider.setAccessibilityLabel(name)
-        return NSStackView(views: [NSTextField(labelWithString: name), slider])
-    }
     func controlTextDidChange(_ notification: Notification) { updatePreview() }
     @objc private func updatePreview() {
         value.watermark = String(watermark.stringValue.prefix(100))
@@ -150,6 +184,14 @@ final class ScreenshotAppearanceSheet: NSWindowController, NSTextFieldDelegate {
         value.padding = CGFloat(padding.doubleValue)
         value.radius = CGFloat(radius.doubleValue)
         value.shadow = shadow.state == .on
+        opacityValue.stringValue = "\(Int(value.opacity * 100))%"
+        paddingValue.stringValue = "\(Int(value.padding))"
+        radiusValue.stringValue = "\(Int(value.radius))"
+        opacity.isEnabled = !value.watermark.isEmpty
+        placement.isEnabled = !value.watermark.isEmpty
+        padding.isEnabled = value.background != 0
+        radius.isEnabled = value.background != 0
+        shadow.isEnabled = value.background != 0
         let scale = min(1, 1000 / max(source.size.width + value.padding * 2, source.size.height + value.padding * 2))
         preview.image = value.render(source, scale: scale)
     }

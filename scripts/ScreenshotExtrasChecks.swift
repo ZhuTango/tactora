@@ -70,6 +70,22 @@ struct ScreenshotExtrasChecks {
         precondition(decorated.width == 256 && decorated.height == 496)
         print("PASS plain export fidelity, watermark pixels, background padding")
 
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let sheet = ScreenshotAppearanceSheet(image: image, value: ScreenshotAppearance())
+            let panel = sheet.window!
+            panel.appearance = NSAppearance(named: appearance)
+            let root = panel.contentView!
+            root.layoutSubtreeIfNeeded()
+            precondition(root.frame.width == 560 && root.frame.height <= 416)
+            let stack = root.subviews.first as! NSStackView
+            precondition(stack.arrangedSubviews.count == 6)
+            for row in stack.arrangedSubviews {
+                precondition(root.bounds.insetBy(dx: -1, dy: -1).contains(row.convert(row.bounds, to: root)), "Appearance row must fit")
+            }
+            panel.close()
+        }
+        print("PASS compact appearance layout in light and dark modes")
+
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -137,6 +153,23 @@ struct ScreenshotExtrasChecks {
                 panel.close()
             }
         }
+        if let screen = NSScreen.main {
+            for mode in [ScreenshotSession.Mode.video, .gif, .scroll] {
+                let session = try ScreenshotSession(mode: mode, screen: screen, region: CGRect(x: 0, y: 0, width: 800, height: 400), fps: 15)
+                let root = session.window!.contentView!
+                root.layoutSubtreeIfNeeded()
+                let expected = mode == .scroll ? NSSize(width: 340, height: 276) : NSSize(width: 302, height: 56)
+                precondition(root.frame.size == expected, "Compact session size \(root.frame.size)")
+                let stack = root.subviews.first as! NSStackView
+                for row in stack.arrangedSubviews {
+                    precondition(root.bounds.insetBy(dx: -1, dy: -1).contains(row.convert(row.bounds, to: root)), "Session controls must fit")
+                }
+                session.showRecordingResult(mode == .gif ? gif : movie)
+                session.cancel()
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        print("PASS compact recording and scrolling session layouts")
         let largeGIF = directory.appendingPathComponent("large.gif")
         let largeContext = CGContext(data: nil, width: 1600, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
