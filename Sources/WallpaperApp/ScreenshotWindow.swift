@@ -458,7 +458,10 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     var onPin: ((NSImage) -> Void)?
     var onOCR: ((Data) -> Void)?
-    var onSession: ((ScreenshotSession.Mode, NSScreen, CGRect, Int) -> Void)?
+    var onSession: ((ScreenshotSession.Mode, NSScreen, CGRect, Int) -> Void)? {
+        didSet { sessionButtons.forEach { $0.isEnabled = captureScreen != nil && onSession != nil } }
+    }
+    private var sessionButtons: [NSButton] = []
     private let captureScreen: NSScreen?
     private var appearanceOptions = ScreenshotAppearance()
     private var appearanceSheet: ScreenshotAppearanceSheet?
@@ -489,7 +492,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let available = NSSize(width: min(1100, area.width - 48), height: min(800, area.height - 80))
         let scale = min(1, min((available.width - 24) / image.size.width, (available.height - 100) / image.size.height))
-        let size = NSSize(width: max(700, image.size.width * scale + 24), height: max(220, image.size.height * scale + 100))
+        let size = NSSize(width: max(808, image.size.width * scale + 24), height: max(220, image.size.height * scale + 100))
         let panel = ScreenshotPanel(contentRect: captureScreen?.frame ?? NSRect(origin: .zero, size: size), styleMask: captureScreen == nil ? [.titled, .closable, .resizable, .utilityWindow] : [.borderless], backing: .buffered, defer: false)
         panel.title = AppLanguage.english ? "Screenshot" : "截图"
         panel.titleVisibility = .hidden
@@ -498,7 +501,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.level = captureScreen == nil ? .floating : NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        panel.minSize = NSSize(width: 700, height: 220)
+        panel.minSize = NSSize(width: 808, height: 220)
         super.init(window: panel)
         panel.delegate = self
         panel.onKey = { [weak self] event in self?.handleKey(event) ?? false }
@@ -543,8 +546,21 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(iconButton("pin", label: AppLanguage.english ? "Pin · P" : "贴图 · P", action: #selector(pinImage)))
         toolbar.addArrangedSubview(iconButton("text.viewfinder", label: AppLanguage.english ? "Recognize text · O" : "识字 · O", action: #selector(recognize)))
         toolbar.addArrangedSubview(iconButton("square.and.arrow.down", label: AppLanguage.english ? "Save · ⌘S" : "保存 · ⌘S", action: #selector(saveImage)))
-        let more = iconButton("ellipsis.circle", label: AppLanguage.english ? "Watermark, style, scrolling capture and recording" : "水印、美化、滚动截图与录制", action: #selector(showMore(_:)))
-        toolbar.addArrangedSubview(more)
+        let appearance = iconButton("wand.and.stars", label: AppLanguage.english ? "Watermark and style" : "水印与美化", action: #selector(editAppearance))
+        appearance.identifier = NSUserInterfaceItemIdentifier("screenshot.appearance")
+        toolbar.addArrangedSubview(appearance)
+        for (title, symbol, tag) in [
+            (AppLanguage.english ? "Scrolling capture" : "滚动截图", "scroll", 1),
+            (AppLanguage.english ? "Record video" : "录制视频", "video", 2),
+            (AppLanguage.english ? "Record GIF" : "录制 GIF", "photo.stack", 3)
+        ] {
+            let button = iconButton(symbol, label: title, action: #selector(startSession(_:)))
+            button.tag = tag
+            button.identifier = NSUserInterfaceItemIdentifier("screenshot.session.\(tag)")
+            button.isEnabled = false
+            sessionButtons.append(button)
+            toolbar.addArrangedSubview(button)
+        }
         toolbar.addArrangedSubview(separator())
         toolbar.addArrangedSubview(iconButton("xmark", label: AppLanguage.english ? "Cancel · Esc" : "取消 · Esc", action: #selector(cancelCapture)))
         let copy = iconButton("checkmark", label: AppLanguage.english ? "Copy and close · Enter" : "复制并关闭 · Enter", action: #selector(copyImage))
@@ -592,7 +608,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let divider = NSBox()
         divider.boxType = .separator
         if captureScreen != nil {
-            let card = floatingCard(size: NSSize(width: 700, height: 44))
+            let card = floatingCard(size: NSSize(width: 808, height: 44))
             card.identifier = NSUserInterfaceItemIdentifier("screenshot.toolbar")
             floatingControls = card
             let style = floatingCard(size: NSSize(width: 188, height: 36))
@@ -905,26 +921,6 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         guard let image = exportImage(), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
     }
-    @objc private func showMore(_ sender: NSButton) {
-        canvas.commitText()
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let entries: [(String, String, Selector, Int)] = [
-            ("水印与美化…", "wand.and.stars", #selector(editAppearance), 0),
-            ("滚动截图…", "scroll", #selector(startSession(_:)), 1),
-            ("录制视频…", "video", #selector(startSession(_:)), 2),
-            ("录制 GIF…", "photo.stack", #selector(startSession(_:)), 3)
-        ]
-        for (title, icon, action, tag) in entries {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = self
-            item.tag = tag
-            item.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
-            item.isEnabled = tag == 0 || (captureScreen != nil && onSession != nil)
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
-    }
     @objc private func editAppearance() {
         canvas.commitText()
         guard let window, window.attachedSheet == nil, let image = canvas.renderedImage() else { return }
@@ -933,14 +929,15 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         sheet.onApply = { [weak self] value in self?.appearanceOptions = value }
         if let sheetWindow = sheet.window { window.beginSheet(sheetWindow) { [weak self] _ in self?.appearanceSheet = nil } }
     }
-    @objc private func startSession(_ sender: NSMenuItem) {
-        guard let captureScreen, let selection = canvas.selection, selection.width >= 64, selection.height >= 64 else {
+    @objc private func startSession(_ sender: NSButton) {
+        canvas.commitText()
+        guard onSession != nil, let captureScreen, let selection = canvas.selection, selection.width >= 64, selection.height >= 64 else {
             feedback.stringValue = "请先选择至少 64 × 64 像素的区域"
             return
         }
         let mode: ScreenshotSession.Mode = sender.tag == 1 ? .scroll : (sender.tag == 2 ? .video : .gif)
         let alert = NSAlert()
-        alert.messageText = sender.title.replacingOccurrences(of: "…", with: "")
+        alert.messageText = sender.toolTip ?? ""
         alert.informativeText = mode == .scroll
             ? "将捕获所选区域的实时画面。向下滚动后逐帧添加，完成后继续标注。请避开固定页眉和动态内容。现有标注仅属于当前静态截图。"
             : "录制所选区域的实时画面，包含鼠标指针，无音频。视频最长 30 分钟、最长边 1920 像素，GIF 最长 60 秒、最长边 960 像素。完成后选择保存位置。"

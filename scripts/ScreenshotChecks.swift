@@ -64,7 +64,16 @@ import AppKit
             let toolbar = views.first { $0.identifier?.rawValue == "screenshot.toolbar" }!
             let style = views.first { $0.identifier?.rawValue == "screenshot.style" }!
             let dimensions = views.first { $0.identifier?.rawValue == "screenshot.dimensions" }!
-            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 700)
+            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 808)
+            let sessionButtons = views.compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("screenshot.session.") == true }
+            precondition(sessionButtons.count == 3 && sessionButtons.allSatisfy { !$0.isEnabled })
+            compact.onSession = { _, _, _, _ in }
+            precondition(sessionButtons.allSatisfy { $0.isEnabled })
+            precondition(views.contains { $0.identifier?.rawValue == "screenshot.appearance" })
+            root.layoutSubtreeIfNeeded()
+            for button in sessionButtons {
+                precondition(toolbar.bounds.contains(button.convert(button.bounds, to: toolbar)))
+            }
             precondition(style.isHidden && dimensions.superview === root)
             let arrow = views.first { $0.identifier?.rawValue == "screenshot.tool.0" } as! NSButton
             arrow.performClick(nil)
