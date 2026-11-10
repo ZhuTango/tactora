@@ -41,7 +41,9 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     private var textOrigin = NSPoint.zero
     var cursorExclusions: [NSRect] = []
     var selectionEnabled = false
-    var selectionMode = true
+    var selectionMode = true { didSet { needsDisplay = true } }
+    private var alignmentTrackingArea: NSTrackingArea?
+    private var pointerLocation: NSPoint?
     var selection: NSRect? {
         didSet { needsDisplay = true; onSelectionChange?() }
     }
@@ -79,7 +81,43 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         drawImage(includingDraft: true)
         NSGraphicsContext.restoreGraphicsState()
         if selectionEnabled { drawSelection() }
+        if let point = alignmentGuidePoint {
+            let lines = NSBezierPath()
+            lines.move(to: NSPoint(x: bounds.minX, y: point.y))
+            lines.line(to: NSPoint(x: bounds.maxX, y: point.y))
+            lines.move(to: NSPoint(x: point.x, y: bounds.minY))
+            lines.line(to: NSPoint(x: point.x, y: bounds.maxY))
+            NSColor.black.withAlphaComponent(0.6).setStroke()
+            lines.lineWidth = 3
+            lines.stroke()
+            NSColor.white.withAlphaComponent(0.9).setStroke()
+            lines.lineWidth = 1
+            lines.stroke()
+        }
     }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { selectionEnabled }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let alignmentTrackingArea { removeTrackingArea(alignmentTrackingArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag], owner: self)
+        addTrackingArea(area)
+        alignmentTrackingArea = area
+        if let window { pointerLocation = convert(window.mouseLocationOutsideOfEventStream, from: nil) }
+    }
+    var alignmentGuidePoint: NSPoint? {
+        guard selectionEnabled, selectionMode, let point = pointerLocation,
+              bounds.contains(point), !cursorExclusions.contains(where: { $0.contains(point) }) else { return nil }
+        if selectionDrag?.handle == -2 { return nil }
+        if selectionDrag == nil, let rect = selectionViewRect, rect.insetBy(dx: 8, dy: 8).contains(point) { return nil }
+        return point
+    }
+    private func trackPointer(_ event: NSEvent) {
+        pointerLocation = convert(event.locationInWindow, from: nil)
+        needsDisplay = true
+    }
+    override func mouseMoved(with event: NSEvent) { trackPointer(event) }
+    override func mouseEntered(with event: NSEvent) { trackPointer(event) }
+    override func mouseExited(with event: NSEvent) { pointerLocation = nil; needsDisplay = true }
     var selectionViewRect: NSRect? {
         guard let selection, !selection.isEmpty,
               selection.origin.x.isFinite, selection.origin.y.isFinite,
@@ -215,6 +253,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                        y: min(image.size.height, max(0, (location.y - rect.minY) * image.size.height / rect.height)))
     }
     override func mouseDown(with event: NSEvent) {
+        trackPointer(event)
         guard editing, let point = point(for: event, clamp: false) else { return }
         commitText()
         window?.makeFirstResponder(self)
@@ -248,6 +287,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         draft = item
     }
     override func mouseDragged(with event: NSEvent) {
+        trackPointer(event)
         if let drag = selectionDrag, let point = point(for: event, clamp: true) {
             selection = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: drag.original, bounds: NSRect(origin: .zero, size: image.size))
             return
@@ -499,6 +539,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.level = captureScreen == nil ? .floating : NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.minSize = NSSize(width: 808, height: 220)
