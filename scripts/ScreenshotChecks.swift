@@ -20,6 +20,8 @@ import AppKit
         canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 30, y: 30), end: NSPoint(x: 200, y: 150)))
         precondition(!canvas.canRedo, "New annotation invalidates redo")
         let preview = ScreenshotWindow(image: source)
+        precondition(preview.window?.hidesOnDeactivate == false, "Screenshot preview must stay visible when the captured app is active")
+        precondition(preview.window?.collectionBehavior.contains(.canJoinAllSpaces) == true, "Screenshot preview must be reachable on the capture Space")
         preview.canvas.append(area)
         preview.canvas.append(ScreenshotAnnotation(tool: .rectangle, start: NSPoint(x: 180, y: 70), end: NSPoint(x: 400, y: 220)))
         preview.canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 450, y: 280), end: NSPoint(x: 320, y: 180)))

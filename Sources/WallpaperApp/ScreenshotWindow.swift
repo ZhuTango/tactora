@@ -155,6 +155,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 400, height: 290), styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
         panel.title = AppLanguage.english ? "Screenshot" : "截图"
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.level = .floating
         panel.minSize = NSSize(width: 400, height: 250)
         super.init(window: panel)

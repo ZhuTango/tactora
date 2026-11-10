@@ -168,6 +168,7 @@ final class ScreenshotManager {
         let panel = NSPanel(contentRect: NSRect(x: screen.midX - 200, y: screen.midY - 150, width: max(120, image.size.width * scale), height: max(80, image.size.height * scale)), styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
         panel.title = AppLanguage.english ? "Pinned Screenshot" : "贴图"
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let view = NSImageView()
