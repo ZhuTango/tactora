@@ -406,6 +406,30 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
 }
 
 @MainActor
+final class ScreenshotToolButton: NSButton {
+    private var hoverArea: NSTrackingArea?
+    private(set) var hovered = false
+    override var state: NSControl.StateValue { didSet { refreshBackground() } }
+    override var isEnabled: Bool { didSet { refreshBackground() } }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; refreshBackground() }
+    override func mouseExited(with event: NSEvent) { hovered = false; refreshBackground() }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); refreshBackground() }
+    func refreshBackground() {
+        let selected = state == .on
+        let color = selected ? NSColor.controlAccentColor : NSColor.labelColor
+        let alpha: CGFloat = !isEnabled ? 0 : (hovered ? (selected ? 0.32 : 0.14) : (selected ? 0.16 : 0))
+        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = color.withAlphaComponent(alpha).cgColor }
+    }
+}
+
+@MainActor
 final class ScreenshotToolbarView: NSVisualEffectView {
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -434,6 +458,10 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     var onPin: ((NSImage) -> Void)?
     var onOCR: ((Data) -> Void)?
+    var onSession: ((ScreenshotSession.Mode, NSScreen, CGRect, Int) -> Void)?
+    private let captureScreen: NSScreen?
+    private var appearanceOptions = ScreenshotAppearance()
+    private var appearanceSheet: ScreenshotAppearanceSheet?
     private let feedback = NSTextField(labelWithString: "")
     private var undoButton: NSButton!
     private var toolButtons: [NSButton] = []
@@ -452,6 +480,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private let colors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemBlue, .systemGreen, .white, .black]
 
     init(image: NSImage, captureScreen: NSScreen? = nil, selectWhole: Bool = false) {
+        self.captureScreen = captureScreen
         canvas = ScreenshotCanvas(image: image)
         canvas.selectionEnabled = captureScreen != nil
         if let captureScreen { canvas.contentScale = captureScreen.backingScaleFactor }
@@ -514,6 +543,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(iconButton("pin", label: AppLanguage.english ? "Pin · P" : "贴图 · P", action: #selector(pinImage)))
         toolbar.addArrangedSubview(iconButton("text.viewfinder", label: AppLanguage.english ? "Recognize text · O" : "识字 · O", action: #selector(recognize)))
         toolbar.addArrangedSubview(iconButton("square.and.arrow.down", label: AppLanguage.english ? "Save · ⌘S" : "保存 · ⌘S", action: #selector(saveImage)))
+        let more = iconButton("ellipsis.circle", label: AppLanguage.english ? "Watermark, style, scrolling capture and recording" : "水印、美化、滚动截图与录制", action: #selector(showMore(_:)))
+        toolbar.addArrangedSubview(more)
         toolbar.addArrangedSubview(separator())
         toolbar.addArrangedSubview(iconButton("xmark", label: AppLanguage.english ? "Cancel · Esc" : "取消 · Esc", action: #selector(cancelCapture)))
         let copy = iconButton("checkmark", label: AppLanguage.english ? "Copy and close · Enter" : "复制并关闭 · Enter", action: #selector(copyImage))
@@ -524,7 +555,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let names = AppLanguage.english ? ["Red", "Orange", "Yellow", "Blue", "Green", "White", "Black"] : ["红色", "橙色", "黄色", "蓝色", "绿色", "白色", "黑色"]
         palette.spacing = 4
         for (index, color) in colors.enumerated() {
-            let button = NSButton(image: NSImage(systemSymbolName: "circle.fill", accessibilityDescription: names[index])!, target: self, action: #selector(changeColor(_:)))
+            let button = ScreenshotToolButton(image: NSImage(systemSymbolName: "circle.fill", accessibilityDescription: names[index])!, target: self, action: #selector(changeColor(_:)))
             button.tag = index
             button.isBordered = false
             button.contentTintColor = color
@@ -561,7 +592,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let divider = NSBox()
         divider.boxType = .separator
         if captureScreen != nil {
-            let card = floatingCard(size: NSSize(width: 664, height: 44))
+            let card = floatingCard(size: NSSize(width: 700, height: 44))
             card.identifier = NSUserInterfaceItemIdentifier("screenshot.toolbar")
             floatingControls = card
             let style = floatingCard(size: NSSize(width: 188, height: 36))
@@ -641,7 +672,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     private func iconButton(_ symbol: String, label: String, action: Selector) -> NSButton {
-        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label)!, target: self, action: action)
+        let button = ScreenshotToolButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label)!, target: self, action: action)
         button.bezelStyle = .regularSquare
         button.isBordered = false
         button.wantsLayer = true
@@ -670,7 +701,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         let buttons = toolButtons + [selectionButton].compactMap { $0 }
         for button in buttons {
             button.contentTintColor = button.state == .on ? .controlAccentColor : .labelColor
-            button.layer?.backgroundColor = button.state == .on ? NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+            (button as? ScreenshotToolButton)?.refreshBackground()
         }
     }
     private func separator() -> NSView {
@@ -828,7 +859,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     @objc private func redoMark() { canvas.redoAnnotation() }
     @objc func copyImage() {
         canvas.commitText()
-        guard let data = canvas.pngData() else { showFailure(); return }
+        guard let data = exportPNG() else { showFailure(); return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.setData(data, forType: .png) { close() }
@@ -836,7 +867,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     @objc func saveImage() {
         canvas.commitText()
-        guard let window, let data = canvas.pngData() else { showFailure(); return }
+        guard let window, let data = exportPNG() else { showFailure(); return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         let formatter = DateFormatter()
@@ -852,7 +883,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     @objc private func pinImage() {
         canvas.commitText()
-        guard let image = canvas.renderedImage(), let onPin else { showFailure(); return }
+        guard let image = exportImage(), let onPin else { showFailure(); return }
         onPin(image)
         close()
     }
@@ -865,6 +896,70 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         guard let data = canvas.pngData(), let onOCR else { showFailure(); return }
         onOCR(data)
         close()
+    }
+    private func exportImage() -> NSImage? {
+        guard let source = canvas.renderedImage() else { return nil }
+        return appearanceOptions.render(source)
+    }
+    private func exportPNG() -> Data? {
+        guard let image = exportImage(), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        return NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+    }
+    @objc private func showMore(_ sender: NSButton) {
+        canvas.commitText()
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let entries: [(String, String, Selector, Int)] = [
+            ("水印与美化…", "wand.and.stars", #selector(editAppearance), 0),
+            ("滚动截图…", "scroll", #selector(startSession(_:)), 1),
+            ("录制视频…", "video", #selector(startSession(_:)), 2),
+            ("录制 GIF…", "photo.stack", #selector(startSession(_:)), 3)
+        ]
+        for (title, icon, action, tag) in entries {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = tag
+            item.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+            item.isEnabled = tag == 0 || (captureScreen != nil && onSession != nil)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+    }
+    @objc private func editAppearance() {
+        canvas.commitText()
+        guard let window, window.attachedSheet == nil, let image = canvas.renderedImage() else { return }
+        let sheet = ScreenshotAppearanceSheet(image: image, value: appearanceOptions)
+        appearanceSheet = sheet
+        sheet.onApply = { [weak self] value in self?.appearanceOptions = value }
+        if let sheetWindow = sheet.window { window.beginSheet(sheetWindow) { [weak self] _ in self?.appearanceSheet = nil } }
+    }
+    @objc private func startSession(_ sender: NSMenuItem) {
+        guard let captureScreen, let selection = canvas.selection, selection.width >= 64, selection.height >= 64 else {
+            feedback.stringValue = "请先选择至少 64 × 64 像素的区域"
+            return
+        }
+        let mode: ScreenshotSession.Mode = sender.tag == 1 ? .scroll : (sender.tag == 2 ? .video : .gif)
+        let alert = NSAlert()
+        alert.messageText = sender.title.replacingOccurrences(of: "…", with: "")
+        alert.informativeText = mode == .scroll
+            ? "将捕获所选区域的实时画面。向下滚动后逐帧添加，完成后继续标注。请避开固定页眉和动态内容。现有标注仅属于当前静态截图。"
+            : "录制所选区域的实时画面，包含鼠标指针，无音频。视频最长 30 分钟、最长边 1920 像素，GIF 最长 60 秒、最长边 960 像素。完成后选择保存位置。"
+        let rate = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28))
+        rate.addItems(withTitles: mode == .gif ? ["8 fps", "12 fps"] : ["15 fps", "30 fps"])
+        if mode != .scroll { alert.accessoryView = rate }
+        alert.addButton(withTitle: "开始")
+        alert.addButton(withTitle: "取消")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let factor = self.canvas.contentScale
+            let region = CGRect(x: selection.minX / factor, y: (self.canvas.image.size.height - selection.maxY) / factor,
+                                width: selection.width / factor, height: selection.height / factor)
+            let fps = mode == .gif ? [8, 12][rate.indexOfSelectedItem] : [15, 30][rate.indexOfSelectedItem]
+            let callback = self.onSession
+            self.close()
+            callback?(mode, captureScreen, region, fps)
+        }
     }
     private func showFailure() { feedback.stringValue = AppLanguage.english ? "Could not export image" : "无法导出图片" }
 }

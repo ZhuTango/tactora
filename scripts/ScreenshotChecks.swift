@@ -64,7 +64,7 @@ import AppKit
             let toolbar = views.first { $0.identifier?.rawValue == "screenshot.toolbar" }!
             let style = views.first { $0.identifier?.rawValue == "screenshot.style" }!
             let dimensions = views.first { $0.identifier?.rawValue == "screenshot.dimensions" }!
-            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 664)
+            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 700)
             precondition(style.isHidden && dimensions.superview === root)
             let arrow = views.first { $0.identifier?.rawValue == "screenshot.tool.0" } as! NSButton
             arrow.performClick(nil)

@@ -22,6 +22,7 @@ final class ScreenshotManager {
     private var generation = UUID()
     private var previews: [UUID: ScreenshotWindow] = [:]
     private var pins: [NSWindow] = []
+    private var session: ScreenshotSession?
     private(set) var busy = false
     private(set) var status = ""
     var onChange: (() -> Void)?
@@ -65,6 +66,7 @@ final class ScreenshotManager {
         onChange?()
     }
     func stop() {
+        session?.cancel()
         generation = UUID()
         pendingCapture?.cancel(); pendingCapture = nil
         if process?.isRunning == true { process?.terminate() }
@@ -77,7 +79,7 @@ final class ScreenshotManager {
         onChange?()
     }
     func capture(_ mode: Mode) {
-        guard ToolFeature.screenshot.isEnabled(in: defaults), !busy else { return }
+        guard ToolFeature.screenshot.isEnabled(in: defaults), !busy, session == nil else { return }
         guard canCapture?() != false else {
             status = AppLanguage.english ? "Another capture is in progress" : "其他截图正在进行，请完成后重试"
             onChange?(); return
@@ -157,10 +159,35 @@ final class ScreenshotManager {
         preview.onClose = { [weak self] in self?.previews.removeValue(forKey: id) }
         preview.onPin = { [weak self] image in self?.pin(image) }
         preview.onOCR = { [weak self] data in self?.onOCR?(data) }
+        preview.onSession = { [weak self] mode, screen, region, fps in
+            self?.startSession(mode: mode, screen: screen, region: region, fps: fps)
+        }
         previews[id] = preview
         preview.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         preview.window?.makeKeyAndOrderFront(nil)
+    }
+    private func startSession(mode: ScreenshotSession.Mode, screen: NSScreen, region: CGRect, fps: Int) {
+        guard session == nil else { return }
+        do {
+            let session = try ScreenshotSession(mode: mode, screen: screen, region: region, fps: fps)
+            self.session = session
+            busy = true
+            previews.values.forEach { $0.window?.orderOut(nil) }
+            pins.forEach { $0.orderOut(nil) }
+            session.onImage = { [weak self] image in self?.present(image) }
+            session.onClose = { [weak self] in
+                self?.session = nil
+                self?.busy = false
+                self?.restoreWindows()
+                self?.onChange?()
+            }
+            session.start()
+            onChange?()
+        } catch {
+            status = error.localizedDescription
+            onChange?()
+        }
     }
     private func pin(_ image: NSImage) {
         pins.removeAll { !$0.isVisible }
