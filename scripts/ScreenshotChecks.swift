@@ -55,6 +55,30 @@ import AppKit
         preview.canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 450, y: 280), end: NSPoint(x: 320, y: 180)))
         preview.canvas.append(ScreenshotAnnotation(tool: .text, start: NSPoint(x: 180, y: 250), end: .zero, text: "Tactora 截图"))
         preview.editImage()
+        if let screen = NSScreen.main {
+            let compact = ScreenshotWindow(image: source, captureScreen: screen)
+            compact.canvas.selection = NSRect(x: 150, y: 120, width: 900, height: 400)
+            let root = compact.window!.contentView!
+            func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
+            let views = descendants(root)
+            let toolbar = views.first { $0.identifier?.rawValue == "screenshot.toolbar" }!
+            let style = views.first { $0.identifier?.rawValue == "screenshot.style" }!
+            let dimensions = views.first { $0.identifier?.rawValue == "screenshot.dimensions" }!
+            precondition(toolbar.frame.height == 44 && toolbar.frame.width == 384)
+            precondition(style.isHidden && dimensions.superview === root)
+            let arrow = views.first { $0.identifier?.rawValue == "screenshot.tool.0" } as! NSButton
+            arrow.performClick(nil)
+            precondition(!style.isHidden && !style.frame.intersects(toolbar.frame))
+            let pointer = views.first { $0.identifier?.rawValue == "screenshot.select" } as! NSButton
+            pointer.performClick(nil)
+            precondition(style.isHidden)
+            for origin in [NSPoint.zero, NSPoint(x: 0, y: compact.canvas.image.size.height - 40)] {
+                compact.canvas.selection = NSRect(origin: origin, size: NSSize(width: 40, height: 40))
+                precondition(dimensions.isHidden || !dimensions.frame.intersects(toolbar.frame), "Small edge selections must not overlap the dimension badge")
+            }
+            compact.close()
+            print("PASS: compact one-row toolbar, contextual styles and detached selection dimensions")
+        }
         if CommandLine.arguments.contains("--overlay"), let screen = NSScreen.main {
             preview.close()
             let overlay = ScreenshotWindow(image: source, captureScreen: screen)
