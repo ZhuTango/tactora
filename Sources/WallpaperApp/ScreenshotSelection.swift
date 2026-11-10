@@ -2,6 +2,22 @@ import AppKit
 
 /// Coordinates are source-image pixels with a bottom-left origin.
 enum ScreenshotSelection {
+    static func cursorRegions(in rect: NSRect, excluding exclusions: [NSRect]) -> [NSRect] {
+        guard !rect.isEmpty, rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.width.isFinite, rect.height.isFinite else { return [] }
+        return exclusions.reduce([rect]) { regions, excluded in
+            regions.flatMap { region -> [NSRect] in
+                let overlap = region.intersection(excluded)
+                guard !overlap.isEmpty else { return [region] }
+                return [
+                    NSRect(x: region.minX, y: region.minY, width: region.width, height: overlap.minY - region.minY),
+                    NSRect(x: region.minX, y: overlap.maxY, width: region.width, height: region.maxY - overlap.maxY),
+                    NSRect(x: region.minX, y: overlap.minY, width: overlap.minX - region.minX, height: overlap.height),
+                    NSRect(x: overlap.maxX, y: overlap.minY, width: region.maxX - overlap.maxX, height: overlap.height)
+                ].filter { !$0.isEmpty }
+            }
+        }
+    }
     static func handles(_ rect: NSRect) -> [NSPoint] {
         [NSPoint(x: rect.minX, y: rect.minY), NSPoint(x: rect.midX, y: rect.minY),
          NSPoint(x: rect.maxX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.midY),

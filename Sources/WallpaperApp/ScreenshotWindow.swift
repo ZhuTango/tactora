@@ -39,6 +39,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     private let imageContext = CIContext(options: [.useSoftwareRenderer: false])
     private var textEditor: NSTextField?
     private var textOrigin = NSPoint.zero
+    var cursorExclusions: [NSRect] = []
     var selectionEnabled = false
     var selectionMode = true
     var selection: NSRect? {
@@ -277,16 +278,21 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     override func resetCursorRects() {
         guard !imageRect.isEmpty, imageRect.origin.x.isFinite, imageRect.origin.y.isFinite,
               imageRect.width.isFinite, imageRect.height.isFinite else { return }
-        addCursorRect(imageRect, cursor: selectionEnabled && selectionMode ? .crosshair : tool == .text ? .iBeam : .crosshair)
+        registerCanvasCursor(imageRect, cursor: selectionEnabled && selectionMode ? .crosshair : tool == .text ? .iBeam : .crosshair)
         if selectionEnabled, let rect = selectionViewRect {
             // CGRect.insetBy returns a null rect with infinite origin when it collapses.
             if selectionMode, rect.width > 16, rect.height > 16 {
-                addCursorRect(rect.insetBy(dx: 8, dy: 8), cursor: .openHand)
+                registerCanvasCursor(rect.insetBy(dx: 8, dy: 8), cursor: .openHand)
             }
-            addCursorRect(NSRect(x: rect.minX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
-            addCursorRect(NSRect(x: rect.maxX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
-            addCursorRect(NSRect(x: rect.minX, y: rect.minY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
-            addCursorRect(NSRect(x: rect.minX, y: rect.maxY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
+            registerCanvasCursor(NSRect(x: rect.minX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
+            registerCanvasCursor(NSRect(x: rect.maxX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
+            registerCanvasCursor(NSRect(x: rect.minX, y: rect.minY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
+            registerCanvasCursor(NSRect(x: rect.minX, y: rect.maxY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
+        }
+    }
+    private func registerCanvasCursor(_ rect: NSRect, cursor: NSCursor) {
+        for region in ScreenshotSelection.cursorRegions(in: rect, excluding: cursorExclusions) {
+            addCursorRect(region, cursor: cursor)
         }
     }
     func beginText(at point: NSPoint) {
@@ -397,6 +403,14 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     }
     var canUndo: Bool { !undoStates.isEmpty }
     var canRedo: Bool { !redoStates.isEmpty }
+}
+
+@MainActor
+final class ScreenshotToolbarView: NSVisualEffectView {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if !bounds.isEmpty { addCursorRect(bounds, cursor: .arrow) }
+    }
 }
 
 @MainActor
@@ -641,7 +655,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         return button
     }
     private func floatingCard(size: NSSize) -> NSVisualEffectView {
-        let card = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+        let card = ScreenshotToolbarView(frame: NSRect(origin: .zero, size: size))
         card.material = .popover
         card.blendingMode = .withinWindow
         card.state = .active
@@ -674,6 +688,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             floatingStyle?.isHidden = true
             feedback.isHidden = true
             selectionHint?.isHidden = false
+            canvas.cursorExclusions = []
+            window?.invalidateCursorRects(for: canvas)
             return
         }
         card.isHidden = false
@@ -707,7 +723,10 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             feedback.isHidden = feedback.frame.intersects(card.frame)
                 || (floatingStyle.map { !$0.isHidden && feedback.frame.intersects($0.frame) } ?? false)
         }
+        canvas.cursorExclusions = [card, floatingStyle].compactMap { $0 }.filter { !$0.isHidden }.map { canvas.convert($0.bounds, from: $0) }
         window?.invalidateCursorRects(for: canvas)
+        window?.invalidateCursorRects(for: card)
+        if let style = floatingStyle { window?.invalidateCursorRects(for: style) }
     }
     @objc private func selectRegion() {
         canvas.commitText()

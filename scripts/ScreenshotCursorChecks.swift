@@ -24,6 +24,19 @@ import AppKit
             canvas.resetCursorRects()
             canvas.discardCursorRects()
         }
+        let toolbar = NSRect(x: 50, y: 50, width: 100, height: 44)
+        let style = NSRect(x: 70, y: 10, width: 70, height: 30)
+        let regions = ScreenshotSelection.cursorRegions(in: canvas.bounds, excluding: [toolbar, style])
+        precondition(regions.allSatisfy { !$0.intersects(toolbar) && !$0.intersects(style) })
+        let expectedArea = canvas.bounds.width * canvas.bounds.height - toolbar.width * toolbar.height - style.width * style.height
+        precondition(regions.reduce(0) { $0 + $1.width * $1.height } == expectedArea)
+        canvas.cursorExclusions = [toolbar, style]
+        canvas.resetCursorRects()
+        canvas.discardCursorRects()
+        let controls = ScreenshotToolbarView(frame: toolbar)
+        controls.resetCursorRects()
+        controls.discardCursorRects()
+        print("PASS: canvas cursor regions exclude toolbar and style controls; toolbar registers arrow cursor")
         canvas.selection = .null
         canvas.resetCursorRects()
         canvas.discardCursorRects()
