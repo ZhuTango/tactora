@@ -40,6 +40,32 @@ import AppKit
         canvas.undoAnnotation()
         canvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 30, y: 30), end: NSPoint(x: 200, y: 150)))
         precondition(!canvas.canRedo, "New annotation invalidates redo")
+        let escapePreview = ScreenshotWindow(image: source)
+        var escapeClosed = false
+        escapePreview.onClose = { escapeClosed = true }
+        escapePreview.showWindow(nil)
+        for tool in ScreenshotAnnotation.Tool.allCases {
+            escapePreview.canvas.append(ScreenshotAnnotation(tool: tool, start: NSPoint(x: 10, y: 10), end: NSPoint(x: 100, y: 100)))
+        }
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                      windowNumber: escapePreview.window!.windowNumber, context: nil,
+                                      characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        escapePreview.canvas.beginText(at: NSPoint(x: 20, y: 20))
+        escapePreview.window!.keyDown(with: escape)
+        precondition(escapePreview.canvas.annotations.count == ScreenshotAnnotation.Tool.allCases.count)
+        precondition(escapePreview.canvas.subviews.compactMap { $0 as? NSTextField }.isEmpty)
+        for remaining in (0..<ScreenshotAnnotation.Tool.allCases.count).reversed() {
+            escapePreview.window!.keyDown(with: escape)
+            precondition(!escapeClosed && escapePreview.canvas.annotations.count == remaining)
+            precondition(escapePreview.canvas.annotations.map(\.tool) == Array(ScreenshotAnnotation.Tool.allCases.prefix(remaining)))
+        }
+        escapePreview.canvas.undoAnnotation()
+        precondition(escapePreview.canvas.annotations.count == 1)
+        escapePreview.canvas.redoAnnotation()
+        precondition(escapePreview.canvas.annotations.isEmpty)
+        escapePreview.window!.keyDown(with: escape)
+        precondition(escapeClosed)
+        print("PASS: Escape cancels text draft, removes every annotation type newest-first, supports undo/redo and closes only when empty")
         let preview = ScreenshotWindow(image: source)
         precondition(preview.window?.hidesOnDeactivate == false, "Screenshot preview must stay visible when the captured app is active")
         precondition(preview.window?.collectionBehavior.contains(.canJoinAllSpaces) == true, "Screenshot preview must be reachable on the capture Space")

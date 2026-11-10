@@ -509,6 +509,31 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         window?.makeFirstResponder(self)
         return true
     }
+    @discardableResult func cancelLatestAnnotation() -> Bool {
+        if textEditor != nil {
+            textEditor?.removeFromSuperview()
+            textEditor = nil
+            editingTextIndex = nil
+            needsDisplay = true
+            window?.makeFirstResponder(self)
+            return true
+        }
+        if draft != nil {
+            draft = nil
+            needsDisplay = true
+            return true
+        }
+        guard !annotations.isEmpty else { return false }
+        undoStates.append(annotations)
+        annotations.removeLast()
+        redoStates.removeAll()
+        selectedCoverIndex = nil
+        coverDrag = nil
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+        onChange?()
+        return true
+    }
     var activeCoverTint: NSColor? {
         if let index = selectedCoverIndex, annotations.indices.contains(index) { return annotations[index].coverTint }
         return coverTint
@@ -710,7 +735,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             toolbar.addArrangedSubview(button)
         }
         toolbar.addArrangedSubview(separator())
-        toolbar.addArrangedSubview(iconButton("xmark", label: AppLanguage.english ? "Cancel · Esc" : "取消 · Esc", action: #selector(cancelCapture)))
+        toolbar.addArrangedSubview(iconButton("xmark", label: AppLanguage.english ? "Exit screenshot" : "退出截图", action: #selector(cancelCapture)))
         let copy = iconButton("checkmark", label: AppLanguage.english ? "Copy and close · Enter" : "复制并关闭 · Enter", action: #selector(copyImage))
         copy.bezelStyle = .rounded
         copy.contentTintColor = .controlAccentColor
@@ -1012,7 +1037,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         guard !event.modifierFlags.contains(.control), !event.modifierFlags.contains(.option) else { return false }
         switch key {
         case "\r": copyImage()
-        case "\u{1b}": close()
+        case "\u{1b}":
+            if !canvas.cancelLatestAnnotation() { close() }
         case "v": selectRegion()
         case "f":
             if canvas.selectionEnabled { canvas.selection = NSRect(origin: .zero, size: canvas.image.size) }
