@@ -5,9 +5,9 @@ struct ScreenshotAppearance {
     var watermark = ""
     var tiled = false
     var opacity: CGFloat = 0.35
-    var background = 0
-    var padding: CGFloat = 48
-    var radius: CGFloat = 16
+    var background = 1
+    var padding: CGFloat = 30
+    var radius: CGFloat = 40
     var shadow = true
 
     @MainActor func render(_ image: NSImage, scale: CGFloat = 1) -> NSImage? {
@@ -85,8 +85,8 @@ final class ScreenshotAppearanceSheet: NSWindowController, NSTextFieldDelegate {
     private let placement = NSPopUpButton()
     private let background = NSPopUpButton()
     private let opacity = NSSlider(value: 0.35, minValue: 0.1, maxValue: 1, target: nil, action: nil)
-    private let padding = NSSlider(value: 48, minValue: 16, maxValue: 120, target: nil, action: nil)
-    private let radius = NSSlider(value: 16, minValue: 0, maxValue: 48, target: nil, action: nil)
+    private let padding = NSSlider(value: 30, minValue: 16, maxValue: 120, target: nil, action: nil)
+    private let radius = NSSlider(value: 40, minValue: 0, maxValue: 48, target: nil, action: nil)
     private let shadow = NSButton(checkboxWithTitle: "阴影", target: nil, action: nil)
     private let opacityValue = NSTextField(labelWithString: "")
     private let paddingValue = NSTextField(labelWithString: "")

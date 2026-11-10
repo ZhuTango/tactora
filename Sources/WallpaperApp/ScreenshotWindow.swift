@@ -463,7 +463,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     private var sessionButtons: [NSButton] = []
     private let captureScreen: NSScreen?
-    private var appearanceOptions = ScreenshotAppearance()
+    private var appearanceOptions: ScreenshotAppearance?
     private var appearanceSheet: ScreenshotAppearanceSheet?
     private let feedback = NSTextField(labelWithString: "")
     private var undoButton: NSButton!
@@ -915,6 +915,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     private func exportImage() -> NSImage? {
         guard let source = canvas.renderedImage() else { return nil }
+        guard let appearanceOptions else { return source }
         return appearanceOptions.render(source)
     }
     private func exportPNG() -> Data? {
@@ -924,7 +925,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     @objc private func editAppearance() {
         canvas.commitText()
         guard let window, window.attachedSheet == nil, let image = canvas.renderedImage() else { return }
-        let sheet = ScreenshotAppearanceSheet(image: image, value: appearanceOptions)
+        let sheet = ScreenshotAppearanceSheet(image: image, value: appearanceOptions ?? ScreenshotAppearance())
         appearanceSheet = sheet
         sheet.onApply = { [weak self] value in self?.appearanceOptions = value }
         if let sheetWindow = sheet.window { window.beginSheet(sheetWindow) { [weak self] _ in self?.appearanceSheet = nil } }

@@ -59,6 +59,8 @@ struct ScreenshotExtrasChecks {
 
         let image = NSImage(cgImage: first, size: NSSize(width: first.width, height: first.height))
         var style = ScreenshotAppearance()
+        precondition(style.background == 1 && style.padding == 30 && style.radius == 40)
+        style.background = 0
         let original = style.render(image)!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
         precondition(pixels(original) == pixels(first))
         style.watermark = "Tactora 测试"
@@ -67,7 +69,7 @@ struct ScreenshotExtrasChecks {
         style.tiled = true
         style.background = 1
         let decorated = style.render(image)!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
-        precondition(decorated.width == 256 && decorated.height == 496)
+        precondition(decorated.width == 220 && decorated.height == 460)
         print("PASS plain export fidelity, watermark pixels, background padding")
 
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
