@@ -12,6 +12,39 @@ import AppKit
         let canvas = ScreenshotCanvas(image: image)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = canvas
+        for effect in [ScreenshotAnnotation.CoverEffect.pixelate, .solid] {
+            let editable = ScreenshotCanvas(image: image)
+            let editWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 256, height: 256), styleMask: [.borderless], backing: .buffered, defer: false)
+            editWindow.isReleasedWhenClosed = false
+            editWindow.contentView = editable
+            editable.tool = .cover
+            editable.append(ScreenshotAnnotation(tool: .cover, start: NSPoint(x: 20, y: 20), end: NSPoint(x: 50, y: 50), coverEffect: effect))
+            func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat) -> NSEvent {
+                let scale = editable.imageRect.width / editable.image.size.width
+                return NSEvent.mouseEvent(with: type, location: NSPoint(x: editable.imageRect.minX + x * scale, y: editable.imageRect.minY + y * scale), modifierFlags: [], timestamp: 0, windowNumber: editWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            editable.mouseDown(with: event(.leftMouseDown, 35, 35))
+            editable.mouseDragged(with: event(.leftMouseDragged, 45, 45))
+            editable.mouseUp(with: event(.leftMouseUp, 45, 45))
+            precondition(editable.annotations.count == 1 && editable.annotations[0].rect == NSRect(x: 30, y: 30, width: 30, height: 30))
+            editable.undoAnnotation()
+            precondition(editable.annotations[0].rect == NSRect(x: 20, y: 20, width: 30, height: 30))
+            editable.redoAnnotation()
+            editable.mouseDown(with: event(.leftMouseDown, 45, 45))
+            editable.mouseUp(with: event(.leftMouseUp, 45, 45))
+            editable.mouseDown(with: event(.leftMouseDown, 60, 60))
+            editable.mouseDragged(with: event(.leftMouseDragged, 80, 90))
+            editable.mouseUp(with: event(.leftMouseUp, 80, 90))
+            precondition(editable.annotations[0].rect == NSRect(x: 30, y: 30, width: 50, height: 60))
+            precondition(editable.annotations[0].coverEffect == effect)
+            let output = NSBitmapImageRep(data: editable.renderedImage()!.tiffRepresentation!)!
+            precondition(output.colorAt(x: 25, y: 25)!.blueComponent > 0.9)
+            if effect == .solid { precondition(output.colorAt(x: 45, y: 70)!.redComponent < 0.01) }
+            editable.undoAnnotation()
+            precondition(editable.annotations[0].rect == NSRect(x: 30, y: 30, width: 30, height: 30))
+            editWindow.close()
+        }
+        print("PASS: mosaic and solid cover move, resize, unchanged effect, exported position and single-step undo/redo")
         canvas.contentScale = 2
         canvas.textSize = 18
         canvas.beginText(at: NSPoint(x: 20, y: 100))

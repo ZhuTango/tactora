@@ -6,7 +6,7 @@ struct ScreenshotAnnotation {
     enum Tool: Int, CaseIterable { case arrow, rectangle, text, cover, ellipse, line, pen, highlight, number }
     enum CoverEffect { case solid, pixelate }
     let tool: Tool
-    let start: NSPoint
+    var start: NSPoint
     var end: NSPoint
     var text = ""
     var color: NSColor = .systemRed
@@ -49,7 +49,9 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     }
     var onSelectionChange: (() -> Void)?
     private var selectionDrag: (handle: Int, start: NSPoint, original: NSRect)?
-    var tool = ScreenshotAnnotation.Tool.arrow
+    private var selectedCoverIndex: Int?
+    private var coverDrag: (index: Int, handle: Int, start: NSPoint, original: NSRect, before: [ScreenshotAnnotation])?
+    var tool = ScreenshotAnnotation.Tool.arrow { didSet { selectedCoverIndex = nil; needsDisplay = true } }
     var onChange: (() -> Void)?
 
     init(image: NSImage) {
@@ -81,6 +83,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         drawImage(includingDraft: true)
         NSGraphicsContext.restoreGraphicsState()
         if selectionEnabled { drawSelection() }
+        drawCoverControls()
         if let point = alignmentGuidePoint {
             let lines = NSBezierPath()
             lines.move(to: NSPoint(x: bounds.minX, y: point.y))
@@ -147,6 +150,46 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             handle.lineWidth = 1.5
             handle.stroke()
         }
+    }
+    private var selectedCoverRect: NSRect? {
+        guard tool == .cover, !selectionMode || !selectionEnabled,
+              let index = selectedCoverIndex, annotations.indices.contains(index), annotations[index].tool == .cover else { return nil }
+        let rect = annotations[index].rect
+        let scale = imageRect.width / image.size.width
+        return NSRect(x: imageRect.minX + rect.minX * scale, y: imageRect.minY + rect.minY * scale,
+                      width: rect.width * scale, height: rect.height * scale)
+    }
+    private func drawCoverControls() {
+        guard let rect = selectedCoverRect else { return }
+        NSColor.controlAccentColor.setStroke()
+        let border = NSBezierPath(rect: rect)
+        border.lineWidth = 1
+        border.stroke()
+        for point in ScreenshotSelection.handles(rect) {
+            let handle = NSBezierPath(rect: NSRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6))
+            NSColor.white.setFill()
+            handle.fill()
+            handle.lineWidth = 1
+            handle.stroke()
+        }
+    }
+    private func beginCoverDrag(at point: NSPoint) -> Bool {
+        guard tool == .cover, !selectionEnabled || !selectionMode else { return false }
+        let tolerance = 6 * image.size.width / max(1, imageRect.width)
+        if let index = selectedCoverIndex, annotations.indices.contains(index),
+           let handle = ScreenshotSelection.hitHandle(point, rect: annotations[index].rect, tolerance: tolerance) {
+            coverDrag = (index, handle, point, annotations[index].rect, annotations)
+            return true
+        }
+        guard let index = annotations.lastIndex(where: { $0.tool == .cover && $0.rect.contains(point) }) else {
+            selectedCoverIndex = nil
+            return false
+        }
+        selectedCoverIndex = index
+        coverDrag = (index, -2, point, annotations[index].rect, annotations)
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+        return true
     }
     private func drawImage(includingDraft: Bool) {
         image.draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .copy, fraction: 1)
@@ -257,6 +300,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard editing, let point = point(for: event, clamp: false) else { return }
         commitText()
         window?.makeFirstResponder(self)
+        if beginCoverDrag(at: point) { return }
         if selectionEnabled {
             let rect = selection ?? .zero
             let tolerance = 8 * image.size.width / max(1, imageRect.width)
@@ -288,6 +332,14 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     }
     override func mouseDragged(with event: NSEvent) {
         trackPointer(event)
+        if let drag = coverDrag, let point = point(for: event, clamp: true) {
+            let bounds = NSRect(origin: .zero, size: image.size)
+            let rect = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: drag.original, bounds: bounds)
+            annotations[drag.index].start = rect.origin
+            annotations[drag.index].end = NSPoint(x: rect.maxX, y: rect.maxY)
+            needsDisplay = true
+            return
+        }
         if let drag = selectionDrag, let point = point(for: event, clamp: true) {
             selection = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: drag.original, bounds: NSRect(origin: .zero, size: image.size))
             return
@@ -299,6 +351,17 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
+        if let drag = coverDrag {
+            mouseDragged(with: event)
+            coverDrag = nil
+            if annotations[drag.index].rect != drag.original {
+                undoStates.append(drag.before)
+                redoStates.removeAll()
+                onChange?()
+            }
+            window?.invalidateCursorRects(for: self)
+            return
+        }
         if selectionDrag != nil {
             mouseDragged(with: event)
             selectionDrag = nil
@@ -311,6 +374,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             draft.end = point
             if draft.tool == .pen { draft.points.append(point) }
             append(draft)
+            if draft.tool == .cover { selectedCoverIndex = annotations.count - 1 }
+            window?.invalidateCursorRects(for: self)
         }
         needsDisplay = true
     }
@@ -328,6 +393,18 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             registerCanvasCursor(NSRect(x: rect.maxX - 5, y: rect.minY, width: 10, height: rect.height), cursor: .resizeLeftRight)
             registerCanvasCursor(NSRect(x: rect.minX, y: rect.minY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
             registerCanvasCursor(NSRect(x: rect.minX, y: rect.maxY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
+        }
+        if tool == .cover, !selectionEnabled || !selectionMode {
+            let scale = imageRect.width / image.size.width
+            for item in annotations where item.tool == .cover {
+                let rect = NSRect(x: imageRect.minX + item.rect.minX * scale, y: imageRect.minY + item.rect.minY * scale, width: item.rect.width * scale, height: item.rect.height * scale)
+                registerCanvasCursor(rect, cursor: .openHand)
+            }
+            if let rect = selectedCoverRect {
+                for (index, point) in ScreenshotSelection.handles(rect).enumerated() {
+                    registerCanvasCursor(NSRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12), cursor: [1, 5].contains(index) ? .resizeUpDown : .resizeLeftRight)
+                }
+            }
         }
     }
     private func registerCanvasCursor(_ rect: NSRect, cursor: NSCursor) {
@@ -431,6 +508,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard let state = undoStates.popLast() else { return }
         redoStates.append(annotations)
         annotations = state
+        selectedCoverIndex = nil
+        window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()
     }
@@ -438,6 +517,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard let state = redoStates.popLast() else { return }
         undoStates.append(annotations)
         annotations = state
+        selectedCoverIndex = nil
+        window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()
     }
