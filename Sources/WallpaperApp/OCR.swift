@@ -25,6 +25,7 @@ final class OCRManager {
     var conflicts: ((ClipboardShortcut) -> Bool)?
     var onChange: (() -> Void)?
     var onCapture: (() -> Void)?
+    var canCapture: (() -> Bool)?
     var onShowHistory: (() -> Void)?
     var lineBreakMode: OCRLineBreakMode {
         get { OCRLineBreakMode.saved(in: defaults) }
@@ -66,7 +67,7 @@ final class OCRManager {
         if process?.isRunning == true { process?.terminate() }
     }
     func capture() {
-        guard ToolFeature.ocr.isEnabled(in: defaults), !busy else { return }
+        guard ToolFeature.ocr.isEnabled(in: defaults), !busy, canCapture?() != false else { return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             let alert = NSAlert()
             alert.messageText = AppLanguage.english ? "Screen Recording permission required" : "截图识字需要屏幕录制权限"
@@ -113,6 +114,7 @@ final class OCRManager {
             recognize(try Data(contentsOf: url))
         } catch { notify("无法读取图片：" + error.localizedDescription, "Could not read image: " + error.localizedDescription) }
     }
+    func recognizeScreenshot(_ data: Data) { recognize(data) }
     private func recognize(_ data: Data) {
         guard !busy, ToolFeature.ocr.isEnabled(in: defaults) else { return }
         busy = true; status = AppLanguage.english ? "Recognizing…" : "正在识别…"; onChange?()

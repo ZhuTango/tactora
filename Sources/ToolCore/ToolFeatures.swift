@@ -2,7 +2,7 @@ import Foundation
 
 // Existing tools default on; hardware fan control requires explicit opt-in.
 enum ToolFeature: String, CaseIterable {
-    case clipboard, wallpaper, apps, windows, awake, ocr, text, keyboard, calendar, fans
+    case clipboard, wallpaper, apps, windows, awake, ocr, text, keyboard, calendar, fans, screenshot
     func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: "toolEnabled." + rawValue) as? Bool ?? (self != .fans)
     }

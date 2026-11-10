@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let calendarTool = CalendarTool()
     private let fanControl = FanControlManager()
     private var ocr: OCRManager!
+    private let screenshots = ScreenshotManager()
     private var textWindow: TextProcessingWindow?
     private let textShortcut = TextToolsShortcut()
     private let quickShortcut = QuickActionsShortcut()
@@ -64,12 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clipboardShortcut.action = { [weak self] in self?.showClipboard() }
         shortcutRegistered = ToolFeature.clipboard.isEnabled() && clipboardShortcut.register()
         appSwitcher = AppSwitcher(start: ToolFeature.apps.isEnabled())
-        appSwitcher.conflicts = { [weak self] in self?.quickShortcut.contains($0) == true }
+        appSwitcher.conflicts = { [weak self] in self?.quickShortcut.contains($0) == true || self?.screenshots.contains($0) == true }
         appSwitcher.setFeatureEnabled(ToolFeature.apps.isEnabled())
         ocr = OCRManager(store: clipboard)
         ocr.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.screenshots.contains(value) == true || self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.containsShortcut(value) == true || self?.windowManager.contains(value) == true
         }
@@ -77,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ocr.onShowHistory = { [weak self] in self?.presentClipboard() }
         windowManager.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.screenshots.contains(value) == true || self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.bindings.values.contains(where: { $0.shortcut?.keyCode == value.keyCode && $0.shortcut?.modifiers == value.modifiers }) == true
         }
@@ -85,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ocr.refreshEnabled()
         textShortcut.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
-            return self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+            return self?.screenshots.contains(value) == true || self?.quickShortcut.contains(value) == true || (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || OCRManager.savedContains(value) || self?.windowManager.contains(value) == true
                 || self?.appSwitcher.containsShortcut(value) == true
         }
@@ -96,11 +97,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let clipboard = ClipboardShortcut.saved()
             return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
                 || self.appSwitcher.containsShortcut(value) || self.windowManager.contains(value)
-                || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value)
+                || OCRManager.savedContains(value) || TextToolsShortcut.savedContains(value) || self.screenshots.contains(value)
         }
         quickShortcut.onOpen = { [weak self] in self?.showQuickActions() }
         quickShortcut.onChange = { [weak self] in self?.updateMenu() }
         quickShortcut.start()
+        screenshots.conflicts = { [weak self] value in
+            guard let self else { return true }
+            let clipboard = ClipboardShortcut.saved()
+            return (clipboard.keyCode == value.keyCode && clipboard.modifiers == value.modifiers)
+                || self.quickShortcut.contains(value) || OCRManager.savedContains(value)
+                || TextToolsShortcut.savedContains(value) || self.appSwitcher.containsShortcut(value)
+                || self.windowManager.contains(value)
+        }
+        screenshots.onCapture = { [weak self] in
+            self?.clipboardWindow?.close()
+            self?.clipboardSettings?.window?.orderOut(nil)
+            self?.quickWindow?.dismiss(restoreFocus: false)
+        }
+        screenshots.canCapture = { [weak self] in self?.ocr.busy != true }
+        ocr.canCapture = { [weak self] in self?.screenshots.busy != true }
+        screenshots.onOCR = { [weak self] data in self?.ocr.recognizeScreenshot(data) }
+        screenshots.refreshEnabled()
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = ToolIcon.statusImage(awake: false)
@@ -234,6 +252,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ToolFeature.clipboard.isEnabled() {
             let item = add(shortcutRegistered ? AppLanguage.text("剪贴板列表…") : "剪贴板列表…（快捷键被占用）", to: self.menu, action: #selector(showClipboard))
             if shortcutRegistered { applyShortcut(ClipboardShortcut.saved(), to: item) }
+        }
+        if ToolFeature.screenshot.isEnabled() {
+            let item = add(AppLanguage.english ? "Screenshot" : "截图", to: self.menu)
+            let submenu = NSMenu()
+            for mode in ScreenshotManager.Mode.allCases {
+                let action = NSMenuItem(title: mode.title, action: #selector(captureScreenshot(_:)), keyEquivalent: "")
+                action.target = self; action.tag = mode.rawValue
+                if mode == .area, let shortcut = screenshots.shortcut { applyShortcut(shortcut, to: action) }
+                submenu.addItem(action)
+            }
+            item.submenu = submenu
         }
         if ToolFeature.ocr.isEnabled() {
             let item = add(AppLanguage.english ? "Capture Text…" : "截图识字…", to: self.menu, action: #selector(captureText))
@@ -683,6 +712,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         var actions = Array(windowActions.prefix(3))
         actions += [
+            command("screenshot.area", "区域截图", "Capture Area", "截图 screenshot capture", "camera.viewfinder", feature: .screenshot),
+            command("screenshot.window", "窗口截图", "Capture Window", "截图 window screenshot", "macwindow", feature: .screenshot),
+            command("screenshot.screen", "全屏截图", "Capture Screen", "截图 screen screenshot", "display", feature: .screenshot),
             command("ocr", "截图识字", "Capture Text", "OCR 截图 提取文字", "text.viewfinder", feature: .ocr),
             command("clipboard", "搜索剪贴板历史", "Clipboard History", "复制 粘贴 clipboard", "doc.on.clipboard", feature: .clipboard),
             command("text", "文本处理", "Text Tools", "JSON 时间戳 timestamp 格式化 对比", "text.alignleft", feature: .text),
@@ -727,6 +759,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 context.application?.activate(options: [])
             } else {
                 switch id {
+                case "screenshot.area", "screenshot.window", "screenshot.screen":
+                    guard available(.screenshot) else { return }
+                    completion(.success(()))
+                    context.application?.activate(options: [])
+                    screenshots.capture(id == "screenshot.area" ? .area : id == "screenshot.window" ? .window : .screen)
+                    return
                 case "ocr": guard available(.ocr) else { return }; completion(.success(())); context.application?.activate(options: []); captureText(); return
                 case "clipboard": guard available(.clipboard) else { return }; presentClipboard()
                 case "text": guard available(.text) else { return }; showTextTools()
@@ -756,6 +794,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         textWindow?.present()
     }
 
+    @objc private func captureScreenshot(_ sender: NSMenuItem) {
+        if let mode = ScreenshotManager.Mode(rawValue: sender.tag) { screenshots.capture(mode) }
+    }
     @objc private func captureText() { ocr.capture() }
     @objc private func showKeyboardSettings() { showClipboardSettings(); clipboardSettings?.selectSection("keyboard") }
 
@@ -764,7 +805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showClipboardSettings() {
         if clipboardSettings == nil {
             let settings = ClipboardSettingsWindow(store: clipboard)
-            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool, fans: fanControl, quickActionsView: QuickActionsSettingsView(manager: quickShortcut))
+            settings.configureUnified(backgroundMenu: backgroundMenu, appSwitcher: appSwitcher, windowManager: windowManager, keepAwake: keepAwake, ocr: ocr, textShortcut: textShortcut, keyboard: keyboardManager, calendar: calendarTool, fans: fanControl, quickActionsView: QuickActionsSettingsView(manager: quickShortcut), screenshotView: ScreenshotSettingsView(manager: screenshots))
             settings.onLidSleepChange = { [weak self] in self?.lidDisplaySleep.refresh() }
             settings.onFeatureChange = { [weak self] feature, enabled in self?.applyFeature(feature, enabled: enabled) }
             settings.onLanguageChange = { [weak self] in
@@ -779,7 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showSettings()
             }
             settings.onShortcutChange = { [weak self] value in
-                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), !TextToolsShortcut.savedContains(value), !self.quickShortcut.contains(value), self.clipboardShortcut.register(value) else { return false }
+                guard let self, ToolFeature.clipboard.isEnabled(), !self.appSwitcher.containsShortcut(value), !self.windowManager.contains(value), !OCRManager.savedContains(value), !TextToolsShortcut.savedContains(value), !self.quickShortcut.contains(value), !self.screenshots.contains(value), self.clipboardShortcut.register(value) else { return false }
                 value.save()
                 self.shortcutRegistered = true
                 self.updateMenu()
@@ -799,6 +840,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func applyFeature(_ feature: ToolFeature, enabled: Bool) {
         switch feature {
+        case .screenshot:
+            screenshots.refreshEnabled()
         case .fans:
             fanControl.setEnabled(enabled)
         case .calendar:
@@ -840,6 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keyboardManager.stop()
         calendarTool.stop()
         fanControl.stop()
+        screenshots.stop()
         ocr?.stop()
         quickShortcut.stop()
         quickWindow?.close()

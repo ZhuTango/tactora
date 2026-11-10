@@ -195,7 +195,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let alert = NSAlert(); alert.messageText = AppLanguage.text("无法保存剪贴板设置"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
-    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil, calendar: CalendarTool? = nil, fans: FanControlManager? = nil, quickActionsView: NSView? = nil) {
+    func configureUnified(backgroundMenu: NSMenu, appSwitcher: AppSwitcher? = nil, windowManager: WindowManager? = nil, keepAwake: KeepAwake? = nil, ocr: OCRManager? = nil, textShortcut: TextToolsShortcut? = nil, keyboard: KeyboardManager? = nil, calendar: CalendarTool? = nil, fans: FanControlManager? = nil, quickActionsView: NSView? = nil, screenshotView: NSView? = nil) {
         guard tabs == nil, let window, let clipboardView = window.contentView else { return }
         self.backgroundMenu = backgroundMenu
         window.appearance = NSAppearance(named: .darkAqua)
@@ -231,6 +231,12 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
                                    ("wallpaper", AppLanguage.text("桌面背景"), makeBackgroundView())] {
             let item = NSTabViewItem(identifier: id)
             item.label = AppLanguage.text(title); item.view = view
+            tabs.addTabViewItem(item)
+        }
+        if let screenshotView {
+            let item = NSTabViewItem(identifier: "screenshot")
+            item.label = AppLanguage.english ? "Screenshot" : "截图"
+            item.view = screenshotView
             tabs.addTabViewItem(item)
         }
         if let quickActionsView {
@@ -391,6 +397,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
         let featureButtons = ToolFeature.allCases.map { feature -> NSView in
             let title: String
             switch feature {
+            case .screenshot: title = AppLanguage.english ? "Screenshot" : "截图"
             case .fans: title = AppLanguage.english ? "Fan Control" : "风扇温控"
             case .calendar: title = AppLanguage.english ? "Calendar" : "日历"
             case .keyboard: title = AppLanguage.english ? "Keyboard" : "键盘管理"
@@ -402,7 +409,7 @@ final class ClipboardSettingsWindow: NSWindowController, NSWindowDelegate, NSTab
             case .awake: title = AppLanguage.english ? "Keep Awake" : "防止休眠"
             case .windows: title = AppLanguage.english ? "Windows" : "窗口管理"
             }
-            let symbols: [ToolFeature: String] = [.fans: "fanblades", .calendar: "calendar", .keyboard: "keyboard", .clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
+            let symbols: [ToolFeature: String] = [.screenshot: "camera.viewfinder", .fans: "fanblades", .calendar: "calendar", .keyboard: "keyboard", .clipboard: "doc.on.clipboard", .wallpaper: "photo", .apps: "square.stack.3d.up", .windows: "macwindow", .awake: "display.sun", .ocr: "text.viewfinder", .text: "textformat"]
             let row = SettingsToolRow(title: title, symbol: symbols[feature]!, target: self, action: #selector(changeFeature(_:)))
             row.toggle.identifier = NSUserInterfaceItemIdentifier("toolEnabled." + feature.rawValue)
             row.toggle.state = feature.isEnabled(in: defaults) ? .on : .off
