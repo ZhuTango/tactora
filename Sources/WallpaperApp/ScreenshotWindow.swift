@@ -15,6 +15,7 @@ struct ScreenshotAnnotation {
     var fontSize: CGFloat = 18
     var points: [NSPoint] = []
     var coverEffect: CoverEffect = .solid
+    var coverTint: NSColor?
     var pixelSize: CGFloat = 16
     var rect: NSRect {
         NSRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
@@ -35,6 +36,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     var contentScale: CGFloat = 1
     var textSize: CGFloat = 18
     var coverEffect: ScreenshotAnnotation.CoverEffect = .pixelate
+    var coverTint: NSColor?
     private var pixelatedImages: [Int: NSImage] = [:]
     private let imageContext = CIContext(options: [.useSoftwareRenderer: false])
     private var textEditor: NSTextField?
@@ -152,7 +154,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         }
     }
     private var selectedCoverRect: NSRect? {
-        guard tool == .cover, !selectionMode || !selectionEnabled,
+        guard (!selectionEnabled || selection != nil), tool == .cover, !selectionMode || !selectionEnabled,
               let index = selectedCoverIndex, annotations.indices.contains(index), annotations[index].tool == .cover else { return nil }
         let rect = annotations[index].rect
         let scale = imageRect.width / image.size.width
@@ -174,7 +176,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         }
     }
     private func beginCoverDrag(at point: NSPoint) -> Bool {
-        guard tool == .cover, !selectionEnabled || !selectionMode else { return false }
+        guard tool == .cover, !selectionEnabled || (selection != nil && !selectionMode) else { return false }
         let tolerance = 6 * image.size.width / max(1, imageRect.width)
         if let index = selectedCoverIndex, annotations.indices.contains(index),
            let handle = ScreenshotSelection.hitHandle(point, rect: annotations[index].rect, tolerance: tolerance) {
@@ -187,13 +189,17 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         }
         selectedCoverIndex = index
         coverDrag = (index, -2, point, annotations[index].rect, annotations)
+        onChange?()
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
         return true
     }
     private func drawImage(includingDraft: Bool) {
         image.draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .copy, fraction: 1)
-        if selectionEnabled, let selection { NSBezierPath(rect: selection).addClip() }
+        if selectionEnabled {
+            guard let selection else { return }
+            NSBezierPath(rect: selection).addClip()
+        }
         let items = annotations + (includingDraft ? draft.map { [$0] } ?? [] : [])
         for (index, item) in items.enumerated() {
             if includingDraft && index == editingTextIndex { continue }
@@ -206,8 +212,12 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             case .cover:
                 if item.coverEffect == .pixelate, let mosaic = pixelatedImage(blockSize: item.pixelSize) {
                     mosaic.draw(in: item.rect, from: item.rect, operation: .copy, fraction: 1)
+                    if let tint = item.coverTint {
+                        tint.withAlphaComponent(0.35).setFill()
+                        item.rect.fill(using: .sourceOver)
+                    }
                 } else {
-                    NSColor.black.setFill()
+                    (item.coverTint ?? .black).withAlphaComponent(1).setFill()
                     item.rect.fill()
                 }
             case .rectangle:
@@ -263,7 +273,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     private func annotation(at point: NSPoint) -> ScreenshotAnnotation {
         ScreenshotAnnotation(tool: tool, start: point, end: point, color: color, thickness: thickness,
                              strokeWidth: 3 * contentScale, fontSize: textSize * contentScale,
-                             coverEffect: coverEffect, pixelSize: 12 * contentScale * thickness)
+                             coverEffect: coverEffect, coverTint: coverTint, pixelSize: 12 * contentScale * thickness)
     }
     func renderedImage() -> NSImage? {
         if selectionEnabled && selection == nil { return nil }
@@ -362,10 +372,12 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             window?.invalidateCursorRects(for: self)
             return
         }
-        if selectionDrag != nil {
+        if let drag = selectionDrag {
             mouseDragged(with: event)
             selectionDrag = nil
-            if let selection, selection.width < 2 || selection.height < 2 { self.selection = nil }
+            if let selection, selection.width < 2 || selection.height < 2 {
+                self.selection = drag.original.width >= 2 && drag.original.height >= 2 ? drag.original : nil
+            }
             return
         }
         guard var draft else { return }
@@ -497,6 +509,19 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         window?.makeFirstResponder(self)
         return true
     }
+    var activeCoverTint: NSColor? {
+        if let index = selectedCoverIndex, annotations.indices.contains(index) { return annotations[index].coverTint }
+        return coverTint
+    }
+    func setCoverTint(_ tint: NSColor?) {
+        coverTint = tint
+        guard tool == .cover, let index = selectedCoverIndex, annotations.indices.contains(index) else { return }
+        undoStates.append(annotations)
+        annotations[index].coverTint = tint
+        redoStates.removeAll()
+        needsDisplay = true
+        onChange?()
+    }
     func append(_ annotation: ScreenshotAnnotation) {
         undoStates.append(annotations)
         annotations.append(annotation)
@@ -592,6 +617,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private var colorButtons: [NSButton] = []
     private var selectedColor = 0
     private let palette = NSStackView()
+    private var originalCoverColor: NSButton!
     private let textSizePicker = NSPopUpButton()
     private let coverPicker = NSPopUpButton()
     private let options = NSStackView()
@@ -706,6 +732,9 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             palette.addArrangedSubview(button)
             colorButtons.append(button)
         }
+        originalCoverColor = NSButton(title: AppLanguage.english ? "Original" : "原色", target: self, action: #selector(resetCoverColor))
+        originalCoverColor.bezelStyle = .rounded
+        options.addArrangedSubview(originalCoverColor)
         widthPicker.addItems(withTitles: AppLanguage.english ? ["Thin", "Medium", "Thick"] : ["细", "中", "粗"])
         widthPicker.selectItem(at: 1)
         textSizePicker.addItems(withTitles: ["14 pt", "18 pt", "24 pt", "32 pt"])
@@ -911,11 +940,18 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private func updateHistory() {
         undoButton.isEnabled = canvas.canUndo
         redoButton.isEnabled = canvas.canRedo
+        refreshStyleControls()
     }
     @objc private func changeColor(_ sender: NSButton) {
         canvas.commitText()
         selectedColor = sender.tag
         canvas.color = colors[selectedColor]
+        if canvas.tool == .cover { canvas.setCoverTint(colors[selectedColor]) }
+        refreshStyleControls()
+        window?.makeFirstResponder(canvas)
+    }
+    @objc private func resetCoverColor() {
+        canvas.setCoverTint(nil)
         refreshStyleControls()
         window?.makeFirstResponder(canvas)
     }
@@ -931,12 +967,14 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private func refreshStyleControls() {
         let isText = canvas.tool == .text || canvas.tool == .number
         let isCover = canvas.tool == .cover
-        palette.isHidden = isCover
+        palette.isHidden = false
+        originalCoverColor.isHidden = !isCover
         textSizePicker.isHidden = !isText
         coverPicker.isHidden = !isCover
         widthPicker.isHidden = isText || (isCover && canvas.coverEffect == .solid)
         for (index, button) in colorButtons.enumerated() {
-            button.layer?.borderWidth = index == selectedColor ? 1.5 : 0
+            let selected = isCover ? canvas.activeCoverTint == colors[index] : index == selectedColor
+            button.layer?.borderWidth = selected ? 1.5 : 0
             button.layer?.borderColor = NSColor.labelColor.cgColor
         }
     }

@@ -42,6 +42,19 @@ import AppKit
             if effect == .solid { precondition(output.colorAt(x: 45, y: 70)!.redComponent < 0.01) }
             editable.undoAnnotation()
             precondition(editable.annotations[0].rect == NSRect(x: 30, y: 30, width: 30, height: 30))
+            editable.mouseDown(with: event(.leftMouseDown, 45, 45))
+            editable.mouseUp(with: event(.leftMouseUp, 45, 45))
+            editable.setCoverTint(.green)
+            precondition(editable.annotations[0].coverTint == NSColor.green)
+            let tinted = NSBitmapImageRep(data: editable.pngData()!)!.colorAt(x: 45, y: 83)!.usingColorSpace(.deviceRGB)!
+            precondition(tinted.greenComponent > 0.3)
+            editable.undoAnnotation()
+            precondition(editable.annotations[0].coverTint == nil)
+            editable.selectionEnabled = true
+            editable.selection = NSRect(x: 10, y: 10, width: 90, height: 90)
+            editable.mouseDown(with: event(.leftMouseDown, 120, 120))
+            editable.mouseUp(with: event(.leftMouseUp, 120, 120))
+            precondition(editable.selection == NSRect(x: 10, y: 10, width: 90, height: 90), "An outside click must preserve the selection and toolbar")
             editWindow.close()
         }
         print("PASS: mosaic and solid cover move, resize, unchanged effect, exported position and single-step undo/redo")
