@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import AVKit
 import ImageIO
 
 @main
@@ -104,6 +105,55 @@ struct ScreenshotExtrasChecks {
         precondition(CGImageSourceGetCount(gifSource) >= 15)
         precondition(CGImageSourceCreateImageAtIndex(gifSource, 0, nil) != nil)
         print("PASS native MP4 writer, duration, video track and multi-frame GIF export")
+        for isGIF in [true, false] {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let view = ScreenshotRecordingResultView(url: isGIF ? gif : movie, isGIF: isGIF)
+                let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 420), styleMask: [.titled], backing: .buffered, defer: false)
+                panel.isReleasedWhenClosed = false
+                panel.appearance = NSAppearance(named: appearance)
+                panel.contentView = view
+                panel.setContentSize(NSSize(width: 680, height: 420))
+                view.layoutSubtreeIfNeeded()
+                func descendants(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(descendants) }
+                let all = descendants(view)
+                let stage = all.first { $0.identifier?.rawValue == "recording.result.preview" }!
+                precondition(stage.frame.width > 600 && stage.frame.height > 200, "Preview bounds \(stage.frame), root \(view.frame)")
+                let save = all.first { $0.identifier?.rawValue == "recording.result.save" } as! NSButton
+                var saves = 0
+                view.onSave = { saves += 1 }
+                save.performClick(nil)
+                precondition(saves == 1)
+                view.showSaved(isGIF ? gif : movie)
+                view.layoutSubtreeIfNeeded()
+                precondition(save.title == "另存为…")
+                let buttons = all.compactMap { $0 as? NSButton }.filter { !$0.isHidden && !($0.superview is AVPlayerView) }
+                precondition(buttons.contains { $0.title == "在 Finder 中显示" && !$0.isHidden })
+                precondition(buttons.contains { $0.title == "复制 GIF" } == isGIF)
+                precondition(view.metadata.contains("160 × 120"))
+                view.showStatus("保存失败，可重试")
+                let status = all.first { $0.identifier?.rawValue == "recording.result.status" } as! NSTextField
+                precondition(status.stringValue == "保存失败，可重试")
+                view.stopPlayback()
+                panel.close()
+            }
+        }
+        let largeGIF = directory.appendingPathComponent("large.gif")
+        let largeContext = CGContext(data: nil, width: 1600, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        largeContext.draw(first, in: CGRect(x: 0, y: 0, width: 1600, height: 900))
+        let largeDestination = CGImageDestinationCreateWithURL(largeGIF as CFURL, "com.compuserve.gif" as CFString, 1, nil)!
+        CGImageDestinationAddImage(largeDestination, largeContext.makeImage()!, nil)
+        precondition(CGImageDestinationFinalize(largeDestination))
+        let largeView = ScreenshotRecordingResultView(url: largeGIF, isGIF: true)
+        let largePanel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 740, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
+        largePanel.isReleasedWhenClosed = false
+        largePanel.contentView = largeView
+        largePanel.setContentSize(NSSize(width: 740, height: 540))
+        largeView.layoutSubtreeIfNeeded()
+        precondition(largeView.frame.size == NSSize(width: 740, height: 540), "Large media must fit inside the preview without expanding the window")
+        largeView.stopPlayback()
+        largePanel.close()
+        print("PASS GIF/video result preview, light/dark minimum layout, save action, saved and retry states")
         let stillURL = directory.appendingPathComponent("still.mp4")
         let still = ScreenshotStream(framesPerSecond: 15)
         try still.prepareMovie(at: stillURL, width: 160, height: 120)

@@ -26,6 +26,10 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
     private var cancelled = false
     private var completed = false
     private var encodedURL: URL?
+    private var savedURL: URL?
+    private var copiedResult = false
+    private var resultView: ScreenshotRecordingResultView?
+    private let progress = NSProgressIndicator()
     var onImage: ((NSImage) -> Void)?
     var onClose: (() -> Void)?
 
@@ -51,9 +55,15 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         panel.contentView = root
-        status.widthAnchor.constraint(equalToConstant: 344).isActive = true
+        status.widthAnchor.constraint(equalToConstant: 320).isActive = true
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        root.addArrangedSubview(status)
+        progress.style = .spinning
+        progress.controlSize = .small
+        progress.isDisplayedWhenStopped = false
+        progress.startAnimation(nil)
+        let statusRow = NSStackView(views: [progress, status])
+        statusRow.spacing = 8
+        root.addArrangedSubview(statusRow)
         if mode == .scroll {
             let hint = NSTextField(wrappingLabelWithString: "在原窗口向下滚动半屏，停稳后点击“添加当前画面”。选区应避开固定页眉和动画。")
             hint.textColor = .secondaryLabelColor
@@ -67,6 +77,9 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         for button in [appendButton, finishButton, cancelButton] { button.target = self }
         appendButton.action = #selector(appendFrame)
         finishButton.action = #selector(finish)
+        finishButton.title = mode == .scroll ? "完成拼接" : "结束录制"
+        finishButton.bezelStyle = .rounded
+        finishButton.bezelColor = .controlAccentColor
         cancelButton.action = #selector(cancel)
         cancelButton.keyEquivalent = "\u{1b}"
         root.addArrangedSubview(NSStackView(views: mode == .scroll ? [appendButton, cancelButton, finishButton] : [cancelButton, finishButton]))
@@ -101,6 +114,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 try await engine.start(displayID: id, rect: region, scale: screen.backingScaleFactor,
                                        movieURL: mode == .scroll ? nil : directory.appendingPathComponent("recording.mp4"))
                 preparing = false
+                progress.stopAnimation(nil)
                 if cancelled { try? await engine.stop(cancel: true); cleanup(); return }
                 startTime = Date()
                 appendButton.isEnabled = true
@@ -113,6 +127,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 tick()
             } catch {
                 preparing = false
+                progress.stopAnimation(nil)
                 if cancelled { cleanup() }
                 else { status.stringValue = error.localizedDescription; ending = true }
             }
@@ -168,6 +183,8 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         appendButton.isEnabled = false
         finishButton.isEnabled = false
         cancelButton.isEnabled = false
+        progress.startAnimation(nil)
+        border?.close(); border = nil
         status.stringValue = mode == .gif ? "正在生成 GIF…" : "正在完成…"
         Task { [self] in
             do {
@@ -191,18 +208,62 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 }
                 finishing = false
                 if cancelled { cleanup(); return }
-                encodedURL = url
-                cancelButton.isEnabled = true
-                finishButton.isEnabled = true
-                finishButton.title = "保存…"
-                status.stringValue = "录制完成，请保存。取消保存对话框后可重新选择位置。"
-                saveRecording()
+                showRecordingResult(url)
             } catch {
                 finishing = false
+                progress.stopAnimation(nil)
                 if cancelled { cleanup(); return }
                 status.stringValue = error.localizedDescription
                 cancelButton.isEnabled = true
             }
+        }
+    }
+    func showRecordingResult(_ url: URL) {
+        encodedURL = url
+        preparing = false
+        ending = true
+        progress.stopAnimation(nil)
+        guard let window else { return }
+        let view = ScreenshotRecordingResultView(url: url, isGIF: mode == .gif)
+        resultView = view
+        view.onSave = { [weak self] in self?.saveRecording() }
+        view.onCopy = { [weak self] in self?.copyGIF() }
+        view.onReveal = { [weak self] in
+            if let url = self?.savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
+        view.onClose = { [weak self] in self?.requestClose() }
+        let area = (window.screen ?? screen).visibleFrame
+        window.styleMask.insert(.resizable)
+        window.minSize = NSSize(width: 680, height: 420)
+        window.title = mode == .gif ? "GIF 预览" : "视频预览"
+        window.contentView = view
+        window.setContentSize(NSSize(width: min(740, area.width - 40), height: min(540, area.height - 60)))
+        window.setFrameOrigin(NSPoint(x: area.midX - window.frame.width / 2, y: area.midY - window.frame.height / 2))
+        window.makeKeyAndOrderFront(nil)
+    }
+    private func copyGIF() {
+        guard mode == .gif, let url = encodedURL else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            guard pasteboard.setData(data, forType: NSPasteboard.PasteboardType(UTType.gif.identifier)) else {
+                throw ScreenshotStream.encodingError("复制失败，请重试")
+            }
+            copiedResult = true
+            resultView?.showStatus("已复制 GIF，可粘贴到支持动图的应用。")
+        } catch { resultView?.showStatus(error.localizedDescription) }
+    }
+    private func requestClose() {
+        guard encodedURL != nil, savedURL == nil, !copiedResult, let window else { cancel(); return }
+        guard window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "关闭未保存的录制？"
+        alert.informativeText = "保存或复制后即可保留这次录制。"
+        alert.addButton(withTitle: "继续预览")
+        alert.addButton(withTitle: "丢弃")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertSecondButtonReturn { self?.cancel() }
         }
     }
     private func saveRecording() {
@@ -217,11 +278,12 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             do {
                 // An atomic write preserves an existing destination if exporting fails.
                 try Data(contentsOf: url, options: .mappedIfSafe).write(to: destination, options: .atomic)
-                self.cleanup()
-            } catch { self.status.stringValue = "保存失败，可重试。\(error.localizedDescription)" }
+                self.savedURL = destination
+                self.resultView?.showSaved(destination)
+            } catch { self.resultView?.showStatus("保存失败，可重试。\(error.localizedDescription)") }
         }
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { cancel(); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { requestClose(); return false }
     @objc func cancel() {
         guard !completed, !cancelled else { return }
         cancelled = true
@@ -237,6 +299,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
     private func cleanup() {
         guard !completed else { return }
         completed = true
+        resultView?.stopPlayback()
         timer?.invalidate(); timer = nil
         border?.close(); border = nil
         window?.close()
