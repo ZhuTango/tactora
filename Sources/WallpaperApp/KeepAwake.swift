@@ -57,7 +57,8 @@ final class KeepAwake {
         selectedMinutes = minutes
         deadline = minutes == 0 ? nil : Date().addingTimeInterval(Double(minutes * 60))
         if let deadline {
-            let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
+            // Retry if wall-clock changes or an early callback leaves the deadline ahead.
+            let timer = Timer(fire: deadline, interval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.expireIfNeeded() }
             }
             RunLoop.main.add(timer, forMode: .common)
@@ -150,6 +151,7 @@ final class KeepAwakeSettingsView: NSView {
         picker.selectItem(withTag: selected); refresh()
     }
     private func refresh() {
+        manager.expireIfNeeded()
         status.stringValue = manager.status
         stopButton.isEnabled = manager.active
         removeButton.isEnabled = manager.customMinutes.contains(selected)

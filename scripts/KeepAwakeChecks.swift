@@ -35,9 +35,30 @@ import IOKit.pwr_mgt
         ToolFeature.awake.setEnabled(true, in: defaults)
         manager.removeDuration(45); precondition(manager.customMinutes.isEmpty)
         try manager.start(minutes: 1)
+        let timer = Mirror(reflecting: manager).children.first { $0.label == "expiryTimer" }!.value as! Timer?
+        timer!.fire()
+        precondition(manager.active && timer!.isValid, "An early callback must keep checking until the wall-clock deadline")
+        var expiryChanges = 0
+        manager.onChange = { expiryChanges += 1 }
+        let deadline = manager.deadline!
+        manager.expireIfNeeded(now: deadline.addingTimeInterval(-1))
+        precondition(manager.active && expiryChanges == 0)
+        manager.expireIfNeeded(now: deadline.addingTimeInterval(3600))
+        precondition(!manager.active && manager.deadline == nil && manager.selectedMinutes == nil && ours().isEmpty)
+        precondition(!timer!.isValid && expiryChanges == 1)
+        manager.expireIfNeeded(now: deadline.addingTimeInterval(7200))
+        precondition(expiryChanges == 1, "Repeated wake/menu refresh must not emit duplicate expiry changes")
+        try manager.start(minutes: 0)
+        manager.expireIfNeeded(now: Date().addingTimeInterval(86400))
+        precondition(manager.active, "Until-stopped sessions must remain active")
+        manager.stop()
+        try manager.start(minutes: 1)
         // Let macOS enforce the real timeout; no synthetic time or sleep assertion mock.
         print("Checking actual 60-second power assertion timeout…")
-        RunLoop.main.run(until: Date().addingTimeInterval(62))
+        let finish = Date().addingTimeInterval(62)
+        while Date() < finish {
+            RunLoop.main.run(mode: .eventTracking, before: finish)
+        }
         precondition(!manager.active && ours().isEmpty)
         print("PASS: real IOKit assertion type/create/replace/stop/60s expiry, disabled guard, custom duration validation/persistence")
     }

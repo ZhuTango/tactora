@@ -128,11 +128,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         controller.onChange = { [weak self] in self?.updateMenu() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidSleepNotification) { $0.controller.policy.displayAsleep = true }
-        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification) { $0.controller.policy.displayAsleep = false; $0.lidDisplaySleep.displaysDidWake() }
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification) { $0.controller.policy.displayAsleep = false; $0.lidDisplaySleep.displaysDidWake(); $0.keepAwake.expireIfNeeded() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification) { $0.controller.policy.systemAsleep = true }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification) { $0.controller.policy.systemAsleep = false; $0.keepAwake.expireIfNeeded() }
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidResignActiveNotification) { $0.controller.policy.sessionInactive = true }
-        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidBecomeActiveNotification) { $0.controller.policy.sessionInactive = false }
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidBecomeActiveNotification) { $0.controller.policy.sessionInactive = false; $0.keepAwake.expireIfNeeded() }
         observe(.default, .NSProcessInfoPowerStateDidChange) {
             $0.controller.policy.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
@@ -171,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        keepAwake.expireIfNeeded()
         updateMenu()
         if menu === self.menu { fanControl.menuVisible = true; fanControl.poll() }
     }
