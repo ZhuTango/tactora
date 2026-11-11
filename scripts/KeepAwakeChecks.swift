@@ -2,6 +2,9 @@ import AppKit
 import IOKit.pwr_mgt
 @main struct KeepAwakeChecks {
     @MainActor static func main() throws {
+        _ = NSApplication.shared
+        // Standalone test runners do not enter AppKit's menu event loop automatically.
+        CFRunLoopAddCommonMode(CFRunLoopGetMain(), CFRunLoopMode(rawValue: RunLoop.Mode.eventTracking.rawValue as CFString))
         let suite = "awake.checks." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
