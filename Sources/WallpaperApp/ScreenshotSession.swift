@@ -223,7 +223,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             switch result {
             case .success(let next):
                 stitcher = next
-                        if let cg = next.result {
+                if let cg = next.result {
                     preview.image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
                     let width = max(1, previewScroll.contentSize.width)
                     preview.setFrameSize(NSSize(width: width, height: width * CGFloat(cg.height) / CGFloat(cg.width)))
