@@ -34,6 +34,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     var color: NSColor = .systemRed
     var thickness: CGFloat = 1
     var contentScale: CGFloat = 1
+    var displayScale: CGFloat? { didSet { needsDisplay = true } }
     var textSize: CGFloat = 18
     var coverEffect: ScreenshotAnnotation.CoverEffect = .pixelate
     var coverTint: NSColor?
@@ -41,6 +42,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     private let imageContext = CIContext(options: [.useSoftwareRenderer: false])
     private var textEditor: NSTextField?
     private var textOrigin = NSPoint.zero
+    private var editorFontSize: CGFloat = 18
     var cursorExclusions: [NSRect] = []
     var selectionEnabled = false
     var selectionMode = true { didSet { needsDisplay = true } }
@@ -68,7 +70,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("Not used") }
     var imageRect: NSRect {
         guard image.size.width > 0, image.size.height > 0 else { return .zero }
-        let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+        let scale = displayScale ?? min(bounds.width / image.size.width, bounds.height / image.size.height)
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
         return NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
     }
@@ -280,10 +282,11 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         pixelatedImages[size] = mosaic
         return mosaic
     }
+    var annotationScale: CGFloat { imageRect.width > 0 ? image.size.width / imageRect.width : contentScale }
     private func annotation(at point: NSPoint) -> ScreenshotAnnotation {
         ScreenshotAnnotation(tool: tool, start: point, end: point, color: color, thickness: thickness,
-                             strokeWidth: 3 * contentScale, fontSize: textSize * contentScale,
-                             coverEffect: coverEffect, coverTint: coverTint, pixelSize: 12 * contentScale * thickness)
+                             strokeWidth: 3 * annotationScale, fontSize: textSize * annotationScale,
+                             coverEffect: coverEffect, coverTint: coverTint, pixelSize: 12 * annotationScale * thickness)
     }
     func renderedImage() -> NSImage? {
         if selectionEnabled && selection == nil { return nil }
@@ -439,7 +442,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         textOrigin = point
         let field = NSTextField()
         field.placeholderString = AppLanguage.english ? "Type text" : "输入文字"
-        field.font = .systemFont(ofSize: max(1, textSize * contentScale * imageRect.width / image.size.width), weight: .medium)
+        editorFontSize = textSize * annotationScale
+        field.font = .systemFont(ofSize: max(1, textSize), weight: .medium)
         field.textColor = color
         field.drawsBackground = false
         field.isBezeled = false
@@ -460,9 +464,9 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard annotations.indices.contains(index), annotations[index].tool == .text else { return }
         let item = annotations[index]
         color = item.color
-        textSize = item.fontSize / contentScale
+        textSize = item.fontSize / annotationScale
         let font = NSFont.systemFont(ofSize: item.fontSize, weight: .medium)
-        beginText(at: NSPoint(x: item.start.x, y: item.start.y + font.ascender - font.descender + 4 * contentScale))
+        beginText(at: NSPoint(x: item.start.x, y: item.start.y + font.ascender - font.descender + 4 * annotationScale))
         editingTextIndex = index
         textEditor?.stringValue = item.text
         layoutTextEditor()
@@ -477,6 +481,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         let rect = selectionViewRect ?? imageRect
         let scale = imageRect.width / image.size.width
         guard scale > 0 else { return }
+        field.font = .systemFont(ofSize: max(1, editorFontSize * scale), weight: .medium)
         let measured = ((field.stringValue.isEmpty ? "输入文字" : field.stringValue) as NSString).size(withAttributes: [.font: field.font!])
         let width = min(rect.width, max(90, measured.width + 12))
         let height = min(rect.height, ceil(field.font!.ascender - field.font!.descender + field.font!.leading) + 4)
@@ -507,7 +512,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             }
             needsDisplay = true
         } else if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            append(ScreenshotAnnotation(tool: .text, start: position, end: position, text: value, color: color, fontSize: textSize * contentScale))
+            append(ScreenshotAnnotation(tool: .text, start: position, end: position, text: value, color: color, fontSize: editorFontSize))
         }
     }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -589,6 +594,49 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
 }
 
 @MainActor
+final class ScreenshotEditorViewport: NSScrollView {
+    let canvas: ScreenshotCanvas
+    private var zoom: CGFloat?
+    init(canvas: ScreenshotCanvas) {
+        self.canvas = canvas
+        super.init(frame: .zero)
+        documentView = canvas
+        hasVerticalScroller = true
+        hasHorizontalScroller = true
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+    }
+    required init?(coder: NSCoder) { fatalError("Not used") }
+    func setZoom(_ zoom: CGFloat?) {
+        canvas.commitText()
+        self.zoom = zoom
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        canvas.window?.invalidateCursorRects(for: canvas)
+    }
+    override func layout() {
+        super.layout()
+        let visible = contentView.bounds
+        guard visible.width > 0, visible.height > 0 else { return }
+        let old = canvas.imageRect
+        let center = old.width > 0
+            ? NSPoint(x: (visible.midX - old.minX) / old.width, y: (visible.midY - old.minY) / old.height)
+            : NSPoint(x: 0.5, y: 1)
+        let scale = zoom ?? min(visible.width / canvas.image.size.width, visible.height / canvas.image.size.height)
+        let size = NSSize(width: max(visible.width, canvas.image.size.width * scale), height: max(visible.height, canvas.image.size.height * scale))
+        canvas.displayScale = scale
+        guard canvas.frame.size != size else { canvas.needsLayout = true; return }
+        canvas.setFrameSize(size)
+        let rect = canvas.imageRect
+        let origin = NSPoint(x: max(0, min(size.width - visible.width, rect.minX + rect.width * center.x - visible.width / 2)),
+                             y: max(0, min(size.height - visible.height, rect.minY + rect.height * center.y - visible.height / 2)))
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+        canvas.needsDisplay = true
+    }
+}
+
+@MainActor
 final class ScreenshotToolButton: NSButton {
     private var hoverArea: NSTrackingArea?
     private(set) var hovered = false
@@ -660,6 +708,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     private let options = NSStackView()
     private var redoButton: NSButton!
     private let widthPicker = NSPopUpButton()
+    private let zoomPicker = NSPopUpButton()
+    private var editorViewport: ScreenshotEditorViewport?
     private var floatingControls: NSView?
     private var floatingStyle: NSView?
     private var selectionButton: NSButton?
@@ -838,15 +888,24 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             ])
             canvas.onSelectionChange = { [weak self] in self?.positionTools() }
         } else {
-        for view in [canvas, toolbar, options, feedback, divider] {
+        let viewport = ScreenshotEditorViewport(canvas: canvas)
+        editorViewport = viewport
+        zoomPicker.addItems(withTitles: [AppLanguage.english ? "Fit" : "适应窗口", "25%", "50%", "100%", "200%"])
+        zoomPicker.controlSize = .small
+        zoomPicker.setAccessibilityLabel(AppLanguage.english ? "Image zoom" : "图片缩放")
+        zoomPicker.identifier = NSUserInterfaceItemIdentifier("screenshot.zoom")
+        zoomPicker.target = self
+        zoomPicker.action = #selector(changeZoom)
+        options.addArrangedSubview(zoomPicker)
+        for view in [viewport, toolbar, options, feedback, divider] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            canvas.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
-            canvas.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            canvas.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            canvas.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -10),
+            viewport.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
+            viewport.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            viewport.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            viewport.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -10),
             divider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             divider.bottomAnchor.constraint(equalTo: options.topAnchor, constant: -8),
@@ -990,6 +1049,11 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     @objc private func resetCoverColor() {
         canvas.setCoverTint(nil)
         refreshStyleControls()
+        window?.makeFirstResponder(canvas)
+    }
+    @objc private func changeZoom() {
+        let scales: [CGFloat?] = [nil, 0.25, 0.5, 1, 2]
+        editorViewport?.setZoom(scales[zoomPicker.indexOfSelectedItem])
         window?.makeFirstResponder(canvas)
     }
     @objc private func changeStyle() {

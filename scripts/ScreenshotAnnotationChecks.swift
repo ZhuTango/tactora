@@ -105,6 +105,38 @@ import AppKit
         precondition(dragging.annotations[0].rect == restored, "Redo must not resume an invalidated drag")
         dragWindow.close()
         print("PASS: overlapping redactions remain opaque; undo/redo during cover drag is safe")
+        let zoomCanvas = ScreenshotCanvas(image: image)
+        let viewport = ScreenshotEditorViewport(canvas: zoomCanvas)
+        let zoomWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240), styleMask: [.borderless], backing: .buffered, defer: false)
+        zoomWindow.isReleasedWhenClosed = false
+        zoomWindow.contentView = viewport
+        viewport.setZoom(0.25)
+        precondition(abs(zoomCanvas.imageRect.width / zoomCanvas.image.size.width - 0.25) < 0.001)
+        zoomCanvas.tool = .arrow
+        func zoomEvent(_ type: NSEvent.EventType, _ offset: CGFloat) -> NSEvent {
+            let point = zoomCanvas.convert(NSPoint(x: zoomCanvas.imageRect.minX + offset, y: zoomCanvas.imageRect.minY + offset), to: nil)
+            return NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: zoomWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        zoomCanvas.mouseDown(with: zoomEvent(.leftMouseDown, 5))
+        zoomCanvas.mouseUp(with: zoomEvent(.leftMouseUp, 25))
+        precondition(zoomCanvas.annotations.last!.strokeWidth == 12, "Three-point visible stroke maps to twelve pixels at 25 percent")
+        zoomCanvas.undoAnnotation()
+        zoomCanvas.beginText(at: NSPoint(x: 20, y: 100))
+        let zoomField = zoomCanvas.subviews.compactMap { $0 as? NSTextField }.first!
+        precondition(abs(zoomField.font!.pointSize - 18) < 0.01)
+        zoomField.stringValue = "Z"
+        zoomCanvas.commitText()
+        precondition(zoomCanvas.annotations.last!.fontSize == 72)
+        let exported = zoomCanvas.pngData()!
+        viewport.setZoom(2)
+        precondition(abs(zoomCanvas.imageRect.width / zoomCanvas.image.size.width - 2) < 0.001)
+        precondition(zoomCanvas.pngData()! == exported, "Zoom must preserve export pixels and existing annotations")
+        zoomCanvas.beginEditingText(at: 0)
+        precondition(abs(zoomCanvas.subviews.compactMap { $0 as? NSTextField }.first!.font!.pointSize - 144) < 0.01)
+        zoomCanvas.commitText()
+        precondition(zoomCanvas.annotations[0].fontSize == 72)
+        zoomWindow.close()
+        print("PASS: view-relative annotation text, zoom levels, re-edit sizing and unchanged export")
         print("PASS: mosaic and solid cover move, resize, unchanged effect, exported position and single-step undo/redo")
         canvas.contentScale = 2
         canvas.textSize = 18
