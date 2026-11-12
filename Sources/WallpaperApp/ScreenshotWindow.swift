@@ -1135,6 +1135,15 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
             return
         }
         let mode: ScreenshotSession.Mode = sender.tag == 1 ? .scroll : (sender.tag == 2 ? .video : .gif)
+        if mode == .scroll {
+            let factor = canvas.contentScale
+            let region = CGRect(x: selection.minX / factor, y: (canvas.image.size.height - selection.maxY) / factor,
+                                width: selection.width / factor, height: selection.height / factor)
+            let callback = onSession
+            close()
+            callback?(mode, captureScreen, region, 5)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = sender.toolTip ?? ""
         alert.informativeText = mode == .scroll

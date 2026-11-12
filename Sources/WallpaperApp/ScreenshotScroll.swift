@@ -12,13 +12,13 @@ struct ScreenshotScrollStitcher {
             switch self {
             case .mismatch: return "无法可靠拼接。请向下滚动约半屏，保持窗口与选区位置不变，避开固定页眉、视频和动画。"
             case .unchanged: return "画面没有变化，请向下滚动后再添加。"
-            case .limit: return "长截图已达上限（30 帧、30000 像素高或 6000 万像素），请完成当前截图。"
+            case .limit: return "长截图已达上限（30000 像素高或 6000 万像素），请完成当前截图。"
             }
         }
     }
     mutating func append(_ image: CGImage) throws {
         guard let previous, let result else { self.previous = image; result = image; count = 1; return }
-        guard count < 30, previous.width == image.width, previous.height == image.height else { throw StitchError.limit }
+        guard previous.width == image.width, previous.height == image.height else { throw StitchError.limit }
         let shift = try Self.verticalShift(from: previous, to: image)
         let height = result.height + shift
         guard height <= 30_000, result.width * height <= 60_000_000,
@@ -60,7 +60,7 @@ struct ScreenshotScrollStitcher {
             return Double(difference) / Double(max(1, count))
         }
         if error(0) < 0.5 { throw StitchError.unchanged }
-        let matches = (8...Int(Double(old.height) * 0.8)).map { ($0, error($0)) }.sorted { $0.1 < $1.1 }
+        let matches = (1...Int(Double(old.height) * 0.85)).map { ($0, error($0)) }.sorted { $0.1 < $1.1 }
         guard let best = matches.first, best.1 < 4,
               let alternative = matches.first(where: { abs($0.0 - best.0) > 8 }), alternative.1 > best.1 + 0.6 else { throw StitchError.mismatch }
         return best.0

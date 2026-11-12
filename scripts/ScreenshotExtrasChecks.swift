@@ -55,6 +55,15 @@ struct ScreenshotExtrasChecks {
         do { try stitcher.append(unrelated); preconditionFailure("Unmatched frame accepted") }
         catch ScreenshotScrollStitcher.StitchError.mismatch {}
         precondition(stitcher.count == 2)
+        var continuous = ScreenshotScrollStitcher()
+        try continuous.append(first)
+        for offset in 1...40 {
+            let frame = full.cropping(to: CGRect(x: 0, y: offset, width: width, height: 400))!
+            try continuous.append(frame)
+        }
+        precondition(continuous.count == 41 && continuous.result!.height == 440)
+        precondition(pixels(continuous.result!) == pixels(full.cropping(to: CGRect(x: 0, y: 0, width: width, height: 440))!))
+        print("PASS continuous one-pixel scrolling and more than 30 frames")
         print("PASS scroll overlap, pixel-exact stitching, unchanged/mismatched frame rejection")
 
         let image = NSImage(cgImage: first, size: NSSize(width: first.width, height: first.height))
@@ -165,6 +174,15 @@ struct ScreenshotExtrasChecks {
                 let stack = root.subviews.first as! NSStackView
                 for row in stack.arrangedSubviews {
                     precondition(root.bounds.insetBy(dx: -1, dy: -1).contains(row.convert(row.bounds, to: root)), "Session controls must fit")
+                }
+                if mode == .scroll {
+                    func descendants(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(descendants) }
+                    let controls = descendants(root)
+                    let buttons = controls.compactMap { $0 as? NSButton }
+                    precondition(buttons.contains { $0.title == "重新开始" })
+                    precondition(!buttons.contains { $0.title.contains("添加") })
+                    precondition(buttons.contains { $0.title == "完成" && $0.keyEquivalent == "\r" })
+                    precondition(controls.contains { $0 is NSScrollView })
                 }
                 session.showRecordingResult(mode == .gif ? gif : movie)
                 session.cancel()

@@ -13,7 +13,13 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
     private var stitcher = ScreenshotScrollStitcher()
     private let status = NSTextField(wrappingLabelWithString: "正在准备…")
     private let preview = NSImageView()
-    private let appendButton = NSButton(title: "添加当前画面", target: nil, action: nil)
+    private let resetButton = NSButton(title: "重新开始", target: nil, action: nil)
+    private let previewScroll = NSScrollView()
+    private var lastProcessedImage: CGImage?
+    private var pendingFinish = false
+    private var finalScrollImage: CGImage?
+    private var scrollReadyToFinish = false
+    private var scrollGeneration = UUID()
     private let finishButton = NSButton(title: "完成", target: nil, action: nil)
     private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
     private var border: NSPanel?
@@ -64,12 +70,11 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         let statusRow = NSStackView(views: [progress, status])
         statusRow.spacing = 6
         statusRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        for button in [appendButton, finishButton, cancelButton] { button.target = self }
-        appendButton.title = "添加一帧"
-        appendButton.action = #selector(appendFrame)
-        appendButton.keyEquivalent = "\r"
-        appendButton.toolTip = "向下滚动半屏，停稳后添加 · Enter"
+        for button in [resetButton, finishButton, cancelButton] { button.target = self }
+        resetButton.action = #selector(resetScroll)
+        resetButton.toolTip = "清空拼接结果，从当前画面重新开始"
         finishButton.action = #selector(finish)
+        if mode == .scroll { finishButton.keyEquivalent = "\r" }
         finishButton.title = mode == .scroll ? "完成" : "停止"
         finishButton.bezelStyle = .rounded
         finishButton.bezelColor = .controlAccentColor
@@ -87,20 +92,23 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             stack.alignment = .leading
             status.widthAnchor.constraint(equalToConstant: 286).isActive = true
             stack.addArrangedSubview(statusRow)
-            let hint = NSTextField(labelWithString: "向下滚动，停稳后添加")
+            let hint = NSTextField(labelWithString: "在内容区域缓慢向下滚动，自动拼接")
             hint.font = .systemFont(ofSize: 11)
             hint.textColor = .secondaryLabelColor
-            hint.toolTip = "每次向下滚动约半屏，保持窗口与选区位置不变，避开固定页眉和动画。"
+            hint.toolTip = "保持窗口与选区位置不变。可滚动预览检查接缝，不满意时重新开始。固定页眉和动画请留在选区外。"
             hint.heightAnchor.constraint(equalToConstant: 16).isActive = true
             stack.addArrangedSubview(hint)
-            preview.imageScaling = .scaleProportionallyUpOrDown
-            preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-            preview.widthAnchor.constraint(equalToConstant: 308).isActive = true
-            preview.heightAnchor.constraint(equalToConstant: previewHeight).isActive = true
-            stack.addArrangedSubview(preview)
+            preview.imageScaling = .scaleAxesIndependently
+            previewScroll.documentView = preview
+            previewScroll.hasVerticalScroller = true
+            previewScroll.autohidesScrollers = true
+            previewScroll.borderType = .bezelBorder
+            previewScroll.setAccessibilityLabel("长截图实时预览")
+            previewScroll.widthAnchor.constraint(equalToConstant: 308).isActive = true
+            previewScroll.heightAnchor.constraint(equalToConstant: previewHeight).isActive = true
+            stack.addArrangedSubview(previewScroll)
             let spacer = NSView()
-            let actions = NSStackView(views: [spacer, appendButton, finishButton])
+            let actions = NSStackView(views: [spacer, resetButton, finishButton])
             actions.spacing = 8
             actions.widthAnchor.constraint(equalToConstant: 308).isActive = true
             actions.heightAnchor.constraint(equalToConstant: 30).isActive = true
@@ -117,10 +125,16 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12)
         ])
         panel.setContentSize(contentSize)
-        appendButton.isEnabled = false
+        resetButton.isEnabled = false
         finishButton.isEnabled = false
         let area = screen.visibleFrame
-        panel.setFrameTopLeftPoint(NSPoint(x: max(area.minX, area.maxX - contentSize.width - 20), y: area.maxY - 20))
+        let capture = NSRect(x: screen.frame.minX + region.minX, y: screen.frame.maxY - region.maxY, width: region.width, height: region.height)
+        var x = area.maxX - panel.frame.width - 12
+        if mode == .scroll {
+            if capture.maxX + 12 + panel.frame.width <= area.maxX { x = capture.maxX + 12 }
+            else if capture.minX - 12 - panel.frame.width >= area.minX { x = capture.minX - 12 - panel.frame.width }
+        }
+        panel.setFrameTopLeftPoint(NSPoint(x: max(area.minX, x), y: min(area.maxY, max(area.minY + panel.frame.height, capture.maxY))))
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     func start() {
@@ -151,7 +165,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 progress.stopAnimation(nil)
                 if cancelled { try? await engine.stop(cancel: true); cleanup(); return }
                 startTime = Date()
-                appendButton.isEnabled = true
+                resetButton.isEnabled = true
                 finishButton.isEnabled = mode != .scroll
                 let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
                     Task { @MainActor in self?.tick() }
@@ -171,7 +185,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         guard !ending else { return }
         if let error = engine.error { status.stringValue = error.localizedDescription; finish(); return }
         if mode == .scroll {
-            if stitcher.count == 0, engine.snapshot != nil { appendFrame() }
+            appendFrame()
         } else {
             let seconds = Int(Date().timeIntervalSince(startTime))
             let limit = mode == .gif ? 60 : 1800
@@ -180,42 +194,75 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             if seconds >= limit { finish() }
         }
     }
-    @objc private func appendFrame() {
-        guard !ending, !appending, let image = engine.snapshot else { return }
-        appending = true
+    @objc private func resetScroll() {
+        guard mode == .scroll, !ending, !pendingFinish else { return }
+        scrollGeneration = UUID()
+        stitcher = ScreenshotScrollStitcher()
+        lastProcessedImage = nil
+        preview.image = nil
         finishButton.isEnabled = false
-        appendButton.isEnabled = false
+        status.stringValue = "正在获取当前画面…"
+        // The in-flight task will discard its old result and then capture this generation.
+        if !appending { appendFrame() }
+    }
+    private func appendFrame(image suppliedImage: CGImage? = nil) {
+        guard !ending, !appending, let image = suppliedImage ?? engine.snapshot, image !== lastProcessedImage else { return }
+        lastProcessedImage = image
+        appending = true
         let current = stitcher
+        let generation = scrollGeneration
         Task { [self] in
-            // Matching runs off the main thread so the recording controls stay responsive.
             let result = await Task.detached(priority: .userInitiated) { () -> Result<ScreenshotScrollStitcher, Error> in
                 var next = current
                 do { try next.append(image); return .success(next) }
                 catch { return .failure(error) }
             }.value
-            guard !ending, !cancelled else { return }
             appending = false
-            finishButton.isEnabled = stitcher.count > 0
+            guard !ending, !cancelled else { return }
+            guard generation == scrollGeneration else { appendFrame(); return }
             switch result {
             case .success(let next):
                 stitcher = next
-                if let cg = next.result {
+                        if let cg = next.result {
                     preview.image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-                    status.stringValue = "已拼接 \(next.count) 帧 · \(cg.width) × \(cg.height)"
-                    finishButton.isEnabled = true
+                    let width = max(1, previewScroll.contentSize.width)
+                    preview.setFrameSize(NSSize(width: width, height: width * CGFloat(cg.height) / CGFloat(cg.width)))
+                    preview.scroll(.zero)
+                    status.stringValue = "自动拼接 · \(cg.width) × \(cg.height)"
+                    status.toolTip = "已采集 \(next.count) 帧，可继续向下滚动或完成"
                 }
-            case .failure(let error): status.stringValue = error.localizedDescription
+            case .failure(ScreenshotScrollStitcher.StitchError.unchanged):
+                break
+            case .failure(ScreenshotScrollStitcher.StitchError.limit):
+                status.stringValue = "已达长度上限，请完成或重新开始"
+            case .failure:
+                status.stringValue = "暂未接上，请慢滚或回滚一点"
+                status.toolTip = "已有结果已保留。请回到上次采集位置再慢慢向下滚动，或重新开始。固定页眉和动态内容可能影响拼接。"
             }
-            appendButton.isEnabled = true
+            finishButton.isEnabled = stitcher.count > 0 && !pendingFinish
+            if pendingFinish { finish() }
         }
     }
     @objc private func finish() {
         if encodedURL != nil { saveRecording(); return }
         guard !preparing, !ending else { return }
+        if mode == .scroll && !scrollReadyToFinish {
+            if !pendingFinish {
+                finalScrollImage = engine.snapshot
+                finishButton.isEnabled = false
+                resetButton.isEnabled = false
+                status.stringValue = "正在完成最后一帧…"
+            }
+            pendingFinish = true
+            if appending { return }
+            appendFrame(image: finalScrollImage)
+            if appending { return }
+            scrollReadyToFinish = true
+        }
         ending = true
         finishing = true
         timer?.invalidate(); timer = nil
-        appendButton.isEnabled = false
+        resetButton.isEnabled = false
         finishButton.isEnabled = false
         cancelButton.isEnabled = false
         progress.startAnimation(nil)
