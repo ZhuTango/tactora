@@ -9,6 +9,7 @@ import SystemConfiguration
     private var timer: Timer?
     private var sleepObserver: NSObjectProtocol?
     private var lastUpdate: TimeInterval = 0
+    private var idleSince = FanService.now
     static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
     static var competing: Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.crystalidea.macsfancontrol" } }
     static var thermalOK: Bool { ProcessInfo.processInfo.thermalState == .nominal }
@@ -24,7 +25,9 @@ import SystemConfiguration
                     self.lastUpdate = Self.now
                     self.engine.tick(now: Self.now, thermalOK: Self.thermalOK)
                 }
-                if self.connection == nil, !self.engine.active, !self.engine.recoveryPending { exit(EXIT_SUCCESS) }
+                // Allow launchd delivery and signature validation to finish before retiring an idle helper.
+                if self.connection == nil, !self.engine.active, !self.engine.recoveryPending,
+                   Self.now - self.idleSince >= 60 { exit(EXIT_SUCCESS) }
             }
         }
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -57,13 +60,16 @@ import SystemConfiguration
         owner = uid; connection = candidate
         candidate.exportedInterface = NSXPCInterface(with: FanHelperProtocol.self)
         candidate.exportedObject = self
-        candidate.invalidationHandler = { [weak self] in Task { @MainActor in
-            self?.engine.stop(reason: "温控连接已断开"); self?.connection = nil; self?.owner = 0
+        candidate.invalidationHandler = { [weak self, weak candidate] in Task { @MainActor in
+            guard let self, let candidate, self.connection === candidate else { return }
+            self.engine.stop(reason: "温控连接已断开")
+            self.connection = nil; self.owner = 0; self.idleSince = Self.now
         } }
         candidate.interruptionHandler = candidate.invalidationHandler
         candidate.resume(); return true
     }
 }
+#if !FAN_SERVICE_TEST
 @main struct FanHelperMain {
     @MainActor static func main() throws {
         guard geteuid() == 0 else { throw FanControlError(message: "辅助程序必须通过系统服务启动。") }
@@ -90,3 +96,5 @@ import SystemConfiguration
         withExtendedLifetime(delegate) { RunLoop.main.run() }
     }
 }
+
+#endif

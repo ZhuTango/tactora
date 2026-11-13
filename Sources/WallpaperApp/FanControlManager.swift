@@ -25,11 +25,11 @@ struct FanConnectionRecovery {
     func canAttempt(at now: Date) -> Bool { now >= nextAttempt }
     mutating func reset() { delay = 0; nextAttempt = .distantPast }
     mutating func scheduleRetry(after now: Date) {
-        delay = delay == 0 ? 10 : min(60, delay * 2)
+        delay = delay == 0 ? 2 : min(10, delay * 2)
         deferRetry(after: now)
     }
     mutating func deferRetry(after now: Date) {
-        nextAttempt = now.addingTimeInterval(max(10, delay))
+        nextAttempt = now.addingTimeInterval(max(2, delay))
     }
 }
 
@@ -47,6 +47,7 @@ struct FanConnectionRecovery {
     private var connection: NSXPCConnection?
     private var timer: Timer?
     private var inFlight = false
+    private var heartbeatStarted: Date?
     private var generation = 0
     private var observers: [NSObjectProtocol] = []
     private var requested = false
@@ -114,14 +115,14 @@ struct FanConnectionRecovery {
         else if serviceEnabled(), defaults.string(forKey: Self.registrationKey) != Self.currentBuild { authorize() }
     }
     func setEnabled(_ value: Bool) {
-        generation += 1; configuring = false; inFlight = false
+        generation += 1; configuring = false; inFlight = false; heartbeatStarted = nil
         recovery.reset()
         requested = value
         preserveControlStatus = true
         ToolFeature.fans.setEnabled(value, in: defaults)
         if value { connectAndConfigure() }
         else {
-            generation += 1; inFlight = false
+            generation += 1; inFlight = false; heartbeatStarted = nil
             guard let proxy = proxy() else { active = false; message = "已关闭；辅助服务失联时会在 6 秒租约超时后尝试恢复系统控制。"; changed(); return }
             let token = generation
             proxy.configure(false, low: curve.low, high: curve.high) { [weak self] ok, status in Task { @MainActor in
@@ -194,7 +195,7 @@ struct FanConnectionRecovery {
                 connection = candidate; candidate.resume()
             }
             configureTimeout?.cancel()
-            generation += 1; inFlight = false
+            generation += 1; inFlight = false; heartbeatStarted = nil
             configuring = true
             message = "正在连接风扇辅助服务…"; changed()
             let token = generation
@@ -226,11 +227,15 @@ struct FanConnectionRecovery {
            recovery.canAttempt(at: now()) {
             connectAndConfigure()
         }
-        if connection != nil, !inFlight {
-            inFlight = true; let token = generation
+        if let started = heartbeatStarted, now().timeIntervalSince(started) >= 6 {
+            disconnect()
+            message = "辅助服务心跳超时，正在重新连接。"; changed()
+        }
+        if connection != nil, !configuring, !inFlight {
+            inFlight = true; heartbeatStarted = now(); let token = generation
             proxy()?.heartbeat { [weak self] data, status in Task { @MainActor in
                 guard let self, token == self.generation else { return }
-                self.inFlight = false
+                self.inFlight = false; self.heartbeatStarted = nil
                 if let data, let value = try? JSONDecoder().decode(FanSnapshot.self, from: data) {
                     self.snapshot = value; self.active = value.active
                 }
@@ -258,7 +263,7 @@ struct FanConnectionRecovery {
         configureTimeout?.cancel(); configureTimeout = nil
         generation += 1
         let old = connection; connection = nil; old?.invalidate()
-        inFlight = false; configuring = false; active = false
+        inFlight = false; heartbeatStarted = nil; configuring = false; active = false
         recovery.deferRetry(after: now())
     }
     private func changed() { onChange?(); onTelemetryChange?() }
