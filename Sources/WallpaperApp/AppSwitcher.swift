@@ -258,34 +258,63 @@ final class AppSwitcher: NSObject {
         hold.suppress(); hidePanelIfVisible()
         let url = URL(fileURLWithPath: binding.path)
         guard FileManager.default.fileExists(atPath: url.path) else { failures[id] = "应用已移动或卸载，请刷新列表重新配置"; onChange?(); return }
-        if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
-            if id == "com.apple.finder" {
-                // Finder can be active with only its desktop. Hide only actual visible windows;
-                // otherwise send reopen below so a missing window is created or restored.
-                let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-                let hasWindow = windows.contains {
-                    ($0[kCGWindowOwnerPID as String] as? Int) == Int(running.processIdentifier)
-                        && ($0[kCGWindowLayer as String] as? Int) == 0
-                }
-                if running.isActive && !running.isHidden && hasWindow { running.hide(); return }
-            } else {
-                if running.isActive && !running.isHidden { running.hide() }
-                else { running.unhide(); running.activate(options: []) }
+        if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }),
+           running.isFinishedLaunching {
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            let hasWindow = windows.contains {
+                ($0[kCGWindowOwnerPID as String] as? Int) == Int(running.processIdentifier)
+                    && ($0[kCGWindowLayer as String] as? Int) == 0
+            }
+            if hasWindow && !running.isHidden {
+                if running.isActive { running.hide() }
+                else { running.activate(options: []) }
                 return
             }
+            // A background process can outlive its last window. Opening sends the
+            // same reopen request as clicking the Dock icon, restoring its window.
         }
         Self.openApplication(at: url) { [weak self] error in
-            if let error { self?.failures[id] = error.localizedDescription; self?.onChange?() }
+            if let error { self?.failures[id] = error.localizedDescription }
+            else { self?.failures.removeValue(forKey: id) }
+            self?.onChange?()
         }
     }
+    private static var pendingLaunches: [URL: [(Error?) -> Void]] = [:]
     static func openApplication(at url: URL, completion: @escaping (Error?) -> Void) {
+        let url = url.standardizedFileURL
         guard FileManager.default.fileExists(atPath: url.path) else {
             completion(NSError(domain: "AppSwitcher", code: 1, userInfo: [NSLocalizedDescriptionKey: "应用已移动或卸载，请稍后刷新列表。"])); return
         }
+        if pendingLaunches[url] != nil {
+            pendingLaunches[url]?.append(completion)
+            return
+        }
+        pendingLaunches[url] = [completion]
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-            Task { @MainActor in completion(error) }
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { application, error in
+            Task { @MainActor in
+                var failure = error
+                if failure == nil, let application {
+                    // LaunchServices can return before applicationDidFinishLaunching.
+                    // Activate only after the app is ready to accept focus.
+                    let deadline = ProcessInfo.processInfo.systemUptime + 30
+                    while !application.isFinishedLaunching && !application.isTerminated
+                        && ProcessInfo.processInfo.systemUptime < deadline {
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                    }
+                    if application.isTerminated || !application.isFinishedLaunching {
+                        failure = NSError(domain: "AppSwitcher", code: 2, userInfo: [NSLocalizedDescriptionKey: "应用未能完成启动，请重试。"])
+                    } else {
+                        application.unhide()
+                        application.activate(options: [])
+                    }
+                } else if failure == nil {
+                    failure = NSError(domain: "AppSwitcher", code: 3, userInfo: [NSLocalizedDescriptionKey: "系统未返回已启动的应用，请重试。"])
+                }
+                let callbacks = pendingLaunches.removeValue(forKey: url) ?? []
+                for callback in callbacks { callback(failure) }
+            }
         }
     }
     func setFeatureEnabled(_ enabled: Bool) {
