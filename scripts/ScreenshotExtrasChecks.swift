@@ -51,7 +51,10 @@ struct ScreenshotExtrasChecks {
         precondition(pixels(stitcher.result!) == pixels(expected), "Stitched pixels must exactly match the full page")
         do { try stitcher.append(second); preconditionFailure("Unchanged frame accepted") }
         catch ScreenshotScrollStitcher.StitchError.unchanged {}
-        let unrelated = first
+        let unrelatedContext = CGContext(data: nil, width: width, height: 400, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        unrelatedContext.setFillColor(NSColor.white.cgColor)
+        unrelatedContext.fill(CGRect(x: 0, y: 0, width: width, height: 400))
+        let unrelated = unrelatedContext.makeImage()!
         do { try stitcher.append(unrelated); preconditionFailure("Unmatched frame accepted") }
         catch ScreenshotScrollStitcher.StitchError.mismatch {}
         precondition(stitcher.count == 2)
@@ -63,6 +66,23 @@ struct ScreenshotExtrasChecks {
         }
         precondition(continuous.count == 41 && continuous.result!.height == 440)
         precondition(pixels(continuous.result!) == pixels(full.cropping(to: CGRect(x: 0, y: 0, width: width, height: 440))!))
+        var bidirectional = ScreenshotScrollStitcher()
+        func pageFrame(_ offset: Int) -> CGImage { full.cropping(to: CGRect(x: 0, y: offset, width: width, height: 400))! }
+        let reverseShift = try ScreenshotScrollStitcher.verticalShift(from: second, to: first)
+        precondition(reverseShift == -150)
+        var top = 200, bottom = 600
+        for offset in [200, 100, 0, 100, 200, 350, 400, 300, 200, 100, 0, 100, 200, 300, 400] {
+            try bidirectional.append(pageFrame(offset))
+            top = min(top, offset); bottom = max(bottom, offset + 400)
+            precondition(bidirectional.result!.height == bottom - top, "Revisits must not duplicate captured content")
+            precondition(pixels(bidirectional.result!) == pixels(full.cropping(to: CGRect(x: 0, y: top, width: width, height: bottom - top))!), "Both ends must preserve page order pixel-for-pixel")
+        }
+        var upward = ScreenshotScrollStitcher()
+        try upward.append(pageFrame(100))
+        for offset in stride(from: 99, through: 60, by: -1) { try upward.append(pageFrame(offset)) }
+        precondition(upward.result!.height == 440)
+        precondition(pixels(upward.result!) == pixels(full.cropping(to: CGRect(x: 0, y: 60, width: width, height: 440))!))
+        print("PASS upward capture, direction changes, revisit deduplication and pixel-exact page order")
         print("PASS continuous one-pixel scrolling and more than 30 frames")
         print("PASS scroll overlap, pixel-exact stitching, unchanged/mismatched frame rejection")
 

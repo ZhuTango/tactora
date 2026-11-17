@@ -80,7 +80,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         progress.isDisplayedWhenStopped = false
         progress.startAnimation(nil)
         progress.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        let direction = NSImageView(image: NSImage(systemSymbolName: "chevron.down.2", accessibilityDescription: "向下滚动自动拼接")!)
+        let direction = NSImageView(image: NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: "上下滚动自动拼接")!)
         direction.contentTintColor = .controlAccentColor
         direction.widthAnchor.constraint(equalToConstant: 16).isActive = true
         let statusRow = NSStackView(views: [mode == .scroll ? direction : progress, status])
@@ -257,7 +257,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                     updateScrollPreview(cg)
                     status.stringValue = "\(cg.width) × \(cg.height)"
                     status.textColor = .labelColor
-                    status.toolTip = "已采集 \(next.count) 帧 · 在原内容中向下滚动，自动拼接；完成后可标注、复制或保存"
+                    status.toolTip = "已采集 \(next.count) 帧 · 在原内容中上下滚动，自动拼接；完成后可标注、复制或保存"
                 }
             case .failure(ScreenshotScrollStitcher.StitchError.unchanged):
                 break
@@ -266,7 +266,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             case .failure:
                 status.stringValue = "请慢滚或回滚一点"
                 status.textColor = .systemOrange
-                status.toolTip = "已有结果已保留。请回到上次采集位置再慢慢向下滚动，或重新开始。固定页眉和动态内容可能影响拼接。"
+                status.toolTip = "已有结果已保留。请回到上次采集位置再缓慢滚动，或重新开始。固定页眉和动态内容可能影响拼接。"
             }
             finishButton.isEnabled = stitcher.count > 0 && !pendingFinish
             if pendingFinish { finish() }
