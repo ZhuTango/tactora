@@ -15,8 +15,10 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
     private(set) var scrollPreview: ScreenshotScrollPreview?
     private let resetButton = ScreenshotToolButton(title: "重新开始", target: nil, action: nil)
     private var lastProcessedImage: CGImage?
+    private var pendingPreviewImage: CGImage?
+    private var lastPreviewTime: TimeInterval = 0
     private var pendingFinish = false
-    private var finalScrollImage: CGImage?
+    private var finalScrollFrames: [CGImage] = []
     private var scrollReadyToFinish = false
     private var scrollGeneration = UUID()
     private let finishButton = ScreenshotToolButton(title: "完成", target: nil, action: nil)
@@ -43,7 +45,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         self.screen = screen
         self.region = region
         self.fps = fps
-        engine = ScreenshotStream(framesPerSecond: mode == .scroll ? 5 : fps)
+        engine = ScreenshotStream(framesPerSecond: mode == .scroll ? 30 : fps)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("tactora-recording-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let contentSize = NSSize(width: mode == .scroll ? 320 : 302, height: mode == .scroll ? 44 : 56)
@@ -189,7 +191,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
                 startTime = Date()
                 resetButton.isEnabled = true
                 finishButton.isEnabled = mode != .scroll
-                let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                let timer = Timer(timeInterval: mode == .scroll ? 1.0 / 30 : 0.25, repeats: true) { [weak self] _ in
                     Task { @MainActor in self?.tick() }
                 }
                 self.timer = timer
@@ -210,10 +212,18 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         scrollPreview?.update(image, capture: capture, area: screen.visibleFrame, toolbar: window.frame)
     }
 
+    private func refreshScrollPreview() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let image = pendingPreviewImage, now - lastPreviewTime >= 1.0 / 15 else { return }
+        pendingPreviewImage = nil
+        lastPreviewTime = now
+        updateScrollPreview(image)
+    }
     private func tick() {
         guard !ending else { return }
         if let error = engine.error { status.stringValue = error.localizedDescription; finish(); return }
         if mode == .scroll {
+            refreshScrollPreview()
             appendFrame()
         } else {
             let seconds = Int(Date().timeIntervalSince(startTime))
@@ -228,7 +238,9 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         scrollGeneration = UUID()
         stitcher = ScreenshotScrollStitcher()
         lastProcessedImage = nil
+        engine.resetScrollFrames()
         scrollPreview?.clear()
+        pendingPreviewImage = nil
         finishButton.isEnabled = false
         status.stringValue = "正在获取当前画面…"
         status.textColor = .labelColor
@@ -236,7 +248,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         if !appending { appendFrame() }
     }
     private func appendFrame(image suppliedImage: CGImage? = nil) {
-        guard !ending, !appending, let image = suppliedImage ?? engine.snapshot, image !== lastProcessedImage else { return }
+        guard !ending, !appending, let image = suppliedImage ?? engine.nextScrollFrame(), image !== lastProcessedImage else { return }
         lastProcessedImage = image
         appending = true
         let current = stitcher
@@ -254,7 +266,8 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             case .success(let next):
                 stitcher = next
                 if let cg = next.result {
-                    updateScrollPreview(cg)
+                    pendingPreviewImage = cg
+                    refreshScrollPreview()
                     status.stringValue = "\(cg.width) × \(cg.height)"
                     status.textColor = .labelColor
                     status.toolTip = "已采集 \(next.count) 帧 · 在原内容中上下滚动，自动拼接；完成后可标注、复制或保存"
@@ -270,6 +283,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             }
             finishButton.isEnabled = stitcher.count > 0 && !pendingFinish
             if pendingFinish { finish() }
+            else { appendFrame() } // Drain captured overlap immediately, not on the next UI timer tick.
         }
     }
     @objc private func finish() {
@@ -277,15 +291,17 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         guard !preparing, !ending else { return }
         if mode == .scroll && !scrollReadyToFinish {
             if !pendingFinish {
-                finalScrollImage = engine.snapshot
+                finalScrollFrames = engine.finishScrollFrames()
                 finishButton.isEnabled = false
                 resetButton.isEnabled = false
                 status.stringValue = "正在完成最后一帧…"
             }
             pendingFinish = true
             if appending { return }
-            appendFrame(image: finalScrollImage)
-            if appending { return }
+            while !finalScrollFrames.isEmpty {
+                appendFrame(image: finalScrollFrames.removeFirst())
+                if appending { return }
+            }
             scrollReadyToFinish = true
         }
         ending = true

@@ -9,6 +9,8 @@ final class ScreenshotStream: NSObject, SCStreamOutput, SCStreamDelegate, @unche
     private let queue = DispatchQueue(label: "local.tango.screenshot.stream", qos: .userInitiated)
     private let lock = NSLock()
     private var latest: CGImage?
+    private var scrollFrames = ScreenshotFrameBuffer()
+    private var scrollFramesFrozen = false
     private var failure: Error?
     private let context = CIContext()
     private var stream: SCStream?
@@ -22,7 +24,29 @@ final class ScreenshotStream: NSObject, SCStreamOutput, SCStreamDelegate, @unche
     private let framesPerSecond: Int
     init(framesPerSecond: Int) { self.framesPerSecond = framesPerSecond }
 
+    func storeScrollFrame(_ image: CGImage) {
+        lock.lock(); defer { lock.unlock() }
+        latest = image
+        if !scrollFramesFrozen { scrollFrames.append(image) }
+    }
     var snapshot: CGImage? { lock.lock(); defer { lock.unlock() }; return latest }
+    func nextScrollFrame() -> CGImage? {
+        lock.lock(); defer { lock.unlock() }
+        return scrollFrames.pop()
+    }
+    func resetScrollFrames() {
+        lock.lock(); defer { lock.unlock() }
+        scrollFramesFrozen = false
+        scrollFrames.clear()
+        if let latest { scrollFrames.append(latest) }
+    }
+    func finishScrollFrames() -> [CGImage] {
+        lock.lock(); defer { lock.unlock() }
+        scrollFramesFrozen = true
+        var frames = scrollFrames.drain()
+        if let latest, frames.last !== latest { frames.append(latest) }
+        return frames
+    }
     var error: Error? { lock.lock(); defer { lock.unlock() }; return failure }
     private func recordError(_ error: Error) { lock.lock(); failure = error; lock.unlock() }
 
@@ -71,7 +95,7 @@ final class ScreenshotStream: NSObject, SCStreamOutput, SCStreamDelegate, @unche
         if writer == nil {
             let image = CIImage(cvPixelBuffer: buffer)
             if let cg = context.createCGImage(image, from: image.extent) {
-                lock.lock(); latest = cg; lock.unlock()
+                storeScrollFrame(cg)
             }
         }
         appendMovieFrame(sampleBuffer)
@@ -143,4 +167,34 @@ final class ScreenshotStream: NSObject, SCStreamOutput, SCStreamDelegate, @unche
         }
         guard CGImageDestinationFinalize(output) else { throw encodingError("GIF 编码失败") }
     }
+}
+
+/// Bounded capture backlog. Keep intermediate overlap frames during brief UI stalls;
+/// never grow memory without limit when capture outruns stitching.
+struct ScreenshotFrameBuffer {
+    private var frames: [CGImage] = []
+    private(set) var bytes = 0
+    private let maximumBytes = 64 * 1024 * 1024
+    private let maximumFrames = 12
+    var count: Int { frames.count }
+    mutating func append(_ image: CGImage) {
+        let size = image.bytesPerRow * image.height
+        while !frames.isEmpty && (frames.count >= maximumFrames || bytes + size > maximumBytes) {
+            _ = pop()
+        }
+        frames.append(image)
+        bytes += size
+    }
+    mutating func pop() -> CGImage? {
+        guard !frames.isEmpty else { return nil }
+        let image = frames.removeFirst()
+        bytes -= image.bytesPerRow * image.height
+        return image
+    }
+    mutating func drain() -> [CGImage] {
+        let result = frames
+        clear()
+        return result
+    }
+    mutating func clear() { frames.removeAll(keepingCapacity: true); bytes = 0 }
 }

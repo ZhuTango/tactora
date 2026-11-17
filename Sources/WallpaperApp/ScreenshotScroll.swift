@@ -63,6 +63,10 @@ struct ScreenshotScrollStitcher {
             var count = 0
             let overlap = old.height - abs(shift)
             let rowStep = max(1, overlap / 100)
+            // A lower bound on the final mean error: reject only once even
+            // perfectly matching remaining samples cannot pass the threshold.
+            let sampleCount = ((overlap + rowStep - 1) / rowStep) * (columns - 4) * 3
+            let maximumDifference = Int(4.6 * Double(sampleCount))
             for y in stride(from: 0, to: overlap, by: rowStep) {
                 for x in 2..<(columns - 2) {
                     let p = ((y + max(0, shift)) * columns + x) * 4
@@ -70,6 +74,7 @@ struct ScreenshotScrollStitcher {
                     for component in 0..<3 { difference += abs(Int(a[p + component]) - Int(b[q + component])) }
                     count += 3
                 }
+                if difference > maximumDifference { return 5 }
             }
             return Double(difference) / Double(max(1, count))
         }
