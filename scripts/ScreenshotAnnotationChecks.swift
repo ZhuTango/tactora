@@ -68,6 +68,59 @@ import AppKit
             precondition(editable.selection == NSRect(x: 10, y: 10, width: 90, height: 90), "An outside click must preserve the selection and toolbar")
             editWindow.close()
         }
+        // Selection uses actual strokes, supports axis-aligned endpoints and records one undo per drag.
+        let moveCanvas = ScreenshotCanvas(image: image)
+        let moveWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 128, height: 128), styleMask: [.borderless], backing: .buffered, defer: false)
+        moveWindow.isReleasedWhenClosed = false
+        moveWindow.contentView = moveCanvas
+        func moveEvent(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat, shift: Bool = false) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y), modifierFlags: shift ? [.shift] : [], timestamp: 0, windowNumber: moveWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        moveCanvas.append(ScreenshotAnnotation(tool: .arrow, start: NSPoint(x: 10, y: 20), end: NSPoint(x: 60, y: 20)))
+        moveCanvas.selectionMode = true
+        moveCanvas.mouseDown(with: moveEvent(.leftMouseDown, 30, 20))
+        moveCanvas.mouseDragged(with: moveEvent(.leftMouseDragged, 40, 40))
+        moveCanvas.mouseUp(with: moveEvent(.leftMouseUp, 40, 40))
+        precondition(moveCanvas.annotations[0].start == NSPoint(x: 20, y: 40))
+        precondition(moveCanvas.annotations[0].end == NSPoint(x: 70, y: 40))
+        moveCanvas.mouseDown(with: moveEvent(.leftMouseDown, 70, 40))
+        moveCanvas.mouseUp(with: moveEvent(.leftMouseUp, 90, 70))
+        precondition(moveCanvas.annotations[0].end == NSPoint(x: 90, y: 70))
+        moveCanvas.setAnnotationColor(.green)
+        precondition(moveCanvas.annotations[0].color == .green)
+        moveCanvas.deleteSelectedAnnotation()
+        precondition(moveCanvas.annotations.isEmpty)
+        moveCanvas.undoAnnotation()
+        precondition(moveCanvas.annotations.count == 1 && moveCanvas.annotations[0].color == .green)
+        moveCanvas.undoAnnotation()
+        precondition(moveCanvas.annotations[0].color == .systemRed)
+        moveCanvas.undoAnnotation()
+        precondition(moveCanvas.annotations[0].end == NSPoint(x: 70, y: 40))
+        moveCanvas.undoAnnotation()
+        precondition(moveCanvas.annotations[0].start == NSPoint(x: 10, y: 20))
+        moveCanvas.tool = .ellipse
+        moveCanvas.mouseDown(with: moveEvent(.leftMouseDown, 30, 30))
+        moveCanvas.mouseDragged(with: moveEvent(.leftMouseDragged, 70, 50, shift: true))
+        moveCanvas.mouseUp(with: moveEvent(.leftMouseUp, 70, 50, shift: true))
+        precondition(moveCanvas.annotations.last!.rect.width == moveCanvas.annotations.last!.rect.height)
+        let straight = ScreenshotSelection.constrainedEnd(start: NSPoint(x: 20, y: 20), point: NSPoint(x: 80, y: 23), tool: .arrow, bounds: NSRect(x: 0, y: 0, width: 128, height: 128))
+        precondition(abs(straight.y - 20) < 0.001)
+        let edge = ScreenshotSelection.constrainedEnd(start: NSPoint(x: 100, y: 20), point: NSPoint(x: 125, y: 100), tool: .rectangle, bounds: NSRect(x: 0, y: 0, width: 128, height: 128))
+        precondition(edge == NSPoint(x: 128, y: 48), "Shift square must remain square at image boundary")
+        moveCanvas.append(ScreenshotAnnotation(tool: .text, start: NSPoint(x: 10, y: 50), end: NSPoint(x: 10, y: 50), text: "Label", fontSize: 14))
+        let textIndex = moveCanvas.annotations.count - 1
+        moveCanvas.selectionMode = true
+        moveCanvas.beginEditingText(at: textIndex)
+        precondition(moveCanvas.tool == .text && !moveCanvas.selectionMode)
+        moveCanvas.commitText()
+        moveCanvas.setAnnotationColor(.blue)
+        moveCanvas.textSize = 24
+        moveCanvas.updateSelectedStyle()
+        precondition(moveCanvas.annotations[textIndex].color == .blue && moveCanvas.annotations[textIndex].fontSize == 24)
+        moveCanvas.undoAnnotation()
+        precondition(moveCanvas.annotations[textIndex].fontSize == 14)
+        moveWindow.close()
+        print("PASS annotation selection, endpoint editing, color, delete/undo and Shift geometry")
         let redactionImage = NSImage(cgImage: bitmap.cgImage!, size: NSSize(width: 128, height: 128))
         let protectedCanvas = ScreenshotCanvas(image: redactionImage)
         protectedCanvas.append(ScreenshotAnnotation(tool: .cover, start: .zero, end: NSPoint(x: 128, y: 128), coverEffect: .solid))

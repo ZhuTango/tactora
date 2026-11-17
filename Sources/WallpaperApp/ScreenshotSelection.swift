@@ -2,6 +2,26 @@ import AppKit
 
 /// Coordinates are source-image pixels with a bottom-left origin.
 enum ScreenshotSelection {
+    static func constrainedEnd(start: NSPoint, point: NSPoint, tool: ScreenshotAnnotation.Tool, bounds: NSRect) -> NSPoint {
+        let dx = point.x - start.x, dy = point.y - start.y
+        var delta = NSPoint(x: dx, y: dy)
+        switch tool {
+        case .line, .arrow:
+            let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
+            let length = hypot(dx, dy)
+            delta = NSPoint(x: cos(angle) * length, y: sin(angle) * length)
+        case .rectangle, .ellipse:
+            let length = max(abs(dx), abs(dy))
+            delta = NSPoint(x: dx < 0 ? -length : length, y: dy < 0 ? -length : length)
+        default: return point
+        }
+        var ratio: CGFloat = 1
+        if delta.x > 0 { ratio = min(ratio, (bounds.maxX - start.x) / delta.x) }
+        if delta.x < 0 { ratio = min(ratio, (bounds.minX - start.x) / delta.x) }
+        if delta.y > 0 { ratio = min(ratio, (bounds.maxY - start.y) / delta.y) }
+        if delta.y < 0 { ratio = min(ratio, (bounds.minY - start.y) / delta.y) }
+        return NSPoint(x: start.x + delta.x * max(0, ratio), y: start.y + delta.y * max(0, ratio))
+    }
     static func cursorRegions(in rect: NSRect, excluding exclusions: [NSRect]) -> [NSRect] {
         guard !rect.isEmpty, rect.origin.x.isFinite, rect.origin.y.isFinite,
               rect.width.isFinite, rect.height.isFinite else { return [] }

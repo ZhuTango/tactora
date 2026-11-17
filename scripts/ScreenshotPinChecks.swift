@@ -18,6 +18,26 @@ import AppKit
         precondition(!panel.styleMask.contains(.titled), "Pinned image must have no title bar")
         precondition(panel.canBecomeKey && !panel.hidesOnDeactivate)
         panel.makeKeyAndOrderFront(nil)
+        panel.resizePin(by: 1.5)
+        precondition(panel.frame.size == NSSize(width: 600, height: 300))
+        precondition(panel.frame.midX == frame.midX && panel.frame.midY == frame.midY)
+        panel.adjustOpacity(by: -2)
+        precondition(panel.alphaValue == 0.15)
+        panel.adjustOpacity(by: 2)
+        precondition(panel.alphaValue == 1)
+        func key(_ characters: String) {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 0)!
+            panel.sendEvent(event)
+        }
+        key("z")
+        precondition(panel.frame.size == frame.size)
+        key("z")
+        precondition(panel.frame.size == NSSize(width: 600, height: 300))
+        key("s")
+        precondition(panel.frame.size == NSSize(width: 120, height: 60))
+        key("s")
+        precondition(panel.frame.size == NSSize(width: 600, height: 300))
+        precondition(panel.contentView!.menu!.items.contains { $0.title.contains("原位") || $0.title.contains("original position") })
         panel.contentView!.layoutSubtreeIfNeeded()
         let button = panel.contentView!.subviews.compactMap { $0 as? NSButton }.first!
         precondition(button.identifier?.rawValue == "screenshot.pin.close")

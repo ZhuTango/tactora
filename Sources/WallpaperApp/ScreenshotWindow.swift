@@ -22,6 +22,53 @@ struct ScreenshotAnnotation {
     }
 }
 
+
+private extension ScreenshotAnnotation {
+    var editBounds: NSRect {
+        switch tool {
+        case .text:
+            return NSRect(origin: start, size: (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize, weight: .medium)]))
+        case .number:
+            let d = fontSize * 1.65
+            return NSRect(x: start.x - d / 2, y: start.y - d / 2, width: d, height: d)
+        case .pen:
+            let all = [start, end] + points
+            let xs = all.map(\.x), ys = all.map(\.y)
+            return NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        default: return rect
+        }
+    }
+    var controlPoints: [NSPoint] {
+        switch tool {
+        case .line, .arrow: return [start, end]
+        case .cover, .rectangle, .ellipse, .highlight: return ScreenshotSelection.handles(rect)
+        default: return []
+        }
+    }
+    func hit(_ point: NSPoint, tolerance: CGFloat) -> Bool {
+        func nearSegment(_ a: NSPoint, _ b: NSPoint) -> Bool {
+            let dx = b.x - a.x, dy = b.y - a.y
+            let length = dx * dx + dy * dy
+            let t = length == 0 ? 0 : min(1, max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length))
+            return hypot(point.x - a.x - t * dx, point.y - a.y - t * dy) <= tolerance + strokeWidth * thickness / 2
+        }
+        switch tool {
+        case .line, .arrow: return nearSegment(start, end)
+        case .pen:
+            let all = [start] + points + [end]
+            return zip(all, all.dropFirst()).contains { nearSegment($0.0, $0.1) }
+        case .rectangle:
+            return rect.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+                && (rect.width <= tolerance * 2 || rect.height <= tolerance * 2 || !rect.insetBy(dx: tolerance, dy: tolerance).contains(point))
+        case .ellipse:
+            guard rect.width > 0, rect.height > 0 else { return false }
+            let radius = hypot((point.x - rect.midX) / (rect.width / 2), (point.y - rect.midY) / (rect.height / 2))
+            return abs(radius - 1) * min(rect.width, rect.height) / 2 <= tolerance
+        default: return editBounds.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        }
+    }
+}
+
 @MainActor
 final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     let image: NSImage
@@ -44,8 +91,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     private var textOrigin = NSPoint.zero
     private var editorFontSize: CGFloat = 18
     var cursorExclusions: [NSRect] = []
-    var selectionEnabled = false
-    var selectionMode = true { didSet { needsDisplay = true } }
+    var selectionEnabled = false { didSet { selectionMode = selectionEnabled } }
+    var selectionMode = false { didSet { needsDisplay = true } }
     private var alignmentTrackingArea: NSTrackingArea?
     private var pointerLocation: NSPoint?
     var selection: NSRect? {
@@ -53,9 +100,9 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
     }
     var onSelectionChange: (() -> Void)?
     private var selectionDrag: (handle: Int, start: NSPoint, original: NSRect)?
-    private var selectedCoverIndex: Int?
-    private var coverDrag: (index: Int, handle: Int, start: NSPoint, original: NSRect, before: [ScreenshotAnnotation])?
-    var tool = ScreenshotAnnotation.Tool.arrow { didSet { selectedCoverIndex = nil; needsDisplay = true } }
+    private var selectedAnnotationIndex: Int?
+    private var annotationDrag: (index: Int, handle: Int, start: NSPoint, original: ScreenshotAnnotation, before: [ScreenshotAnnotation])?
+    var tool = ScreenshotAnnotation.Tool.arrow { didSet { selectedAnnotationIndex = nil; selectionMode = false; needsDisplay = true } }
     var onChange: (() -> Void)?
 
     init(image: NSImage) {
@@ -87,7 +134,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         drawImage(includingDraft: true)
         NSGraphicsContext.restoreGraphicsState()
         if selectionEnabled { drawSelection() }
-        drawCoverControls()
+        drawAnnotationControls()
         if let point = alignmentGuidePoint {
             let lines = NSBezierPath()
             lines.move(to: NSPoint(x: bounds.minX, y: point.y))
@@ -155,21 +202,26 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             handle.stroke()
         }
     }
-    private var selectedCoverRect: NSRect? {
-        guard (!selectionEnabled || selection != nil), tool == .cover, !selectionMode || !selectionEnabled,
-              let index = selectedCoverIndex, annotations.indices.contains(index), annotations[index].tool == .cover else { return nil }
-        let rect = annotations[index].rect
-        let scale = imageRect.width / image.size.width
-        return NSRect(x: imageRect.minX + rect.minX * scale, y: imageRect.minY + rect.minY * scale,
-                      width: rect.width * scale, height: rect.height * scale)
+    private var selectedAnnotation: ScreenshotAnnotation? {
+        guard let index = selectedAnnotationIndex, annotations.indices.contains(index),
+              !selectionEnabled || selection != nil else { return nil }
+        return annotations[index]
     }
-    private func drawCoverControls() {
-        guard let rect = selectedCoverRect else { return }
+    private func viewPoint(_ point: NSPoint) -> NSPoint {
+        let scale = imageRect.width / image.size.width
+        return NSPoint(x: imageRect.minX + point.x * scale, y: imageRect.minY + point.y * scale)
+    }
+    private func drawAnnotationControls() {
+        guard let item = selectedAnnotation else { return }
+        let scale = imageRect.width / image.size.width
+        let rect = NSRect(origin: viewPoint(item.editBounds.origin), size: NSSize(width: item.editBounds.width * scale, height: item.editBounds.height * scale))
         NSColor.controlAccentColor.setStroke()
-        let border = NSBezierPath(rect: rect)
-        border.lineWidth = 1
-        border.stroke()
-        for point in ScreenshotSelection.handles(rect) {
+        if item.tool != .line && item.tool != .arrow {
+            let border = NSBezierPath(rect: rect)
+            border.lineWidth = 1
+            border.stroke()
+        }
+        for point in item.controlPoints.map(viewPoint) {
             let handle = NSBezierPath(rect: NSRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6))
             NSColor.white.setFill()
             handle.fill()
@@ -177,20 +229,26 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             handle.stroke()
         }
     }
-    private func beginCoverDrag(at point: NSPoint) -> Bool {
-        guard tool == .cover, !selectionEnabled || (selection != nil && !selectionMode) else { return false }
-        let tolerance = 6 * image.size.width / max(1, imageRect.width)
-        if let index = selectedCoverIndex, annotations.indices.contains(index),
-           let handle = ScreenshotSelection.hitHandle(point, rect: annotations[index].rect, tolerance: tolerance) {
-            coverDrag = (index, handle, point, annotations[index].rect, annotations)
+    private func beginAnnotationDrag(at point: NSPoint) -> Bool {
+        guard !selectionEnabled || selection != nil else { return false }
+        let tolerance = 6 * annotationScale
+        if let index = selectedAnnotationIndex, let item = selectedAnnotation,
+           let handle = item.controlPoints.firstIndex(where: { hypot($0.x - point.x, $0.y - point.y) <= tolerance }) {
+            annotationDrag = (index, item.tool == .line || item.tool == .arrow ? 100 + handle : handle, point, item, annotations)
             return true
         }
-        guard let index = annotations.lastIndex(where: { $0.tool == .cover && $0.rect.contains(point) }) else {
-            selectedCoverIndex = nil
-            return false
-        }
-        selectedCoverIndex = index
-        coverDrag = (index, -2, point, annotations[index].rect, annotations)
+        // V selects any existing annotation; a drawing tool edits only its own type.
+        // Text-tool clicks retain inline text editing rather than starting a drag.
+        guard let index = annotations.lastIndex(where: { item in
+            (selectionMode || item.tool == tool) && (selectionMode || tool != .text) && item.hit(point, tolerance: tolerance)
+        }) else { selectedAnnotationIndex = nil; return false }
+        let item = annotations[index]
+        color = item.color
+        thickness = item.thickness
+        textSize = item.fontSize / annotationScale
+        if item.tool == .cover { coverEffect = item.coverEffect; coverTint = item.coverTint }
+        selectedAnnotationIndex = index
+        annotationDrag = (index, -2, point, item, annotations)
         onChange?()
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
@@ -341,7 +399,13 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard editing, let point = point(for: event, clamp: false) else { return }
         commitText()
         window?.makeFirstResponder(self)
-        if beginCoverDrag(at: point) { return }
+        if beginAnnotationDrag(at: point) {
+            if event.clickCount == 2, let index = selectedAnnotationIndex, annotations[index].tool == .text {
+                annotationDrag = nil
+                beginEditingText(at: index)
+            }
+            return
+        }
         if selectionEnabled {
             let rect = selection ?? .zero
             let tolerance = 8 * image.size.width / max(1, imageRect.width)
@@ -353,6 +417,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                 return
             }
         }
+        if selectionMode { return }
         if tool == .text {
             if let index = annotations.lastIndex(where: { item in
                 guard item.tool == .text else { return false }
@@ -371,13 +436,29 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         }
         draft = item
     }
+    private func constrainedPoint(_ point: NSPoint, for item: ScreenshotAnnotation, event: NSEvent) -> NSPoint {
+        guard event.modifierFlags.contains(.shift) else { return point }
+        let bounds = selectionEnabled ? (selection ?? NSRect(origin: .zero, size: image.size)) : NSRect(origin: .zero, size: image.size)
+        return ScreenshotSelection.constrainedEnd(start: item.start, point: point, tool: item.tool, bounds: bounds)
+    }
     override func mouseDragged(with event: NSEvent) {
         trackPointer(event)
-        if let drag = coverDrag, let point = point(for: event, clamp: true) {
-            let bounds = NSRect(origin: .zero, size: image.size)
-            let rect = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: drag.original, bounds: bounds)
-            annotations[drag.index].start = rect.origin
-            annotations[drag.index].end = NSPoint(x: rect.maxX, y: rect.maxY)
+        if let drag = annotationDrag, let point = point(for: event, clamp: true) {
+            var item = drag.original
+            let bounds = selectionEnabled ? (selection ?? NSRect(origin: .zero, size: image.size)) : NSRect(origin: .zero, size: image.size)
+            if drag.handle == -2 {
+                let original = item.editBounds
+                let moved = ScreenshotSelection.drag(handle: -2, start: drag.start, point: point, original: original, bounds: bounds)
+                let dx = moved.minX - original.minX, dy = moved.minY - original.minY
+                func shift(_ p: NSPoint) -> NSPoint { NSPoint(x: p.x + dx, y: p.y + dy) }
+                item.start = shift(item.start); item.end = shift(item.end); item.points = item.points.map(shift)
+            } else if drag.handle >= 100 {
+                if drag.handle == 100 { item.start = point } else { item.end = point }
+            } else {
+                let rect = ScreenshotSelection.drag(handle: drag.handle, start: drag.start, point: point, original: item.rect, bounds: bounds)
+                item.start = rect.origin; item.end = NSPoint(x: rect.maxX, y: rect.maxY)
+            }
+            annotations[drag.index] = item
             needsDisplay = true
             return
         }
@@ -386,16 +467,16 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             return
         }
         guard var draft, let point = point(for: event, clamp: true) else { return }
-        draft.end = point
+        draft.end = constrainedPoint(point, for: draft, event: event)
         if draft.tool == .pen { draft.points.append(point) }
         self.draft = draft
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
-        if let drag = coverDrag {
+        if let drag = annotationDrag {
             mouseDragged(with: event)
-            coverDrag = nil
-            if annotations[drag.index].rect != drag.original {
+            annotationDrag = nil
+            if annotations[drag.index].start != drag.original.start || annotations[drag.index].end != drag.original.end || annotations[drag.index].points != drag.original.points {
                 undoStates.append(drag.before)
                 redoStates.removeAll()
                 onChange?()
@@ -414,10 +495,10 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard var draft else { return }
         self.draft = nil
         if let point = point(for: event, clamp: true), hypot(point.x - draft.start.x, point.y - draft.start.y) >= 2 || !draft.points.isEmpty {
-            draft.end = point
+            draft.end = constrainedPoint(point, for: draft, event: event)
             if draft.tool == .pen { draft.points.append(point) }
             append(draft)
-            if draft.tool == .cover { selectedCoverIndex = annotations.count - 1 }
+            selectedAnnotationIndex = annotations.count - 1
             window?.invalidateCursorRects(for: self)
         }
         needsDisplay = true
@@ -437,19 +518,18 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
             registerCanvasCursor(NSRect(x: rect.minX, y: rect.minY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
             registerCanvasCursor(NSRect(x: rect.minX, y: rect.maxY - 5, width: rect.width, height: 10), cursor: .resizeUpDown)
         }
-        if tool == .cover, !selectionEnabled || !selectionMode {
-            let scale = imageRect.width / image.size.width
-            for item in annotations where item.tool == .cover {
-                let rect = NSRect(x: imageRect.minX + item.rect.minX * scale, y: imageRect.minY + item.rect.minY * scale, width: item.rect.width * scale, height: item.rect.height * scale)
-                registerCanvasCursor(rect, cursor: .openHand)
-            }
-            if let rect = selectedCoverRect {
-                for (index, point) in ScreenshotSelection.handles(rect).enumerated() {
-                    registerCanvasCursor(NSRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12), cursor: [1, 5].contains(index) ? .resizeUpDown : .resizeLeftRight)
-                }
+        let scale = imageRect.width / image.size.width
+        for item in annotations where selectionMode || item.tool == tool {
+            let rect = NSRect(origin: viewPoint(item.editBounds.origin), size: NSSize(width: max(1, item.editBounds.width * scale), height: max(1, item.editBounds.height * scale)))
+            registerCanvasCursor(rect, cursor: .openHand)
+        }
+        if let item = selectedAnnotation {
+            for point in item.controlPoints.map(viewPoint) {
+                registerCanvasCursor(NSRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12), cursor: .crosshair)
             }
         }
     }
+
     private func registerCanvasCursor(_ rect: NSRect, cursor: NSCursor) {
         for region in ScreenshotSelection.cursorRegions(in: rect, excluding: cursorExclusions) {
             addCursorRect(region, cursor: cursor)
@@ -481,14 +561,17 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         commitText()
         guard annotations.indices.contains(index), annotations[index].tool == .text else { return }
         let item = annotations[index]
+        tool = .text
         color = item.color
         textSize = item.fontSize / annotationScale
         let font = NSFont.systemFont(ofSize: item.fontSize, weight: .medium)
         beginText(at: NSPoint(x: item.start.x, y: item.start.y + font.ascender - font.descender + 4 * annotationScale))
         editingTextIndex = index
+        selectedAnnotationIndex = index
         textEditor?.stringValue = item.text
         layoutTextEditor()
         needsDisplay = true
+        onChange?()
     }
     override func layout() {
         super.layout()
@@ -525,6 +608,7 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                 redoStates.removeAll()
                 if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     annotations.remove(at: index)
+                    selectedAnnotationIndex = nil
                 } else { annotations[index].text = value }
                 onChange?()
             }
@@ -560,22 +644,57 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         undoStates.append(annotations)
         annotations.removeLast()
         redoStates.removeAll()
-        selectedCoverIndex = nil
-        coverDrag = nil
+        selectedAnnotationIndex = nil
+        annotationDrag = nil
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
         onChange?()
         return true
     }
     var activeCoverTint: NSColor? {
-        if let index = selectedCoverIndex, annotations.indices.contains(index) { return annotations[index].coverTint }
+        if let index = selectedAnnotationIndex, annotations.indices.contains(index) { return annotations[index].coverTint }
         return coverTint
     }
     func setCoverTint(_ tint: NSColor?) {
         coverTint = tint
-        guard tool == .cover, let index = selectedCoverIndex, annotations.indices.contains(index) else { return }
+        guard let index = selectedAnnotationIndex, annotations.indices.contains(index), annotations[index].tool == .cover else { return }
         undoStates.append(annotations)
         annotations[index].coverTint = tint
+        redoStates.removeAll()
+        needsDisplay = true
+        onChange?()
+    }
+    func deleteSelectedAnnotation() {
+        guard let index = selectedAnnotationIndex, annotations.indices.contains(index), textEditor == nil else { return }
+        undoStates.append(annotations)
+        annotations.remove(at: index)
+        redoStates.removeAll()
+        selectedAnnotationIndex = nil
+        annotationDrag = nil
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+        onChange?()
+    }
+    var activeAnnotationColor: NSColor { selectedAnnotation?.color ?? color }
+    func updateSelectedStyle() {
+        guard !selectionMode, let index = selectedAnnotationIndex, annotations.indices.contains(index), annotations[index].tool == tool else { return }
+        undoStates.append(annotations)
+        annotations[index].thickness = thickness
+        if tool == .text || tool == .number { annotations[index].fontSize = textSize * annotationScale }
+        if tool == .cover {
+            annotations[index].coverEffect = coverEffect
+            annotations[index].pixelSize = 12 * annotationScale * thickness
+        }
+        redoStates.removeAll()
+        needsDisplay = true
+        onChange?()
+    }
+    func setAnnotationColor(_ value: NSColor) {
+        color = value
+        guard let index = selectedAnnotationIndex, annotations.indices.contains(index) else { return }
+        undoStates.append(annotations)
+        if annotations[index].tool == .cover { annotations[index].coverTint = value }
+        else { annotations[index].color = value }
         redoStates.removeAll()
         needsDisplay = true
         onChange?()
@@ -591,8 +710,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard let state = undoStates.popLast() else { return }
         redoStates.append(annotations)
         annotations = state
-        selectedCoverIndex = nil
-        coverDrag = nil
+        selectedAnnotationIndex = nil
+        annotationDrag = nil
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()
@@ -601,8 +720,8 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
         guard let state = redoStates.popLast() else { return }
         undoStates.append(annotations)
         annotations = state
-        selectedCoverIndex = nil
-        coverDrag = nil
+        selectedAnnotationIndex = nil
+        annotationDrag = nil
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
         onChange?()
@@ -738,6 +857,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         self.captureScreen = captureScreen
         canvas = ScreenshotCanvas(image: image)
         canvas.selectionEnabled = captureScreen != nil
+        canvas.selectionMode = captureScreen != nil
         if let captureScreen { canvas.contentScale = captureScreen.backingScaleFactor }
         if selectWhole { canvas.selection = NSRect(origin: .zero, size: canvas.image.size) }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
@@ -762,11 +882,11 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         panel.contentView = root
         let toolbar = NSStackView()
         toolbar.spacing = 4
-        if captureScreen != nil {
-            let pointer = iconButton("cursorarrow", label: AppLanguage.english ? "Move selection · V" : "移动选区 · V", action: #selector(selectRegion))
+        do {
+            let pointer = iconButton("cursorarrow", label: AppLanguage.english ? "Select / move · V · Delete removes selected annotation" : "选择 / 移动 · V · Delete 删除选中标注", action: #selector(selectRegion))
             pointer.identifier = NSUserInterfaceItemIdentifier("screenshot.select")
             pointer.setButtonType(.toggle)
-            pointer.state = .on
+            pointer.state = captureScreen != nil ? .on : .off
             selectionButton = pointer
             toolbar.addArrangedSubview(pointer)
         }
@@ -1052,6 +1172,10 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     @objc private func cancelCapture() { close() }
     private func updateHistory() {
+        selectionButton?.state = canvas.selectionMode ? .on : .off
+        toolButtons.forEach { $0.state = !canvas.selectionMode && $0.tag == canvas.tool.rawValue ? .on : .off }
+        updateToolAppearance()
+        positionTools()
         undoButton.isEnabled = canvas.canUndo
         redoButton.isEnabled = canvas.canRedo
         refreshStyleControls()
@@ -1059,8 +1183,8 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     @objc private func changeColor(_ sender: NSButton) {
         canvas.commitText()
         selectedColor = sender.tag
-        canvas.color = colors[selectedColor]
-        if canvas.tool == .cover { canvas.setCoverTint(colors[selectedColor]) }
+        canvas.setAnnotationColor(colors[selectedColor])
+        if canvas.tool == .cover { canvas.coverTint = colors[selectedColor] }
         refreshStyleControls()
         window?.makeFirstResponder(canvas)
     }
@@ -1079,11 +1203,16 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         canvas.thickness = [CGFloat(0.6), 1, 1.8][widthPicker.indexOfSelectedItem]
         canvas.textSize = [CGFloat(14), 18, 24, 32][textSizePicker.indexOfSelectedItem]
         canvas.coverEffect = coverPicker.indexOfSelectedItem == 0 ? .pixelate : .solid
+        canvas.updateSelectedStyle()
         refreshStyleControls()
         positionTools()
         window?.makeFirstResponder(canvas)
     }
     private func refreshStyleControls() {
+        selectedColor = colors.firstIndex(of: canvas.activeAnnotationColor) ?? selectedColor
+        widthPicker.selectItem(at: [CGFloat(0.6), 1, 1.8].enumerated().min(by: { abs($0.element - canvas.thickness) < abs($1.element - canvas.thickness) })!.offset)
+        textSizePicker.selectItem(at: [CGFloat(14), 18, 24, 32].enumerated().min(by: { abs($0.element - canvas.textSize) < abs($1.element - canvas.textSize) })!.offset)
+        coverPicker.selectItem(at: canvas.coverEffect == .pixelate ? 0 : 1)
         let isText = canvas.tool == .text || canvas.tool == .number
         let isCover = canvas.tool == .cover
         palette.isHidden = false
@@ -1133,6 +1262,7 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
         case "\r": copyImage()
         case "\u{1b}":
             if !canvas.cancelLatestAnnotation() { close() }
+        case "\u{7f}", "\u{f728}": canvas.deleteSelectedAnnotation()
         case "v": selectRegion()
         case "f":
             if canvas.selectionEnabled { canvas.selection = NSRect(origin: .zero, size: canvas.image.size) }
