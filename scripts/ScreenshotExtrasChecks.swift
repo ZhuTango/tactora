@@ -169,7 +169,7 @@ struct ScreenshotExtrasChecks {
                 let session = try ScreenshotSession(mode: mode, screen: screen, region: CGRect(x: 0, y: 0, width: 800, height: 400), fps: 15)
                 let root = session.window!.contentView!
                 root.layoutSubtreeIfNeeded()
-                let expected = mode == .scroll ? NSSize(width: 340, height: 276) : NSSize(width: 302, height: 56)
+                let expected = mode == .scroll ? NSSize(width: 320, height: 44) : NSSize(width: 302, height: 56)
                 precondition(root.frame.size == expected, "Compact session size \(root.frame.size)")
                 let stack = root.subviews.first as! NSStackView
                 for row in stack.arrangedSubviews {
@@ -179,17 +179,44 @@ struct ScreenshotExtrasChecks {
                     func descendants(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(descendants) }
                     let controls = descendants(root)
                     let buttons = controls.compactMap { $0 as? NSButton }
-                    precondition(buttons.contains { $0.title == "重新开始" })
+                    precondition(buttons.contains { $0.toolTip == "重新开始" })
                     precondition(!buttons.contains { $0.title.contains("添加") })
-                    precondition(buttons.contains { $0.title == "完成" && $0.keyEquivalent == "\r" })
-                    precondition(controls.contains { $0 is NSScrollView })
+                    precondition(buttons.contains { $0.toolTip == "完成并编辑 · Return" && $0.keyEquivalent == "\r" })
+                    precondition(!controls.contains { $0 is NSScrollView }, "No boxed preview inside toolbar")
+                    precondition(!session.window!.styleMask.contains(.titled))
+                    precondition(session.window!.styleMask.contains(.nonactivatingPanel))
+                    session.updateScrollPreview(first)
+                    precondition(session.scrollPreview!.panel.isVisible)
+                    precondition(session.scrollPreview!.panel.ignoresMouseEvents)
+                    precondition(session.scrollPreview!.panel.frame.width <= 180)
+                    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                        session.window!.appearance = NSAppearance(named: appearance)
+                        root.layoutSubtreeIfNeeded()
+                        let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
+                        root.cacheDisplay(in: root.bounds, to: bitmap)
+                        try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/tactora-scroll-toolbar-" + appearance.rawValue + ".png"))
+                    }
+                    session.scrollPreview?.clear()
+                    precondition(!session.scrollPreview!.panel.isVisible)
                 }
                 session.showRecordingResult(mode == .gif ? gif : movie)
                 session.cancel()
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
         }
-        print("PASS compact recording and scrolling session layouts")
+        for area in [NSRect(x: 0, y: 0, width: 1440, height: 900), NSRect(x: -1920, y: 180, width: 1920, height: 1080)] {
+            for capture in [area.insetBy(dx: 300, dy: 220), area, NSRect(x: area.minX, y: area.minY, width: 240, height: 140)] {
+                let bar = ScreenshotScrollPlacement.toolbar(size: NSSize(width: 320, height: 44), capture: capture, area: area)
+                precondition(area.contains(bar), "Toolbar must stay on the selected screen")
+                for size in [NSSize(width: 800, height: 400), NSSize(width: 800, height: 30000)] {
+                    let frame = ScreenshotScrollPlacement.preview(image: size, capture: capture, area: area, toolbar: bar)
+                    precondition(area.contains(frame), "Thumbnail must stay visible on both screens")
+                    precondition(!frame.intersects(bar), "Thumbnail must not cover controls")
+                    precondition(abs(frame.width / frame.height - size.width / size.height) < 0.001, "Live thumbnail must show the whole image without stretching")
+                }
+            }
+        }
+        print("PASS compact toolbar, click-through live preview and multi-display placement")
         let largeGIF = directory.appendingPathComponent("large.gif")
         let largeContext = CGContext(data: nil, width: 1600, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!

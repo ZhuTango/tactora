@@ -12,16 +12,15 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
     private let directory: URL
     private var stitcher = ScreenshotScrollStitcher()
     private let status = NSTextField(wrappingLabelWithString: "正在准备…")
-    private let preview = NSImageView()
-    private let resetButton = NSButton(title: "重新开始", target: nil, action: nil)
-    private let previewScroll = NSScrollView()
+    private(set) var scrollPreview: ScreenshotScrollPreview?
+    private let resetButton = ScreenshotToolButton(title: "重新开始", target: nil, action: nil)
     private var lastProcessedImage: CGImage?
     private var pendingFinish = false
     private var finalScrollImage: CGImage?
     private var scrollReadyToFinish = false
     private var scrollGeneration = UUID()
-    private let finishButton = NSButton(title: "完成", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    private let finishButton = ScreenshotToolButton(title: "完成", target: nil, action: nil)
+    private let cancelButton = ScreenshotToolButton(title: "取消", target: nil, action: nil)
     private var border: NSPanel?
     private var finishing = false
     private var timer: Timer?
@@ -47,9 +46,9 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         engine = ScreenshotStream(framesPerSecond: mode == .scroll ? 5 : fps)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("tactora-recording-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let previewHeight = min(160, max(72, 308 * region.height / max(1, region.width)))
-        let contentSize = NSSize(width: mode == .scroll ? 340 : 302, height: mode == .scroll ? previewHeight + 122 : 56)
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: contentSize), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+        let contentSize = NSSize(width: mode == .scroll ? 320 : 302, height: mode == .scroll ? 44 : 56)
+        let mask: NSWindow.StyleMask = mode == .scroll ? [.borderless, .nonactivatingPanel] : [.titled, .closable, .utilityWindow]
+        let panel = ScreenshotSessionPanel(contentRect: NSRect(origin: .zero, size: contentSize), styleMask: mask, backing: .buffered, defer: false)
         panel.title = mode == .scroll ? "滚动截图" : (mode == .gif ? "GIF · 无音频" : "视频 · 无音频")
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
@@ -57,7 +56,21 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         super.init(window: panel)
         panel.delegate = self
-        let root = NSView()
+        let root: NSView
+        if mode == .scroll {
+            let card = ScreenshotToolbarView()
+            card.material = .popover
+            card.blendingMode = .behindWindow
+            card.state = .active
+            card.wantsLayer = true
+            card.layer?.cornerRadius = 10
+            card.layer?.masksToBounds = true
+            root = card
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.onCancel = { [weak self] in self?.cancel() }
+        } else { root = NSView() }
         panel.contentView = root
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         status.maximumNumberOfLines = 2
@@ -67,7 +80,10 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         progress.isDisplayedWhenStopped = false
         progress.startAnimation(nil)
         progress.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        let statusRow = NSStackView(views: [progress, status])
+        let direction = NSImageView(image: NSImage(systemSymbolName: "chevron.down.2", accessibilityDescription: "向下滚动自动拼接")!)
+        direction.contentTintColor = .controlAccentColor
+        direction.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        let statusRow = NSStackView(views: [mode == .scroll ? direction : progress, status])
         statusRow.spacing = 6
         statusRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
         for button in [resetButton, finishButton, cancelButton] { button.target = self }
@@ -80,7 +96,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         finishButton.bezelColor = .controlAccentColor
         finishButton.image = NSImage(systemSymbolName: mode == .scroll ? "checkmark" : "stop.fill", accessibilityDescription: nil)
         finishButton.imagePosition = .imageLeading
-        finishButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        if mode != .scroll { finishButton.widthAnchor.constraint(equalToConstant: 80).isActive = true }
         cancelButton.action = #selector(cancel)
         cancelButton.keyEquivalent = "\u{1b}"
         let stack = NSStackView()
@@ -88,57 +104,63 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
         if mode == .scroll {
-            stack.orientation = .vertical
-            stack.alignment = .leading
-            status.widthAnchor.constraint(equalToConstant: 286).isActive = true
+            status.maximumNumberOfLines = 1
+            status.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            status.widthAnchor.constraint(equalToConstant: 154).isActive = true
+            status.stringValue = "准备滚动截图…"
+            status.setAccessibilityLabel("滚动截图状态")
             stack.addArrangedSubview(statusRow)
-            let hint = NSTextField(labelWithString: "在内容区域缓慢向下滚动，自动拼接")
-            hint.font = .systemFont(ofSize: 11)
-            hint.textColor = .secondaryLabelColor
-            hint.toolTip = "保持窗口与选区位置不变。可滚动预览检查接缝，不满意时重新开始。固定页眉和动画请留在选区外。"
-            hint.heightAnchor.constraint(equalToConstant: 16).isActive = true
-            stack.addArrangedSubview(hint)
-            preview.imageScaling = .scaleAxesIndependently
-            previewScroll.documentView = preview
-            previewScroll.hasVerticalScroller = true
-            previewScroll.autohidesScrollers = true
-            previewScroll.borderType = .bezelBorder
-            previewScroll.setAccessibilityLabel("长截图实时预览")
-            previewScroll.widthAnchor.constraint(equalToConstant: 308).isActive = true
-            previewScroll.heightAnchor.constraint(equalToConstant: previewHeight).isActive = true
-            stack.addArrangedSubview(previewScroll)
-            let spacer = NSView()
-            let actions = NSStackView(views: [spacer, resetButton, finishButton])
-            actions.spacing = 8
-            actions.widthAnchor.constraint(equalToConstant: 308).isActive = true
-            actions.heightAnchor.constraint(equalToConstant: 30).isActive = true
-            stack.addArrangedSubview(actions)
+            let divider = NSBox()
+            divider.boxType = .separator
+            divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+            divider.heightAnchor.constraint(equalToConstant: 20).isActive = true
+            stack.addArrangedSubview(divider)
+            for (button, symbol, label) in [(resetButton, "arrow.counterclockwise", "重新开始"),
+                                            (cancelButton, "xmark", "取消 · Esc"),
+                                            (finishButton, "checkmark", "完成并编辑 · Return")] {
+                button.title = ""
+                button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+                button.imagePosition = .imageOnly
+                button.isBordered = false
+                button.bezelStyle = .regularSquare
+                button.wantsLayer = true
+                button.layer?.cornerRadius = 6
+                button.toolTip = label
+                button.setAccessibilityLabel(label)
+                button.identifier = NSUserInterfaceItemIdentifier("scroll." + symbol)
+                button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+                button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+                stack.addArrangedSubview(button)
+            }
+            finishButton.contentTintColor = .controlAccentColor
+            scrollPreview = ScreenshotScrollPreview()
         } else {
             status.widthAnchor.constraint(equalToConstant: 160).isActive = true
             stack.addArrangedSubview(statusRow)
             stack.addArrangedSubview(finishButton)
         }
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12)
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: mode == .scroll ? 8 : 16),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: mode == .scroll ? -8 : -16),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: mode == .scroll ? 7 : 12),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: mode == .scroll ? -7 : -12)
         ])
         panel.setContentSize(contentSize)
         resetButton.isEnabled = false
         finishButton.isEnabled = false
         let area = screen.visibleFrame
         let capture = NSRect(x: screen.frame.minX + region.minX, y: screen.frame.maxY - region.maxY, width: region.width, height: region.height)
-        var x = area.maxX - panel.frame.width - 12
         if mode == .scroll {
-            if capture.maxX + 12 + panel.frame.width <= area.maxX { x = capture.maxX + 12 }
-            else if capture.minX - 12 - panel.frame.width >= area.minX { x = capture.minX - 12 - panel.frame.width }
+            panel.setFrame(ScreenshotScrollPlacement.toolbar(size: contentSize, capture: capture, area: area), display: false)
+        } else {
+            let x = max(area.minX, area.maxX - panel.frame.width - 12)
+            panel.setFrameTopLeftPoint(NSPoint(x: x, y: min(area.maxY, max(area.minY + panel.frame.height, capture.maxY))))
         }
-        panel.setFrameTopLeftPoint(NSPoint(x: max(area.minX, x), y: min(area.maxY, max(area.minY + panel.frame.height, capture.maxY))))
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     func start() {
-        showWindow(nil)
+        if mode == .scroll { window?.orderFront(nil) }
+        else { showWindow(nil) }
         let frame = NSRect(x: screen.frame.minX + region.minX, y: screen.frame.maxY - region.maxY, width: region.width, height: region.height)
         let border = NSPanel(contentRect: frame.insetBy(dx: -2, dy: -2), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         border.isOpaque = false
@@ -181,6 +203,13 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             }
         }
     }
+    func updateScrollPreview(_ image: CGImage) {
+        guard mode == .scroll, let window else { return }
+        let capture = NSRect(x: screen.frame.minX + region.minX, y: screen.frame.maxY - region.maxY,
+                             width: region.width, height: region.height)
+        scrollPreview?.update(image, capture: capture, area: screen.visibleFrame, toolbar: window.frame)
+    }
+
     private func tick() {
         guard !ending else { return }
         if let error = engine.error { status.stringValue = error.localizedDescription; finish(); return }
@@ -199,9 +228,10 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         scrollGeneration = UUID()
         stitcher = ScreenshotScrollStitcher()
         lastProcessedImage = nil
-        preview.image = nil
+        scrollPreview?.clear()
         finishButton.isEnabled = false
         status.stringValue = "正在获取当前画面…"
+        status.textColor = .labelColor
         // The in-flight task will discard its old result and then capture this generation.
         if !appending { appendFrame() }
     }
@@ -224,19 +254,18 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
             case .success(let next):
                 stitcher = next
                 if let cg = next.result {
-                    preview.image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-                    let width = max(1, previewScroll.contentSize.width)
-                    preview.setFrameSize(NSSize(width: width, height: width * CGFloat(cg.height) / CGFloat(cg.width)))
-                    preview.scroll(.zero)
-                    status.stringValue = "自动拼接 · \(cg.width) × \(cg.height)"
-                    status.toolTip = "已采集 \(next.count) 帧，可继续向下滚动或完成"
+                    updateScrollPreview(cg)
+                    status.stringValue = "\(cg.width) × \(cg.height)"
+                    status.textColor = .labelColor
+                    status.toolTip = "已采集 \(next.count) 帧 · 在原内容中向下滚动，自动拼接；完成后可标注、复制或保存"
                 }
             case .failure(ScreenshotScrollStitcher.StitchError.unchanged):
                 break
             case .failure(ScreenshotScrollStitcher.StitchError.limit):
                 status.stringValue = "已达长度上限，请完成或重新开始"
             case .failure:
-                status.stringValue = "暂未接上，请慢滚或回滚一点"
+                status.stringValue = "请慢滚或回滚一点"
+                status.textColor = .systemOrange
                 status.toolTip = "已有结果已保留。请回到上次采集位置再慢慢向下滚动，或重新开始。固定页眉和动态内容可能影响拼接。"
             }
             finishButton.isEnabled = stitcher.count > 0 && !pendingFinish
@@ -267,6 +296,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         cancelButton.isEnabled = false
         progress.startAnimation(nil)
         border?.close(); border = nil
+        scrollPreview?.panel.orderOut(nil)
         status.stringValue = mode == .gif ? "正在生成 GIF…" : "正在完成…"
         Task { [self] in
             do {
@@ -372,6 +402,7 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         cancelled = true
         timer?.invalidate(); timer = nil
         window?.orderOut(nil)
+        scrollPreview?.panel.orderOut(nil)
         border?.orderOut(nil)
         guard !preparing, !finishing else { return }
         Task { [self] in
@@ -385,8 +416,95 @@ final class ScreenshotSession: NSWindowController, NSWindowDelegate {
         resultView?.stopPlayback()
         timer?.invalidate(); timer = nil
         border?.close(); border = nil
+        scrollPreview?.panel.close()
         window?.close()
         try? FileManager.default.removeItem(at: directory)
         onClose?()
+    }
+}
+
+/// A floating control strip that can receive Escape after a deliberate click,
+/// without activating Tactora when capture starts over another application's content.
+@MainActor
+private final class ScreenshotSessionPanel: NSPanel {
+    var onCancel: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) {
+        if let onCancel { onCancel() } else { super.cancelOperation(sender) }
+    }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, let onCancel { onCancel() }
+        else { super.keyDown(with: event) }
+    }
+}
+
+/// Screen-point placement; all coordinates retain the selected display's origin.
+enum ScreenshotScrollPlacement {
+    static func toolbar(size: NSSize, capture: NSRect, area: NSRect) -> NSRect {
+        let x = min(max(capture.maxX - size.width, area.minX + 8), area.maxX - size.width - 8)
+        let y: CGFloat
+        if capture.minY - size.height - 8 >= area.minY { y = capture.minY - size.height - 8 }
+        else if capture.maxY + size.height + 8 <= area.maxY { y = capture.maxY + 8 }
+        else { y = area.minY + 8 }
+        return NSRect(origin: NSPoint(x: x, y: y), size: size)
+    }
+
+    static func preview(image: NSSize, capture: NSRect, area: NSRect, toolbar: NSRect) -> NSRect {
+        let gap: CGFloat = 8
+        let right = area.maxX - capture.maxX - gap * 2
+        let left = capture.minX - area.minX - gap * 2
+        let useRight = right >= 96
+        let useLeft = !useRight && left >= 96
+        let availableWidth = useRight ? right : (useLeft ? left : area.width - gap * 2)
+        let maxWidth = min(180, availableWidth)
+        var top = min(capture.maxY, area.maxY - gap)
+        var bottom = area.minY + gap
+        // A full-width selection leaves no side room. Keep the click-through
+        // thumbnail inside the selection, away from the action strip.
+        if !useRight && !useLeft, toolbar.maxY > bottom, toolbar.minY < top {
+            if toolbar.midY < area.midY { bottom = toolbar.maxY + gap }
+            else { top = min(top, toolbar.minY - gap) }
+        }
+        let maxHeight = max(1, min(520, top - bottom))
+        let scale = min(maxWidth / max(1, image.width), maxHeight / max(1, image.height), 1)
+        let size = NSSize(width: max(1, image.width * scale), height: max(1, image.height * scale))
+        let x = useRight ? capture.maxX + gap : (useLeft ? capture.minX - gap - size.width : area.maxX - gap - size.width)
+        return NSRect(x: x, y: max(bottom, top - size.height), width: size.width, height: size.height)
+    }
+}
+
+@MainActor
+final class ScreenshotScrollPreview {
+    let panel: NSPanel
+    private let imageView = NSImageView()
+    init() {
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Scrolling over the preview must still reach the original document.
+        panel.ignoresMouseEvents = true
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.setAccessibilityLabel("滚动截图实时缩略图")
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = 4
+        imageView.layer?.masksToBounds = true
+        imageView.layer?.borderWidth = 1
+        imageView.layer?.borderColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+        panel.contentView = imageView
+    }
+    func update(_ image: CGImage, capture: NSRect, area: NSRect, toolbar: NSRect) {
+        let size = NSSize(width: image.width, height: image.height)
+        imageView.image = NSImage(cgImage: image, size: size)
+        panel.setFrame(ScreenshotScrollPlacement.preview(image: size, capture: capture, area: area, toolbar: toolbar), display: true)
+        panel.orderFront(nil)
+    }
+    func clear() {
+        imageView.image = nil
+        panel.orderOut(nil)
     }
 }
