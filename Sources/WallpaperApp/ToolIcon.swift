@@ -165,10 +165,10 @@ enum ToolIcon {
         return image
     }
 
-    /// Reserve the complete artwork plus native-looking horizontal padding.
+    /// Keep artwork inside its item with compact padding and a usable minimum width.
     /// Explicit lengths avoid relayout based on changing template-image ink bounds.
     static func setStatusImage(_ image: NSImage, on item: NSStatusItem) {
-        let length = image.size.width + 12
+        let length = max(22, image.size.width + 2)
         if item.length != length { item.length = length }
         guard let button = item.button else { return }
         button.imagePosition = .imageOnly
