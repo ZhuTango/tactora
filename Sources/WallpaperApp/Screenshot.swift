@@ -192,18 +192,8 @@ final class ScreenshotManager {
     private func pin(_ image: NSImage) {
         pins.removeAll { !$0.isVisible }
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 800)
-        let scale = min(1, min(500 / image.size.width, 400 / image.size.height))
-        let panel = NSPanel(contentRect: NSRect(x: screen.midX - 200, y: screen.midY - 150, width: max(120, image.size.width * scale), height: max(80, image.size.height * scale)), styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
-        panel.title = AppLanguage.english ? "Pinned Screenshot" : "贴图"
-        panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let view = NSImageView()
-        view.image = image; view.imageScaling = .scaleProportionallyUpOrDown
-        view.setAccessibilityLabel(panel.title)
-        panel.contentView = view
-        pins.append(panel); panel.orderFront(nil)
+        let panel = ScreenshotPinPanel(image: image, screenFrame: screen)
+        pins.append(panel); panel.makeKeyAndOrderFront(nil)
     }
 }
 

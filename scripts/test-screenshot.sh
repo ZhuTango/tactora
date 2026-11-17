@@ -17,3 +17,6 @@ xcrun swiftc -parse-as-library Sources/ToolCore/ToolFeatures.swift Sources/Wallp
 
 xcrun swiftc -parse-as-library Sources/ToolCore/ToolFeatures.swift Sources/WallpaperApp/AppLanguage.swift Sources/WallpaperApp/ScreenshotSelection.swift Sources/WallpaperApp/ScreenshotWindow.swift Sources/WallpaperApp/ScreenshotAppearance.swift Sources/WallpaperApp/ScreenshotRecording.swift Sources/WallpaperApp/ScreenshotScroll.swift Sources/WallpaperApp/ScreenshotSession.swift Sources/WallpaperApp/ScreenshotRecordingResult.swift scripts/ScreenshotExtrasChecks.swift -o .build/screenshot-extras-checks
 .build/screenshot-extras-checks
+
+xcrun swiftc -parse-as-library Sources/WallpaperApp/{AppLanguage,ScreenshotPin}.swift scripts/ScreenshotPinChecks.swift -o .build/screenshot-pin-checks
+.build/screenshot-pin-checks
