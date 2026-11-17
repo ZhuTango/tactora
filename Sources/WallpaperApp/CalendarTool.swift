@@ -66,11 +66,9 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         return image
     }
     private func updateDate() {
-        guard let button = statusItem?.button else { return }
+        guard let statusItem, let button = statusItem.button else { return }
         let now = Date(), model = CalendarMonth(containing: now, firstWeekday: firstWeekday)
-        button.image = Self.dateIcon(day: model.calendar.component(.day, from: now))
-        button.imagePosition = .imageOnly
-        button.title = ""
+        ToolIcon.setStatusImage(Self.dateIcon(day: model.calendar.component(.day, from: now)), on: statusItem)
         let formatter = DateFormatter(); formatter.locale = AppLanguage.english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
         formatter.calendar = model.calendar; formatter.dateStyle = .full
         button.toolTip = formatter.string(from: now)

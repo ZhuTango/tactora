@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var controller: WallpaperController!
     private var statusItem: NSStatusItem!
     private var fanStatusItem: NSStatusItem?
+    private var fanStatusTitle: String?
     private let menu = ToolStatusMenu()
     private let backgroundMenu = NSMenu()
     private var clipboard: ClipboardStore!
@@ -121,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         screenshots.refreshEnabled()
         controller.setFeatureEnabled(ToolFeature.wallpaper.isEnabled())
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = ToolIcon.statusImage(awake: false)
+        ToolIcon.setStatusImage(ToolIcon.statusImage(awake: false), on: statusItem)
         statusItem.button?.toolTip = "方寸 · 背景与剪贴板"
         menu.delegate = self
         statusItem.menu = menu
@@ -187,14 +188,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fanStatusItem?.autosaveName = "TactoraFanReadings"
                 fanStatusItem?.button?.target = self
                 fanStatusItem?.button?.action = #selector(showFanSettings)
-                fanStatusItem?.button?.imagePosition = .imageOnly
+                fanStatusTitle = nil
             }
-            fanStatusItem?.button?.title = ""
-            fanStatusItem?.button?.image = ToolIcon.fanReadingsImage(fanControl.statusBarTitle)
+            let title = fanControl.statusBarTitle
+            if let item = fanStatusItem, fanStatusTitle != title {
+                ToolIcon.setStatusImage(ToolIcon.fanReadingsImage(title), on: item)
+                fanStatusTitle = title
+            }
             fanStatusItem?.button?.toolTip = fanControl.statusBarDetails
             fanStatusItem?.button?.setAccessibilityLabel(fanControl.statusBarDetails)
         } else if let item = fanStatusItem {
-            NSStatusBar.system.removeStatusItem(item); fanStatusItem = nil
+            NSStatusBar.system.removeStatusItem(item); fanStatusItem = nil; fanStatusTitle = nil
         }
         #endif
     }
@@ -205,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateMenu() {
         guard controller != nil, clipboard != nil else { return }
         let awake = ToolFeature.awake.isEnabled() && keepAwake.active
-        statusItem?.button?.image = ToolIcon.statusImage(awake: awake)
+        if let statusItem { ToolIcon.setStatusImage(ToolIcon.statusImage(awake: awake), on: statusItem) }
         statusItem?.button?.toolTip = awake ? "方寸 · " + keepAwake.status : "方寸 · 防休眠未开启"
         statusItem?.button?.setAccessibilityLabel(awake ? "方寸 · 防休眠已开启" : "方寸 · 防休眠未开启")
         backgroundMenu.removeAllItems()

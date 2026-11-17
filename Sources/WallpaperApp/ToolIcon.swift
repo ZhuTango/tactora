@@ -165,10 +165,25 @@ enum ToolIcon {
         return image
     }
 
+    /// Reserve the complete artwork plus native-looking horizontal padding.
+    /// Explicit lengths avoid relayout based on changing template-image ink bounds.
+    static func setStatusImage(_ image: NSImage, on item: NSStatusItem) {
+        let length = image.size.width + 12
+        if item.length != length { item.length = length }
+        guard let button = item.button else { return }
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.title = ""
+        if button.image !== image { button.image = image }
+    }
+
     /// A fixed canvas keeps neighbouring menu items still as readings change.
     static func fanReadingsImage(_ title: String) -> NSImage {
         let values = title.split(separator: " ").map(String.init)
-        let image = NSImage(size: NSSize(width: 32, height: 22), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 32, height: 22), flipped: false) { rect in
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            NSBezierPath(rect: rect).addClip()
             for (index, value) in values.prefix(2).enumerated() {
                 let text = NSAttributedString(string: value, attributes: [
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold),

@@ -3,6 +3,23 @@ import AppKit
 @main
 struct ToolIconChecks {
     @MainActor static func main() throws {
+        _ = NSApplication.shared
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        defer { NSStatusBar.system.removeStatusItem(item) }
+        for title in ["—° —", "57° 2851", "100° 5776", "125° 20000", "57° 0"] {
+            ToolIcon.setStatusImage(ToolIcon.fanReadingsImage(title), on: item)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            precondition(item.length == 44, "Every reading must reserve its entire 32-point canvas plus padding")
+            precondition(item.button!.bounds.width >= 44, "Native button must occupy the reserved width")
+            let imageRect = item.button!.cell!.imageRect(forBounds: item.button!.bounds)
+            precondition(item.button!.bounds.contains(imageRect), "Artwork must remain inside its menu item")
+        }
+        for awake in [false, true, false] {
+            let icon = ToolIcon.statusImage(awake: awake)
+            ToolIcon.setStatusImage(icon, on: item)
+            precondition(item.length == (awake ? 46 : 30), "Awake state must release its extra width when stopped")
+        }
+        print("PASS: native status-item widths, reading changes and artwork containment")
         func bitmap(_ image: NSImage) -> NSBitmapImageRep {
             let result = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(image.size.width), pixelsHigh: Int(image.size.height), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
             NSGraphicsContext.saveGraphicsState()
