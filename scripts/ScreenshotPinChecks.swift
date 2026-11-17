@@ -6,8 +6,15 @@ import AppKit
         let image = NSImage(size: NSSize(width: 400, height: 200), flipped: false) { rect in
             NSColor.white.setFill(); rect.fill(); return true
         }
-        let frame = NSScreen.main!.visibleFrame
-        let panel = ScreenshotPinPanel(image: image, screenFrame: frame)
+        let frame = NSRect(x: 120, y: 180, width: 400, height: 200)
+        let panel = ScreenshotPinPanel(image: image, frame: frame)
+        precondition(panel.frame == frame, "Pin must preserve source position and size")
+        for original in [NSRect(x: -1700, y: 240, width: 900, height: 600),
+                         NSRect(x: 250, y: 300, width: 20, height: 15)] {
+            let exact = ScreenshotPinPanel(image: image, frame: original)
+            precondition(exact.frame == original, "Large and tiny selections must not be resized or recentered")
+            exact.close()
+        }
         precondition(!panel.styleMask.contains(.titled), "Pinned image must have no title bar")
         precondition(panel.canBecomeKey && !panel.hidesOnDeactivate)
         panel.makeKeyAndOrderFront(nil)

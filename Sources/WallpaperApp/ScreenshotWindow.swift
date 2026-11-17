@@ -288,9 +288,27 @@ final class ScreenshotCanvas: NSView, NSTextFieldDelegate {
                              strokeWidth: 3 * annotationScale, fontSize: textSize * annotationScale,
                              coverEffect: coverEffect, coverTint: coverTint, pixelSize: 12 * annotationScale * thickness)
     }
-    func renderedImage() -> NSImage? {
+    private var exportCropRect: NSRect? {
         if selectionEnabled && selection == nil { return nil }
         let crop = (selectionEnabled ? selection! : NSRect(origin: .zero, size: image.size)).integral.intersection(NSRect(origin: .zero, size: image.size))
+        return crop.isEmpty ? nil : crop
+    }
+
+    func pinScreenFrame(exportSize: NSSize) -> NSRect? {
+        guard let window, let crop = exportCropRect, image.size.width > 0 else { return nil }
+        let scale = imageRect.width / image.size.width
+        guard scale.isFinite, scale > 0 else { return nil }
+        // Exported decoration adds symmetric margins without changing the source scale.
+        let marginX = (exportSize.width - crop.width) * scale / 2
+        let marginY = (exportSize.height - crop.height) * scale / 2
+        let rect = NSRect(x: imageRect.minX + crop.minX * scale - marginX,
+                          y: imageRect.minY + crop.minY * scale - marginY,
+                          width: exportSize.width * scale, height: exportSize.height * scale)
+        return window.convertToScreen(convert(rect, to: nil))
+    }
+
+    func renderedImage() -> NSImage? {
+        guard let crop = exportCropRect else { return nil }
         let size = crop.size
         guard size.width >= 1, size.height >= 1,
               let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
@@ -687,7 +705,7 @@ private final class ScreenshotPanel: NSPanel {
 final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     let canvas: ScreenshotCanvas
     var onClose: (() -> Void)?
-    var onPin: ((NSImage) -> Void)?
+    var onPin: ((NSImage, NSRect) -> Void)?
     var onOCR: ((Data) -> Void)?
     var onSession: ((ScreenshotSession.Mode, NSScreen, CGRect, Int) -> Void)? {
         didSet { sessionButtons.forEach { $0.isEnabled = captureScreen != nil && onSession != nil } }
@@ -1161,8 +1179,9 @@ final class ScreenshotWindow: NSWindowController, NSWindowDelegate {
     }
     @objc private func pinImage() {
         canvas.commitText()
-        guard let image = exportImage(), let onPin else { showFailure(); return }
-        onPin(image)
+        guard let image = exportImage(), let frame = canvas.pinScreenFrame(exportSize: image.size),
+              let onPin else { showFailure(); return }
+        onPin(image, frame)
         close()
     }
     @objc private func recognize() {

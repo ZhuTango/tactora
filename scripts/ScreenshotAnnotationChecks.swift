@@ -12,6 +12,17 @@ import AppKit
         let canvas = ScreenshotCanvas(image: image)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = canvas
+        window.setFrameOrigin(NSPoint(x: -1000, y: 200))
+        canvas.selectionEnabled = true
+        canvas.selection = NSRect(x: 20, y: 30, width: 40, height: 50)
+        precondition(canvas.pinScreenFrame(exportSize: NSSize(width: 40, height: 50)) == NSRect(x: -990, y: 215, width: 20, height: 25), "Retina pin must retain displayed size and secondary-screen coordinates")
+        precondition(canvas.pinScreenFrame(exportSize: NSSize(width: 100, height: 110)) == NSRect(x: -1005, y: 200, width: 50, height: 55), "Beauty padding must expand around aligned source content")
+        canvas.displayScale = 2
+        let zoomRect = canvas.imageRect
+        precondition(canvas.pinScreenFrame(exportSize: NSSize(width: 40, height: 50)) == NSRect(x: -1000 + zoomRect.minX + 40, y: 200 + zoomRect.minY + 60, width: 80, height: 100), "Pin must preserve editor zoom")
+        canvas.displayScale = nil
+        canvas.selectionEnabled = false
+        canvas.selection = nil
         for effect in [ScreenshotAnnotation.CoverEffect.pixelate, .solid] {
             let editable = ScreenshotCanvas(image: image)
             let editWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 256, height: 256), styleMask: [.borderless], backing: .buffered, defer: false)

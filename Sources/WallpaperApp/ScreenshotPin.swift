@@ -5,11 +5,11 @@ final class ScreenshotPinPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    init(image: NSImage, screenFrame: NSRect) {
-        let scale = min(1, min(500 / image.size.width, 400 / image.size.height))
-        let size = NSSize(width: max(120, image.size.width * scale), height: max(80, image.size.height * scale))
-        let frame = NSRect(x: screenFrame.midX - size.width / 2, y: screenFrame.midY - size.height / 2,
-                           width: size.width, height: size.height)
+    init(image: NSImage, frame: NSRect) {
+        let size = frame.size
+        let closeSize = min(24, size.width, size.height)
+        let insetX = min(6, (size.width - closeSize) / 2)
+        let insetY = min(6, (size.height - closeSize) / 2)
         super.init(contentRect: frame, styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         title = AppLanguage.english ? "Pinned Screenshot" : "贴图"
         isReleasedWhenClosed = false
@@ -19,7 +19,7 @@ final class ScreenshotPinPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        minSize = NSSize(width: 120, height: 80)
+        minSize = NSSize(width: closeSize + insetX * 2, height: closeSize + insetY * 2)
 
         let view = ScreenshotPinImageView(frame: NSRect(origin: .zero, size: size))
         view.image = image
@@ -37,10 +37,10 @@ final class ScreenshotPinPanel: NSPanel {
         close.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(close)
         NSLayoutConstraint.activate([
-            close.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
-            close.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
-            close.widthAnchor.constraint(equalToConstant: 24),
-            close.heightAnchor.constraint(equalToConstant: 24)
+            close.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: insetX),
+            close.topAnchor.constraint(equalTo: view.topAnchor, constant: insetY),
+            close.widthAnchor.constraint(equalToConstant: closeSize),
+            close.heightAnchor.constraint(equalToConstant: closeSize)
         ])
     }
 

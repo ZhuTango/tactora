@@ -157,7 +157,7 @@ final class ScreenshotManager {
         let id = UUID()
         let preview = ScreenshotWindow(image: image, captureScreen: screen, selectWhole: selectWhole)
         preview.onClose = { [weak self] in self?.previews.removeValue(forKey: id) }
-        preview.onPin = { [weak self] image in self?.pin(image) }
+        preview.onPin = { [weak self] image, frame in self?.pin(image, frame: frame) }
         preview.onOCR = { [weak self] data in self?.onOCR?(data) }
         preview.onSession = { [weak self] mode, screen, region, fps in
             self?.startSession(mode: mode, screen: screen, region: region, fps: fps)
@@ -189,10 +189,9 @@ final class ScreenshotManager {
             onChange?()
         }
     }
-    private func pin(_ image: NSImage) {
+    private func pin(_ image: NSImage, frame: NSRect) {
         pins.removeAll { !$0.isVisible }
-        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 800)
-        let panel = ScreenshotPinPanel(image: image, screenFrame: screen)
+        let panel = ScreenshotPinPanel(image: image, frame: frame)
         pins.append(panel); panel.makeKeyAndOrderFront(nil)
     }
 }
