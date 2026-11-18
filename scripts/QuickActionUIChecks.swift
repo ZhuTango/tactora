@@ -24,6 +24,22 @@ import AppKit
   precondition(content == "{\"a\":1}")
   panel.search.stringValue = "1700000000000"; panel.rebuild()
   precondition(panel.results.first?.id == "content.text")
+  panel.search.stringValue = "12*(3+4)"; panel.rebuild()
+  guard case .calculation(let result) = panel.results.first?.destination else { fatalError("Missing calculator") }
+  precondition(result == "84" && panel.table.selectedRow == 0)
+  var copied: String?
+  panel.onExecute = { action, _, completion in
+   guard case .calculation(let value) = action.destination else { fatalError("Wrong action") }
+   copied = value; completion(.success(()))
+  }
+  panel.executeSelected()
+  precondition(copied == "84" && !panel.window!.isVisible)
+  precondition(QuickActionHistory(defaults:defaults).recent.isEmpty, "Calculations do not pollute command history")
+  panel.present()
+  panel.search.stringValue = "1/0"; panel.rebuild()
+  precondition(panel.results.isEmpty, "Invalid calculation cannot be executed")
+  panel.search.stringValue = "1+"; panel.rebuild()
+  precondition(panel.results.isEmpty)
   precondition(QuickActionsWindow.awakeMinutes("防休眠 30") == 30)
   precondition(QuickActionsWindow.awakeMinutes("awake 5 min") == 5)
   precondition(QuickActionsWindow.awakeMinutes("防休眠 0") == nil)

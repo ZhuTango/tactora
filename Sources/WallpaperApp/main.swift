@@ -750,6 +750,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let error { completion(.failure(error)) } else { completion(.success(())) }
             }
             return
+        case .calculation(let value):
+            NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setString(value, forType: .string) else { fail("无法复制计算结果"); return }
+            context.application?.activate(options: [])
         case .text(let content):
             guard available(.text) else { return }
             showTextTools(); textWindow?.setAutomaticInput(content)

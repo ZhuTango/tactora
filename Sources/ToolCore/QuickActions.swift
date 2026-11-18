@@ -5,6 +5,7 @@ struct QuickAction {
         case command(String)
         case application(String)
         case text(String)
+        case calculation(String)
         case awake(Int)
     }
     let id: String

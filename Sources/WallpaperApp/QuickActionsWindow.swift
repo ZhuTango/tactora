@@ -281,6 +281,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 results.insert(QuickAction(id: "awake.custom", title: AppLanguage.english ? "Keep awake for \(minutes) minutes" : "防休眠 \(minutes) 分钟", symbol: "sun.max", destination: .awake(minutes)), at: 0)
             }
         }
+        let calculation = QuickCalculator.evaluate(query)
+        if case .success(let value) = calculation {
+            results.insert(QuickAction(id: "content.calculation", title: "= " + value,
+                detail: AppLanguage.english ? "Return to copy result · % means ÷100" : "回车复制结果 · % 表示除以 100",
+                symbol: "equal", destination: .calculation(value)), at: 0)
+        }
         table.reloadData()
         if !results.isEmpty {
             let selectedRow = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? 0
@@ -295,6 +301,15 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             window.setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height), display: true)
         }
         feedback.stringValue = results.isEmpty ? (AppLanguage.english ? "No results · Try an app name" : "没有匹配项，试试应用名或操作关键词") : (AppLanguage.english ? "↑↓ Select    ↵ Open" : "↑↓ 选择    ↵ 打开")
+        if case .failure(let error) = calculation, results.isEmpty {
+            switch error {
+            case .divisionByZero: feedback.stringValue = AppLanguage.english ? "Cannot divide by zero" : "除数不能为 0"
+            case .outOfRange: feedback.stringValue = AppLanguage.english ? "Result is outside the supported range" : "结果超出可计算范围"
+            case .invalid: feedback.stringValue = AppLanguage.english ? "Enter a complete expression, e.g. 12*(3+4)" : "请输入完整算式，例如 12*(3+4)"
+            }
+        } else if results.first?.id == "content.calculation" {
+            feedback.stringValue = AppLanguage.english ? "↑↓ Select    ↵ Copy result" : "↑↓ 选择    ↵ 复制结果"
+        }
     }
     static func awakeMinutes(_ query: String) -> Int? {
         let pattern = #"^(?:防休眠|保持唤醒|awake)\s*(\d{1,5})\s*(?:分钟|min)?$"#
@@ -323,7 +338,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             self.search.isEnabled = true
             switch result {
             case .success:
-                if action.id != "content.text" && action.id != "awake.custom" { self.history.record(action.id) }
+                if !action.id.hasPrefix("content.") && action.id != "awake.custom" { self.history.record(action.id) }
                 self.dismiss(restoreFocus: false)
             case .failure(let error):
                 self.feedback.stringValue = error.localizedDescription
@@ -338,7 +353,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     private func updateFavorite() {
         guard results.indices.contains(table.selectedRow) else { favorite.isHidden = true; return }
         let action = results[table.selectedRow]
-        favorite.isHidden = action.id == "content.text" || action.id == "awake.custom"
+        favorite.isHidden = action.id.hasPrefix("content.") || action.id == "awake.custom"
         let saved = history.favorites.contains(action.id)
         favorite.image = NSImage(systemSymbolName: saved ? "star.fill" : "star", accessibilityDescription: nil)
         favorite.contentTintColor = .secondaryLabelColor
