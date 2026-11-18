@@ -259,12 +259,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if shortcutRegistered { applyShortcut(ClipboardShortcut.saved(), to: item) }
         }
         if ToolFeature.screenshot.isEnabled() {
-            let item = add(AppLanguage.english ? "Screenshot" : "截图", to: self.menu)
+            let capture = add(AppLanguage.english ? "Screenshot…" : "截图…", to: self.menu, action: #selector(captureScreenshot(_:)))
+            capture.tag = ScreenshotManager.Mode.area.rawValue
+            if let shortcut = screenshots.shortcut { applyShortcut(shortcut, to: capture) }
+            let item = add(AppLanguage.english ? "More Capture Modes" : "更多截图方式", to: self.menu)
+            item.isEnabled = true
             let submenu = NSMenu()
-            for mode in ScreenshotManager.Mode.allCases {
+            for mode in ScreenshotManager.Mode.allCases where mode != .area {
                 let action = NSMenuItem(title: mode.title, action: #selector(captureScreenshot(_:)), keyEquivalent: "")
                 action.target = self; action.tag = mode.rawValue
-                if mode == .area, let shortcut = screenshots.shortcut { applyShortcut(shortcut, to: action) }
                 submenu.addItem(action)
             }
             item.submenu = submenu
