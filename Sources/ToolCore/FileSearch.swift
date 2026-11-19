@@ -99,24 +99,31 @@ enum FileSearchScanner {
     }
     static func scan(_ roots: [String], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
         var output = Scan()
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
-        for root in roots {
-            if cancelled() { break }
-            let url = URL(fileURLWithPath: root)
-            guard let values = try? url.resourceValues(forKeys: keys), values.isDirectory == true, values.isSymbolicLink != true,
-                  FileManager.default.isReadableFile(atPath: root) else { output.unavailable.append(root); continue }
-            guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { url, _ in
-                if output.unavailable.count < 20 { output.unavailable.append(url.path) }
-                return true
-            }) else { output.unavailable.append(root); continue }
-            for case let file as URL in enumerator {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        // Visit each scope and its immediate children before descending into large subtrees.
+        var level = roots.map { URL(fileURLWithPath: $0) }
+        while !level.isEmpty {
+            var next: [URL] = []
+            for directory in level {
                 if cancelled() { return output }
-                if excluded.contains(file.lastPathComponent) { enumerator.skipDescendants(); continue }
-                guard let meta = try? file.resourceValues(forKeys: keys) else { continue }
-                if meta.isSymbolicLink == true { enumerator.skipDescendants(); continue }
-                if output.files.count >= limit { output.limited = true; return output }
-                output.files.append(IndexedFile(path: canonicalPath(file.path), directory: meta.isDirectory == true, modified: meta.contentModificationDate ?? .distantPast))
+                guard let metadata = try? directory.resourceValues(forKeys: keys),
+                      metadata.isSymbolicLink != true, metadata.isDirectory == true,
+                      let children = try? FileManager.default.contentsOfDirectory(at: directory,
+                          includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles) else {
+                    if output.unavailable.count < 20 { output.unavailable.append(directory.path) }
+                    continue
+                }
+                for child in children {
+                    if cancelled() { return output }
+                    guard !excluded.contains(child.lastPathComponent),
+                          let meta = try? child.resourceValues(forKeys: keys), meta.isSymbolicLink != true else { continue }
+                    if output.files.count >= limit { output.limited = true; return output }
+                    let isDirectory = meta.isDirectory == true
+                    output.files.append(IndexedFile(path: canonicalPath(child.path), directory: isDirectory, modified: meta.contentModificationDate ?? .distantPast))
+                    if isDirectory && meta.isPackage != true { next.append(child) }
+                }
             }
+            level = next
         }
         return output
     }

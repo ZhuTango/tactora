@@ -32,6 +32,12 @@ import Foundation
         precondition(updated.search("改名").isEmpty)
         precondition(!FileSearchScanner.contains(root.path + "-other/a", in: root.path))
         precondition(!FileSearchScanner.scan([root.appendingPathComponent("missing").path]).unavailable.isEmpty)
+        let deep = root.appendingPathComponent("deep")
+        let books = root.appendingPathComponent("books")
+        for i in 0..<20 { try create("deep/project/subtree/file" + String(i)) }
+        try create("books/管理思维.epub")
+        let constrained = FileSearchScanner.scan([deep.path, books.path], limit: 6)
+        precondition(constrained.limited && FileSearchCatalog(constrained.files).search("管理").contains { $0.name == "管理思维.epub" })
         let synthetic = (0..<100_000).map { IndexedFile(path: "/test/folder\($0 % 100)/file\($0).pdf", directory: false, modified: .distantPast) }
         let large = FileSearchCatalog(synthetic); let start = Date()
         precondition(large.search("file99999 ext:pdf").count == 1)
