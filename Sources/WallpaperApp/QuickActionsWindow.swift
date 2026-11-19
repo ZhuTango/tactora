@@ -573,8 +573,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             let input = search.stringValue
             highlightQuery = FileSearchQuery(input.hasPrefix("/") ? String(input.dropFirst()) : input).terms.joined(separator: " ")
         } else { highlightQuery = search.stringValue }
+        let matchAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 13),
+            .foregroundColor: NSColor.black,
+            .backgroundColor: NSColor(srgbRed: 1, green: 0.76, blue: 0.22, alpha: 1)
+        ]
         for range in action.highlightRanges(highlightQuery) {
-            highlighted.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.22)], range: range)
+            highlighted.addAttributes(matchAttributes, range: range)
         }
         title.attributedStringValue = highlighted
         let detail = NSTextField(labelWithString: action.detail)
