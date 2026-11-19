@@ -85,6 +85,10 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     private let favorite = NSButton()
     private let feedback = NSTextField(labelWithString: "")
     private let history: QuickActionHistory
+    private let currencyRates: CurrencyRates
+    private var currencyTask: Task<Void, Never>?
+    private var currencyQuery: CurrencyQuery?
+    private var currencyResult: Result<CurrencyRates.Quote, Error>?
     private var commands: [QuickAction] = []
     private var appActions: [QuickAction] = []
     private var appInventory: [SwitcherApp] = []
@@ -101,7 +105,8 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     var configuredApps: (() -> [SwitcherApp])?
     var appAlias: ((SwitcherApp) -> String?)?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, currencyRates: CurrencyRates? = nil) {
+        self.currencyRates = currencyRates ?? CurrencyRates(defaults: defaults)
         history = QuickActionHistory(defaults: defaults)
         let panel = QuickActionsPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 254), styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = AppLanguage.english ? "Quick Actions" : "快捷操作"
@@ -217,6 +222,8 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     }
     func dismiss(restoreFocus: Bool) {
         let previous = context
+        currencyTask?.cancel(); currencyTask = nil
+        currencyQuery = nil; currencyResult = nil
         generation += 1
         window?.orderOut(nil)
         monitors.forEach { NSEvent.removeMonitor($0) }
@@ -265,10 +272,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let selectedID = preservingSelection && results.indices.contains(table.selectedRow) ? results[table.selectedRow].id : nil
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard query.utf8.count <= TextProcessor.maximumBytes else {
+            updateCurrency("")
             results = []; table.reloadData()
             feedback.stringValue = AppLanguage.english ? "Input exceeds 1 MB" : "输入超过 1 MB，请缩短内容"
             return
         }
+        updateCurrency(query)
         results = query.count > 256 ? [] : history.results(commands + (ToolFeature.apps.isEnabled() ? appActions : []), query: query)
         if query.isEmpty { results = Array(results.prefix(4)) }
         if !query.isEmpty {
@@ -287,6 +296,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 detail: AppLanguage.english ? "Return to copy result · % means ÷100" : "回车复制结果 · % 表示除以 100",
                 symbol: "equal", destination: .calculation(value)), at: 0)
         }
+        if let currencyQuery, case .success(let quote) = currencyResult {
+            let source = quote.date.isEmpty ? (AppLanguage.english ? "Same currency" : "同币种")
+                : "Frankfurter · " + quote.date + (quote.cached ? (AppLanguage.english ? " · cached" : " · 缓存汇率") : "")
+            results.insert(QuickAction(id: "content.currency", title: "≈ " + quote.value + " " + currencyQuery.to,
+                detail: "1 \(currencyQuery.from) = \(quote.rate) \(currencyQuery.to) · " + source,
+                symbol: "dollarsign.arrow.circlepath", destination: .calculation(quote.value)), at: 0)
+        }
         table.reloadData()
         if !results.isEmpty {
             let selectedRow = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? 0
@@ -301,7 +317,16 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             window.setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height), display: true)
         }
         feedback.stringValue = results.isEmpty ? (AppLanguage.english ? "No results · Try an app name" : "没有匹配项，试试应用名或操作关键词") : (AppLanguage.english ? "↑↓ Select    ↵ Open" : "↑↓ 选择    ↵ 打开")
-        if case .failure(let error) = calculation, results.isEmpty {
+        if currencyQuery != nil {
+            switch currencyResult {
+            case .success: feedback.stringValue = AppLanguage.english ? "↵ Copy amount · Reference rate" : "↵ 复制金额 · 参考汇率，非成交价"
+            case .failure(let error):
+                feedback.stringValue = (error as? CurrencyRates.Failure) == .unsupported
+                    ? (AppLanguage.english ? "Currency not supported by this rate source" : "汇率源暂不支持该币种")
+                    : (AppLanguage.english ? "Rates unavailable · Edit query or reopen to retry" : "汇率获取失败，修改输入或重新打开重试")
+            case nil: feedback.stringValue = AppLanguage.english ? "Fetching exchange rates…" : "正在获取汇率…"
+            }
+        } else if case .failure(let error) = calculation, results.isEmpty {
             switch error {
             case .divisionByZero: feedback.stringValue = AppLanguage.english ? "Cannot divide by zero" : "除数不能为 0"
             case .outOfRange: feedback.stringValue = AppLanguage.english ? "Result is outside the supported range" : "结果超出可计算范围"
@@ -309,6 +334,28 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             }
         } else if results.first?.id == "content.calculation" {
             feedback.stringValue = AppLanguage.english ? "↑↓ Select    ↵ Copy result" : "↑↓ 选择    ↵ 复制结果"
+        }
+    }
+    private func updateCurrency(_ text: String) {
+        let query = CurrencyQuery.parse(text)
+        guard query != currencyQuery else { return }
+        currencyTask?.cancel(); currencyTask = nil
+        currencyQuery = query; currencyResult = nil
+        guard let query else { return }
+        let token = generation
+        currencyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                guard let self else { return }
+                let quote = try await self.currencyRates.quote(query)
+                guard !Task.isCancelled, self.generation == token, self.currencyQuery == query else { return }
+                self.currencyResult = .success(quote)
+                if !self.isComposing { self.rebuild(preservingSelection: true) }
+            } catch {
+                guard let self, !Task.isCancelled, self.generation == token, self.currencyQuery == query else { return }
+                self.currencyResult = .failure(error)
+                if !self.isComposing { self.rebuild(preservingSelection: true) }
+            }
         }
     }
     static func awakeMinutes(_ query: String) -> Int? {
