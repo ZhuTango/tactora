@@ -144,6 +144,54 @@ import AppKit
   aliasPanel.search.stringValue = "weixin"; aliasPanel.rebuild()
   precondition(aliasPanel.results.isEmpty, "Old alias is removed from search")
   aliasPanel.close()
+  let fileRoot = FileManager.default.temporaryDirectory.appendingPathComponent("file-ui-" + UUID().uuidString)
+  try FileManager.default.createDirectory(at: fileRoot, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: fileRoot) }
+  let file = fileRoot.appendingPathComponent("合同.txt")
+  try Data("file search fixture".utf8).write(to: file)
+  let fileIndex = FileSearchIndex(defaults: defaults, cacheURL: fileRoot.appendingPathComponent(".index.json"), roots: [fileRoot.path], watch: false)
+  let filePanel = QuickActionsWindow(defaults: defaults)
+  filePanel.fileIndexProvider = { fileIndex }
+  filePanel.present()
+  filePanel.search.stringValue = "/合同 ext:txt"; filePanel.rebuild()
+  for _ in 0..<30 {
+   if filePanel.results.count == 1 { break }
+   try await Task.sleep(nanoseconds: 100_000_000)
+  }
+  guard case .file(let found) = filePanel.results.first?.destination else { fatalError("Missing file search result") }
+  precondition(found.hasSuffix("/合同.txt"))
+  try Data("second fixture".utf8).write(to: fileRoot.appendingPathComponent("合同2.txt"))
+  fileIndex.rebuild()
+  for _ in 0..<30 {
+   if filePanel.results.count == 2 { break }
+   try await Task.sleep(nanoseconds: 100_000_000)
+  }
+  precondition(filePanel.results.count == 2, "Index notifications refresh visible results")
+  precondition(filePanel.results[filePanel.table.selectedRow].title == "合同.txt", "Refresh preserves selected file")
+  let priorHistory = QuickActionHistory(defaults: defaults).recent
+  var fileAction = false
+  filePanel.onExecute = { action, _, completion in
+   if case .file = action.destination { fileAction = true }
+   completion(.success(()))
+  }
+  for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+   filePanel.window!.appearance = NSAppearance(named: appearance)
+   let view = filePanel.window!.contentView!; view.layoutSubtreeIfNeeded()
+   let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+   view.cacheDisplay(in: view.bounds, to: bitmap)
+   try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/file-search-\(appearance.rawValue).png"))
+  }
+  filePanel.executeSelected()
+  precondition(fileAction && !filePanel.window!.isVisible)
+  precondition(QuickActionHistory(defaults: defaults).recent == priorHistory)
+  filePanel.present(); filePanel.search.stringValue = "/合同"; filePanel.rebuild()
+  filePanel.search.stringValue = "12*7"; filePanel.rebuild()
+  try await Task.sleep(nanoseconds: 300_000_000)
+  precondition(filePanel.results.first?.id == "content.calculation", "Old file query cannot overwrite calculation")
+  filePanel.dismiss(restoreFocus: false)
+  let fileSettings = FileSearchSettingsView(index: fileIndex)
+  fileSettings.frame = NSRect(x: 0, y: 0, width: 560, height: 230)
+  fileSettings.layoutSubtreeIfNeeded()
   let shortcut = QuickActionsShortcut(defaults:defaults)
   shortcut.conflicts = { _ in true }
   precondition(!shortcut.setShortcut(QuickActionsShortcut.defaultShortcut))

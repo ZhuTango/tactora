@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 @MainActor
 final class QuickActionsPanel: NSPanel {
@@ -32,12 +33,15 @@ final class QuickActionIconView: NSView {
     private let applicationIcon: Bool
 
     init(action: QuickAction) {
-        if case .application = action.destination { applicationIcon = true }
+        if case .file = action.destination { applicationIcon = true }
+        else if case .application = action.destination { applicationIcon = true }
         else { applicationIcon = false }
         super.init(frame: .zero)
         let imageView = NSImageView()
         imageView.imageScaling = .scaleProportionallyUpOrDown
-        if case .application(let path) = action.destination {
+        if case .file(let path) = action.destination {
+            imageView.image = NSWorkspace.shared.icon(forFile: path)
+        } else if case .application(let path) = action.destination {
             Self.appIcons.countLimit = 256
             let key = path as NSString
             let image = Self.appIcons.object(forKey: key) ?? Self.loadAppIcon(path)
@@ -79,11 +83,16 @@ struct QuickActionContext {
 }
 
 @MainActor
-final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate {
+final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate, NSMenuDelegate {
     let search = NSSearchField()
     let table = NSTableView()
     private let favorite = NSButton()
     private let feedback = NSTextField(labelWithString: "")
+    private var fileRequest = 0
+    private var fileDebounce: Task<Void, Never>?
+    private var fileObserver: NSObjectProtocol?
+    private var previewPanel: NSPanel?
+    var fileIndexProvider: () -> FileSearchIndex = { FileSearchIndex.shared }
     private let history: QuickActionHistory
     private let currencyRates: CurrencyRates
     private var currencyTask: Task<Void, Never>?
@@ -126,7 +135,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         root.blendingMode = .behindWindow
         root.state = .active
         panel.contentView = root
-        search.placeholderString = AppLanguage.english ? "Search apps and actions…" : "搜索应用与操作…"
+        search.placeholderString = AppLanguage.english ? "Search apps, actions · / to find files" : "搜索应用与操作 · / 搜文件"
         search.font = .systemFont(ofSize: 17, weight: .regular)
         (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         search.isBordered = false
@@ -151,6 +160,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         table.delegate = self
         table.target = self
         table.action = #selector(executeSelected)
+        let fileMenu = NSMenu()
+        fileMenu.delegate = self
+        for (title, selector) in [(AppLanguage.english ? "Show in Finder" : "在 Finder 中显示", #selector(revealSelectedFile)), (AppLanguage.english ? "Copy Path" : "复制路径", #selector(copySelectedFilePath)), (AppLanguage.english ? "Preview" : "预览", #selector(previewSelectedFile))] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            item.target = self; fileMenu.addItem(item)
+        }
+        table.menu = fileMenu
         table.setAccessibilityLabel(AppLanguage.english ? "Available actions" : "操作结果")
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -222,6 +238,9 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     }
     func dismiss(restoreFocus: Bool) {
         let previous = context
+        fileRequest += 1; fileDebounce?.cancel(); fileDebounce = nil
+        previewPanel?.orderOut(nil); previewPanel = nil
+        if let fileObserver { NotificationCenter.default.removeObserver(fileObserver); self.fileObserver = nil }
         currencyTask?.cancel(); currencyTask = nil
         currencyQuery = nil; currencyResult = nil
         generation += 1
@@ -238,7 +257,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     }
     override func close() { dismiss(restoreFocus: false); scan?.cancel() }
     func windowDidResignKey(_ notification: Notification) {
-        if window?.isVisible == true, !executing { dismiss(restoreFocus: false) }
+        if window?.isVisible == true, !executing, previewPanel?.isVisible != true { dismiss(restoreFocus: false) }
     }
     var isComposing: Bool { (window?.firstResponder as? NSTextView)?.hasMarkedText() == true }
     private func installMonitors() {
@@ -247,6 +266,11 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
             if event.keyCode == 53 { self.dismiss(restoreFocus: true); return nil }
             guard !self.executing else { return event }
+            if self.search.stringValue.hasPrefix("/"), self.selectedFilePath != nil {
+                if event.keyCode == 36 && flags == [.command] { self.revealSelectedFile(); return nil }
+                if event.keyCode == 8 && flags == [.command, .shift] { self.copySelectedFilePath(); return nil }
+                if event.keyCode == 49 && (flags == [.option] || (flags.isEmpty && self.window?.firstResponder === self.table)) { self.previewSelectedFile(); return nil }
+            }
             if flags.isEmpty {
                 switch event.keyCode {
                 case 125: self.moveSelection(1); return nil
@@ -260,7 +284,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         }) { monitors.append(token) }
         if let token = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in self?.dismiss(restoreFocus: false) }) { monitors.append(token) }
         if let token = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
-            if let self, event.window !== self.window { self.dismiss(restoreFocus: false) }
+            if let self, event.window !== self.window, event.window !== self.previewPanel { self.dismiss(restoreFocus: false) }
             return event
         }) { monitors.append(token) }
     }
@@ -277,6 +301,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             feedback.stringValue = AppLanguage.english ? "Input exceeds 1 MB" : "输入超过 1 MB，请缩短内容"
             return
         }
+        if query.hasPrefix("/") {
+            updateCurrency("")
+            rebuildFiles(query, selectedID: selectedID)
+            return
+        }
+        fileRequest += 1; fileDebounce?.cancel(); fileDebounce = nil
+        previewPanel?.orderOut(nil)
         updateCurrency(query)
         results = query.count > 256 ? [] : history.results(commands + (ToolFeature.apps.isEnabled() ? appActions : []), query: query)
         if query.isEmpty { results = Array(results.prefix(4)) }
@@ -364,6 +395,83 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             }
         }
     }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if results.indices.contains(table.clickedRow) { table.selectRowIndexes(IndexSet(integer: table.clickedRow), byExtendingSelection: false) }
+        for item in menu.items { item.isHidden = selectedFilePath == nil }
+    }
+    private var selectedFilePath: String? {
+        let row = table.selectedRow
+        guard results.indices.contains(row), case .file(let path) = results[row].destination else { return nil }
+        return path
+    }
+    @objc private func revealSelectedFile() {
+        guard let path = selectedFilePath else { return }
+        guard FileManager.default.fileExists(atPath: path) else { feedback.stringValue = AppLanguage.english ? "File no longer exists" : "文件已不存在"; return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        dismiss(restoreFocus: false)
+    }
+    @objc private func copySelectedFilePath() {
+        guard let path = selectedFilePath else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+        feedback.stringValue = AppLanguage.english ? "Path copied" : "已复制路径"
+    }
+    @objc private func previewSelectedFile() {
+        guard let path = selectedFilePath, FileManager.default.fileExists(atPath: path) else { return }
+        if previewPanel?.isVisible == true { previewPanel?.orderOut(nil); return }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480), styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = (path as NSString).lastPathComponent
+        panel.isReleasedWhenClosed = false
+        let view = QLPreviewView(frame: NSRect(x: 0, y: 0, width: 620, height: 480), style: .normal)!
+        view.autoresizingMask = [.width, .height]
+        view.previewItem = URL(fileURLWithPath: path) as NSURL
+        view.autostarts = true
+        panel.contentView = view; panel.level = .floating
+        panel.center(); previewPanel = panel; panel.orderFront(nil)
+    }
+    private func rebuildFiles(_ query: String, selectedID: String?) {
+        let index = fileIndexProvider()
+        if fileObserver == nil {
+            fileObserver = NotificationCenter.default.addObserver(forName: FileSearchIndex.changed, object: index, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.window?.isVisible == true, self.search.stringValue.hasPrefix("/"), !self.isComposing else { return }
+                    self.rebuild(preservingSelection: true)
+                }
+            }
+        }
+        fileRequest += 1
+        let request = fileRequest
+        fileDebounce?.cancel()
+        if selectedID == nil {
+            results = []; table.reloadData(); updateFavorite()
+            previewPanel?.orderOut(nil)
+        }
+        feedback.stringValue = AppLanguage.english ? "Searching file index…" : "正在搜索文件索引…"
+        fileDebounce = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            index.search(String(query.dropFirst())) { [weak self] files, state in
+                guard let self, self.fileRequest == request, self.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+                self.results = files.map { file in
+                    QuickAction(id: "file:" + file.path, title: file.name, detail: (file.path as NSString).deletingLastPathComponent + " · " + file.modified.formatted(date: .numeric, time: .shortened), symbol: file.directory ? "folder" : "doc", destination: .file(file.path))
+                }
+                self.table.reloadData()
+                if !self.results.isEmpty {
+                    let row = selectedID.flatMap { id in self.results.firstIndex { $0.id == id } } ?? 0
+                    self.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                }
+                self.updateFavorite()
+                let status = FileSearchSettingsView.status(state)
+                self.feedback.stringValue = (files.isEmpty ? (AppLanguage.english ? "No matches · " : "无匹配项 · ") : "") + status + (AppLanguage.english ? " · ↵ Open · ⌘↵ Finder · ⌥Space Preview" : " · ↵ 打开 · ⌘↵ 定位 · ⌥空格预览")
+                self.feedback.toolTip = self.feedback.stringValue + (AppLanguage.english ? " · ⌘⇧C Copy path" : " · ⌘⇧C 复制路径")
+                if let window = self.window, window.isVisible {
+                    let height = min(102 + CGFloat(max(1, min(7, self.results.count))) * 40, (window.screen?.visibleFrame.height ?? 800) - 32)
+                    let frame = window.frame
+                    window.setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height), display: true)
+                }
+            }
+        }
+    }
     static func awakeMinutes(_ query: String) -> Int? {
         let pattern = #"^(?:防休眠|保持唤醒|awake)\s*(\d{1,5})\s*(?:分钟|min)?$"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
@@ -382,6 +490,10 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let row = table.selectedRow
         guard !isComposing, !executing, results.indices.contains(row) else { return }
         let action = results[row]
+        if action.id == "files.search" {
+            search.stringValue = "/"; rebuild(); window?.makeFirstResponder(search)
+            return
+        }
         if action.id == "content.currencyHint", let amount = CurrencyQuery.suggestion(search.stringValue) {
             let completion = CurrencyQuery.completion(amount: amount, english: AppLanguage.english)
             search.stringValue = completion.text
@@ -402,7 +514,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             self.search.isEnabled = true
             switch result {
             case .success:
-                if !action.id.hasPrefix("content.") && action.id != "awake.custom" { self.history.record(action.id) }
+                if !action.id.hasPrefix("content.") && !action.id.hasPrefix("file:") && action.id != "awake.custom" { self.history.record(action.id) }
                 self.dismiss(restoreFocus: false)
             case .failure(let error):
                 self.feedback.stringValue = error.localizedDescription
@@ -417,7 +529,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     private func updateFavorite() {
         guard results.indices.contains(table.selectedRow) else { favorite.isHidden = true; return }
         let action = results[table.selectedRow]
-        favorite.isHidden = action.id.hasPrefix("content.") || action.id == "awake.custom"
+        favorite.isHidden = action.id.hasPrefix("content.") || action.id.hasPrefix("file:") || action.id == "awake.custom"
         let saved = history.favorites.contains(action.id)
         favorite.image = NSImage(systemSymbolName: saved ? "star.fill" : "star", accessibilityDescription: nil)
         favorite.contentTintColor = .secondaryLabelColor
@@ -444,7 +556,11 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         title.font = .systemFont(ofSize: 13, weight: .regular)
         title.lineBreakMode = .byTruncatingTail
         let highlighted = NSMutableAttributedString(string: action.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-        for range in action.highlightRanges(search.stringValue) {
+        let highlightQuery: String
+        if case .file = action.destination {
+            highlightQuery = String(search.stringValue.dropFirst()).split(whereSeparator: \.isWhitespace).filter { !$0.hasPrefix("ext:") && !$0.hasPrefix("type:") }.joined(separator: " ")
+        } else { highlightQuery = search.stringValue }
+        for range in action.highlightRanges(highlightQuery) {
             highlighted.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.22)], range: range)
         }
         title.attributedStringValue = highlighted
@@ -460,6 +576,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         content.spacing = 10
         content.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
         content.setAccessibilityLabel(action.title + " " + action.detail)
+        content.toolTip = action.title + "\n" + action.detail
         return content
     }
     static func appTitle(_ app: SwitcherApp, alias: String?) -> String {

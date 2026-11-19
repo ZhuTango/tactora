@@ -4,6 +4,7 @@ struct QuickAction {
     enum Destination {
         case command(String)
         case application(String)
+        case file(String)
         case text(String)
         case calculation(String)
         case awake(Int)

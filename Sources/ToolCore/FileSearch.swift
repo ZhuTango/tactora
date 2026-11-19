@@ -1,0 +1,123 @@
+import Foundation
+
+struct IndexedFile: Codable, Equatable {
+    let path: String
+    let directory: Bool
+    let modified: Date
+    var name: String { (path as NSString).lastPathComponent }
+}
+
+struct FileSearchQuery {
+    let terms: [String]
+    let ext: String?
+    let foldersOnly: Bool
+    init(_ input: String) {
+        let tokens = Self.fold(input).split(whereSeparator: \.isWhitespace).map(String.init)
+        ext = tokens.first(where: { $0.hasPrefix("ext:") }).map { String($0.dropFirst(4)).trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+        foldersOnly = tokens.contains("type:folder") || tokens.contains("type:目录")
+        terms = tokens.filter { !$0.hasPrefix("ext:") && !$0.hasPrefix("type:") }
+    }
+    static func fold(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+}
+
+struct FileSearchCatalog {
+    private struct Row {
+        let file: IndexedFile
+        let name: String
+        let path: String
+        let ext: String
+    }
+    private let rows: [Row]
+    init(_ files: [IndexedFile]) {
+        rows = files.map { Row(file: $0, name: FileSearchQuery.fold($0.name), path: FileSearchQuery.fold($0.path), ext: FileSearchQuery.fold(($0.path as NSString).pathExtension)) }
+    }
+    func search(_ input: String, limit: Int = 80) -> [IndexedFile] {
+        guard input.count <= 256 else { return [] }
+        let query = FileSearchQuery(input)
+        guard limit > 0 else { return [] }
+        var matches: [(Int, IndexedFile)] = []
+        func better(_ a: (Int, IndexedFile), _ b: (Int, IndexedFile)) -> Bool {
+            if a.0 != b.0 { return a.0 < b.0 }
+            if a.1.modified != b.1.modified { return a.1.modified > b.1.modified }
+            return a.1.path < b.1.path
+        }
+        // Keep only the best results; broad searches must not sort the entire index.
+        func insert(_ candidate: (Int, IndexedFile)) {
+            if matches.count < limit {
+                matches.append(candidate)
+                var child = matches.count - 1
+                while child > 0 {
+                    let parent = (child - 1) / 2
+                    guard better(matches[parent], matches[child]) else { break }
+                    matches.swapAt(parent, child); child = parent
+                }
+            } else if better(candidate, matches[0]) {
+                matches[0] = candidate
+                var parent = 0
+                while parent * 2 + 1 < matches.count {
+                    var child = parent * 2 + 1
+                    if child + 1 < matches.count && better(matches[child], matches[child + 1]) { child += 1 }
+                    guard better(matches[parent], matches[child]) else { break }
+                    matches.swapAt(parent, child); parent = child
+                }
+            }
+        }
+        for row in rows {
+            if query.foldersOnly && !row.file.directory { continue }
+            if let ext = query.ext, row.file.directory || ext != row.ext { continue }
+            guard query.terms.allSatisfy({ row.path.contains($0) }) else { continue }
+            let phrase = query.terms.joined(separator: " ")
+            let rank = row.name == phrase ? 0 : row.name.hasPrefix(phrase) ? 1 : query.terms.allSatisfy({ row.name.contains($0) }) ? 2 : 3
+            insert((rank, row.file))
+        }
+        return matches.sorted(by: better).map { $0.1 }
+    }
+}
+
+/// File names and metadata only; never opens file contents or follows symbolic links.
+enum FileSearchScanner {
+    static let excluded = Set(["node_modules", ".git", ".build", "DerivedData", "Pods", "__pycache__", "Library", "local.tango.macbglive"])
+    static let capacity = 200_000
+    struct Scan { var files: [IndexedFile] = []; var unavailable: [String] = []; var limited = false }
+    // FSEvents uses /private paths even after deletion, when resolvingSymlinks cannot resolve them.
+    static func canonicalPath(_ raw: String) -> String {
+        let path = URL(fileURLWithPath: raw).standardizedFileURL.path
+        for prefix in ["/private/var", "/private/tmp", "/private/etc"] {
+            if path == prefix || path.hasPrefix(prefix + "/") { return String(path.dropFirst("/private".count)) }
+        }
+        return path
+    }
+    static func contains(_ path: String, in root: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
+    static func roots(_ paths: [String]) -> [String] {
+        var result: [String] = []
+        for path in Set(paths.map { canonicalPath(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path) }).sorted(by: { $0.count == $1.count ? $0 < $1 : $0.count < $1.count }) {
+            if !result.contains(where: { contains(path, in: $0) }) { result.append(path) }
+        }
+        return result
+    }
+    static func scan(_ roots: [String], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
+        var output = Scan()
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        for root in roots {
+            if cancelled() { break }
+            let url = URL(fileURLWithPath: root)
+            guard let values = try? url.resourceValues(forKeys: keys), values.isDirectory == true, values.isSymbolicLink != true,
+                  FileManager.default.isReadableFile(atPath: root) else { output.unavailable.append(root); continue }
+            guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { url, _ in
+                if output.unavailable.count < 20 { output.unavailable.append(url.path) }
+                return true
+            }) else { output.unavailable.append(root); continue }
+            for case let file as URL in enumerator {
+                if cancelled() { return output }
+                if excluded.contains(file.lastPathComponent) { enumerator.skipDescendants(); continue }
+                guard let meta = try? file.resourceValues(forKeys: keys) else { continue }
+                if meta.isSymbolicLink == true { enumerator.skipDescendants(); continue }
+                if output.files.count >= limit { output.limited = true; return output }
+                output.files.append(IndexedFile(path: canonicalPath(file.path), directory: meta.isDirectory == true, modified: meta.contentModificationDate ?? .distantPast))
+            }
+        }
+        return output
+    }
+}

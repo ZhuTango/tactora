@@ -720,6 +720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         var actions = Array(windowActions.prefix(3))
         actions += [
+            command("files.search", "搜索文件", "Search Files", "文件 文件夹 目录 find file folder", "doc.text.magnifyingglass"),
             command("screenshot.area", "区域截图", "Capture Area", "截图 screenshot capture", "camera.viewfinder", feature: .screenshot),
             command("screenshot.window", "窗口截图", "Capture Window", "截图 window screenshot", "macwindow", feature: .screenshot),
             command("screenshot.screen", "全屏截图", "Capture Screen", "截图 screen screenshot", "display", feature: .screenshot),
@@ -750,6 +751,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let error { completion(.failure(error)) } else { completion(.success(())) }
             }
             return
+        case .file(let path):
+            guard FileManager.default.fileExists(atPath: path) else { fail(AppLanguage.english ? "File moved or removed. Refresh the index." : "文件已移动或删除，请刷新索引。"); return }
+            guard NSWorkspace.shared.open(URL(fileURLWithPath: path)) else { fail(AppLanguage.english ? "Unable to open file" : "无法打开文件，请检查权限"); return }
         case .calculation(let value):
             NSPasteboard.general.clearContents()
             guard NSPasteboard.general.setString(value, forType: .string) else { fail("无法复制计算结果"); return }

@@ -76,7 +76,8 @@ final class QuickActionsSettingsView: NSView {
         let note = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Click to record. Delete clears the shortcut; Esc cancels. The menu entry remains available." : "点击录制，Delete 清除快捷键，Esc 取消。也可从方寸菜单打开。")
         note.textColor = .secondaryLabelColor
         let open = NSButton(title: AppLanguage.english ? "Open Quick Actions" : "打开快捷操作", target: self, action: #selector(openPanel))
-        let stack = NSStackView(views: [heading, hint, row, note, open, status])
+        let fileSettings = FileSearchSettingsView()
+        let stack = NSStackView(views: [heading, hint, row, note, open, status, fileSettings])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 20
@@ -86,6 +87,7 @@ final class QuickActionsSettingsView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+            fileSettings.widthAnchor.constraint(equalTo: stack.widthAnchor),
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
             note.widthAnchor.constraint(equalTo: stack.widthAnchor),
             status.widthAnchor.constraint(equalTo: stack.widthAnchor)
