@@ -4,6 +4,8 @@ import AppKit
 final class FileSearchSettingsView: NSView {
     private let index: FileSearchIndex
     private let directories = NSPopUpButton()
+    private let scope = NSSegmentedControl(labels: [AppLanguage.english ? "Indexed" : "检索目录", AppLanguage.english ? "Excluded" : "排除目录"], trackingMode: .selectOne, target: nil, action: nil)
+    private var editingExclusions: Bool { scope.selectedSegment == 1 }
     private let info = NSTextField(wrappingLabelWithString: "")
     private var observer: NSObjectProtocol?
     init(index: FileSearchIndex = .shared) {
@@ -13,6 +15,9 @@ final class FileSearchSettingsView: NSView {
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Type a filename directly · ext:pdf filters files · type:folder finds folders. Local filename index; hidden files, packages and build caches are skipped. Remove all folders to stop indexing." : "直接输入文件名，ext:pdf 筛选类型，type:folder 搜文件夹。本地文件名索引，跳过隐藏内容、包内文件及构建缓存；移除全部目录即可停止索引。")
         hint.font = .systemFont(ofSize: 11); hint.textColor = .secondaryLabelColor
+        scope.selectedSegment = 0
+        scope.target = self
+        scope.action = #selector(changeList)
         directories.setAccessibilityLabel(AppLanguage.english ? "Indexed folders" : "检索目录")
         directories.widthAnchor.constraint(equalToConstant: 310).isActive = true
         let add = NSButton(title: AppLanguage.english ? "Add…" : "添加…", target: self, action: #selector(addFolder))
@@ -20,7 +25,7 @@ final class FileSearchSettingsView: NSView {
         let rebuild = NSButton(title: AppLanguage.english ? "Rebuild Index" : "重建索引", target: self, action: #selector(rebuildIndex))
         let row = NSStackView(views: [directories, add, remove]); row.spacing = 8
         info.font = .systemFont(ofSize: 11); info.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [title, hint, row, rebuild, info])
+        let stack = NSStackView(views: [title, hint, scope, row, rebuild, info])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -41,20 +46,28 @@ final class FileSearchSettingsView: NSView {
     private func refresh() {
         let selected = directories.titleOfSelectedItem
         let state = index.state
-        directories.removeAllItems(); directories.addItems(withTitles: state.roots)
+        directories.setAccessibilityLabel(editingExclusions ? (AppLanguage.english ? "Excluded folders" : "排除目录") : (AppLanguage.english ? "Indexed folders" : "检索目录"))
+        directories.removeAllItems(); directories.addItems(withTitles: editingExclusions ? state.exclusions : state.roots)
         if let selected { directories.selectItem(withTitle: selected) }
         info.stringValue = Self.status(state)
         info.toolTip = state.unavailable.joined(separator: "\n")
     }
+    @objc private func changeList() { refresh() }
     @objc private func addFolder() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
         panel.prompt = AppLanguage.english ? "Add to Index" : "加入索引"
+        if editingExclusions { panel.prompt = AppLanguage.english ? "Exclude Folder" : "排除整个目录" }
         guard panel.runModal() == .OK else { return }
-        index.setRoots(index.state.roots + panel.urls.map(\.path)); refresh()
+        let paths = panel.urls.map(\.path)
+        if editingExclusions { index.setExclusions(index.state.exclusions + paths) }
+        else { index.setRoots(index.state.roots + paths) }
+        refresh()
     }
     @objc private func removeFolder() {
         guard let selected = directories.titleOfSelectedItem else { return }
-        index.setRoots(index.state.roots.filter { $0 != selected }); refresh()
+        if editingExclusions { index.setExclusions(index.state.exclusions.filter { $0 != selected }) }
+        else { index.setRoots(index.state.roots.filter { $0 != selected }) }
+        refresh()
     }
     @objc private func rebuildIndex() { index.rebuild() }
 }

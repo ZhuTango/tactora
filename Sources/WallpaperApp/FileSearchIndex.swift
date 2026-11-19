@@ -7,13 +7,14 @@ final class FileSearchIndex: @unchecked Sendable {
     static let changed = Notification.Name("TactoraFileSearchIndexChanged")
     struct State {
         var roots: [String] = []
+        var exclusions: [String] = []
         var count = 0
         var scanning = false
         var limited = false
         var unavailable: [String] = []
         var watching = false
     }
-    private struct Saved: Codable { let version: Int; let roots: [String]; let files: [IndexedFile] }
+    private struct Saved: Codable { let version: Int; let roots: [String]; let exclusions: [String]?; let files: [IndexedFile] }
     private let worker = DispatchQueue(label: "Tactora.file-index", qos: .utility)
     private let searchQueue = DispatchQueue(label: "Tactora.file-search", qos: .userInitiated)
     private let lock = NSLock()
@@ -36,20 +37,22 @@ final class FileSearchIndex: @unchecked Sendable {
         self.cacheURL = cacheURL ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("local.tango.macbglive/file-index-v1.json")
         let home = FileManager.default.homeDirectoryForCurrentUser
         stateValue.roots = FileSearchScanner.roots(roots ?? defaults.stringArray(forKey: "fileSearch.roots.v1") ?? ["Desktop", "Downloads", "Documents"].map { home.appendingPathComponent($0).path })
+        stateValue.exclusions = FileSearchScanner.roots(defaults.stringArray(forKey: "fileSearch.exclusions.v1") ?? [])
         if watch {
             let center = NSWorkspace.shared.notificationCenter
             for name in [NSWorkspace.didWakeNotification, NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
                 observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.rebuild() })
             }
         }
+        let initialExclusions = stateValue.exclusions
         let initial = stateValue.roots
         worker.async { [weak self] in
             guard let self else { return }
             if let data = try? Data(contentsOf: self.cacheURL), data.count < 100_000_000,
-               let saved = try? JSONDecoder().decode(Saved.self, from: data), saved.version == 1, saved.roots == initial,
+               let saved = try? JSONDecoder().decode(Saved.self, from: data), saved.version == 1, saved.roots == initial, (saved.exclusions ?? []) == initialExclusions,
                saved.files.count <= FileSearchScanner.capacity {
                 self.files = Dictionary(saved.files.filter { file in initial.contains { FileSearchScanner.contains(file.path, in: $0) } }.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-                self.publish(scanning: true)
+                self.publish(scanning: true, token: 0)
             }
             self.scan(initial, full: true, token: 0)
         }
@@ -62,8 +65,19 @@ final class FileSearchIndex: @unchecked Sendable {
     func setRoots(_ roots: [String]) {
         let paths = FileSearchScanner.roots(roots)
         defaults.set(paths, forKey: "fileSearch.roots.v1")
-        lock.lock(); stateValue.roots = paths; epoch += 1; let token = epoch; catalog = FileSearchCatalog([]); stateValue.count = 0; lock.unlock()
-        worker.async { [weak self] in self?.scan(paths, full: true, token: token) }
+        reconfigure(roots: paths, exclusions: state.exclusions)
+    }
+    func setExclusions(_ folders: [String]) {
+        let paths = FileSearchScanner.roots(folders)
+        defaults.set(paths, forKey: "fileSearch.exclusions.v1")
+        reconfigure(roots: state.roots, exclusions: paths)
+    }
+    private func reconfigure(roots paths: [String], exclusions: [String]) {
+        lock.lock(); stateValue.exclusions = exclusions; stateValue.scanning = true; stateValue.roots = paths; epoch += 1; let token = epoch; catalog = FileSearchCatalog([]); stateValue.count = 0; lock.unlock()
+        worker.async { [weak self] in
+            self?.files.removeAll()
+            self?.scan(paths, full: true, token: token)
+        }
     }
     func rebuild() {
         lock.lock(); epoch += 1; let token = epoch; let roots = stateValue.roots; lock.unlock()
@@ -86,7 +100,7 @@ final class FileSearchIndex: @unchecked Sendable {
         if full { pending?.cancel(); dirty.removeAll(); startWatcher(paths) }
         publish(scanning: true, token: token)
         let retained = full ? [:] : files.filter { file in !paths.contains { FileSearchScanner.contains(file.key, in: $0) } }
-        let scanned = FileSearchScanner.scan(paths, limit: max(0, FileSearchScanner.capacity - retained.count), cancelled: { !self.current(token) })
+        let scanned = FileSearchScanner.scan(paths, excluding: state.exclusions, limit: max(0, FileSearchScanner.capacity - retained.count), cancelled: { !self.current(token) })
         guard current(token) else { return }
         files = retained
         for file in scanned.files { files[file.path] = file }
@@ -103,8 +117,9 @@ final class FileSearchIndex: @unchecked Sendable {
         lock.lock()
         guard epoch == token else { lock.unlock(); return }
         let roots = stateValue.roots
+        let exclusions = stateValue.exclusions
         lock.unlock()
-        let saved = Saved(version: 1, roots: roots, files: Array(files.values))
+        let saved = Saved(version: 1, roots: roots, exclusions: exclusions, files: Array(files.values))
         do {
             try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(saved).write(to: cacheURL, options: .atomic)
@@ -137,10 +152,12 @@ final class FileSearchIndex: @unchecked Sendable {
         }
     }
     private func handleChanges(_ paths: [String]) {
-        let roots = state.roots
+        let configuration = state
+        let roots = configuration.roots
         for rawPath in paths {
             let path = FileSearchScanner.canonicalPath(rawPath)
-            guard let root = roots.first(where: { FileSearchScanner.contains(path, in: $0) }) else { continue }
+            guard !configuration.exclusions.contains(where: { FileSearchScanner.contains(path, in: $0) }),
+                  let root = roots.first(where: { FileSearchScanner.contains(path, in: $0) }) else { continue }
             // Ignore excluded descendants, including compiler/build churn.
             let relative = String(path.dropFirst(root.count)).split(separator: "/").map(String.init)
             if relative.contains(where: { $0.hasPrefix(".") || FileSearchScanner.excluded.contains($0) || ["app", "bundle", "framework"].contains(($0 as NSString).pathExtension) }) { continue }

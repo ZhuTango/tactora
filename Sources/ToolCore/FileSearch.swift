@@ -97,11 +97,12 @@ enum FileSearchScanner {
         }
         return result
     }
-    static func scan(_ roots: [String], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
+    static func scan(_ roots: [String], excluding exclusions: [String] = [], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
         var output = Scan()
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .contentModificationDateKey]
         // Visit each scope and its immediate children before descending into large subtrees.
-        var level = roots.map { URL(fileURLWithPath: $0) }
+        let blocked = Set(exclusions)
+        var level = roots.filter { root in !exclusions.contains { contains(root, in: $0) } }.map { URL(fileURLWithPath: $0) }
         while !level.isEmpty {
             var next: [URL] = []
             for directory in level {
@@ -115,7 +116,7 @@ enum FileSearchScanner {
                 }
                 for child in children {
                     if cancelled() { return output }
-                    guard !excluded.contains(child.lastPathComponent),
+                    guard !excluded.contains(child.lastPathComponent), !blocked.contains(canonicalPath(child.path)),
                           let meta = try? child.resourceValues(forKeys: keys), meta.isSymbolicLink != true else { continue }
                     if output.files.count >= limit { output.limited = true; return output }
                     let isDirectory = meta.isDirectory == true

@@ -35,6 +35,22 @@ import AppKit
         try FileManager.default.removeItem(at: renamed)
         try await wait("renamed.txt", count: 0)
         precondition(FileManager.default.fileExists(atPath: cache.path))
+        let excluded = scope.appendingPathComponent("project")
+        let sibling = scope.appendingPathComponent("project-other")
+        for dir in [excluded, sibling] {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data().write(to: dir.appendingPathComponent("manual.txt"))
+        }
+        try await wait("manual.txt", count: 2)
+        index.setExclusions([excluded.path])
+        try await wait("manual.txt", count: 1)
+        try Data().write(to: excluded.appendingPathComponent("added-inside.txt"))
+        try Data().write(to: scope.appendingPathComponent("sentinel.txt"))
+        try await wait("sentinel.txt", count: 1)
+        let hidden = await results("added-inside"); precondition(hidden.isEmpty)
+        index.setExclusions([])
+        try await wait("manual.txt", count: 2)
+        try await wait("added-inside", count: 1)
         index.setRoots([])
         try await wait("first.txt", count: 0)
         for _ in 0..<30 {
