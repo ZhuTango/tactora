@@ -227,6 +227,29 @@ import AppKit
   filePanel.executeSelected()
   precondition(!fileAction && NSApp.windows.contains { $0.title == pdfURL.lastPathComponent && $0.isVisible })
   filePanel.dismiss(restoreFocus: false)
+  let png = fileRoot.appendingPathComponent("space-probe.png")
+  let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+  try bitmap.representation(using: .png, properties: [:])!.write(to: png)
+  fileIndex.rebuild()
+  filePanel.present(); filePanel.search.stringValue = "space-probe"; filePanel.rebuild()
+  for _ in 0..<40 where filePanel.results.first?.title != png.lastPathComponent { try await Task.sleep(nanoseconds: 100_000_000) }
+  let searchWindow = filePanel.window!
+  searchWindow.makeFirstResponder(filePanel.search)
+  let fileEditor = filePanel.search.currentEditor() as! NSTextView
+  fileEditor.setSelectedRange(NSRange(location: filePanel.search.stringValue.utf16.count, length: 0))
+  func sendSpace(_ flags: NSEvent.ModifierFlags = []) {
+   NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: searchWindow.windowNumber,
+    context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!)
+  }
+  sendSpace()
+  precondition(NSApp.windows.contains { $0.title == png.lastPathComponent && $0.isVisible })
+  precondition(filePanel.search.stringValue == "space-probe")
+  sendSpace()
+  precondition(!NSApp.windows.contains { $0.title == png.lastPathComponent && $0.isVisible })
+  sendSpace(.shift)
+  precondition(filePanel.search.stringValue == "space-probe ")
+  filePanel.dismiss(restoreFocus: false)
   filePanel.present()
   let english = AppLanguage.english
   func elements(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(elements) }

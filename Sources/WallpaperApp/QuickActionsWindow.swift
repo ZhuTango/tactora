@@ -275,14 +275,26 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     var isComposing: Bool { (window?.firstResponder as? NSTextView)?.hasMarkedText() == true }
     private func installMonitors() {
         if let token = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard let self, event.window === self.window, !self.isComposing else { return event }
+            guard let self, let source = event.window, !self.isComposing else { return event }
             let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if source === self.previewPanel, flags.isEmpty, [49, 53].contains(event.keyCode) {
+                if !event.isARepeat { self.previewPanel?.orderOut(nil) }
+                return nil
+            }
+            guard source === self.window else { return event }
             if event.keyCode == 53 { self.dismiss(restoreFocus: true); return nil }
             guard !self.executing else { return event }
             if self.selectedFilePath != nil {
                 if event.keyCode == 36 && flags == [.command] { self.revealSelectedFile(); return nil }
                 if event.keyCode == 8 && flags == [.command, .shift] { self.copySelectedFilePath(); return nil }
-                if event.keyCode == 49 && (flags == [.option] || (flags.isEmpty && self.window?.firstResponder === self.table)) { self.previewSelectedFile(); return nil }
+                if event.keyCode == 49 && (flags.isEmpty || flags == [.option]) {
+                    if !event.isARepeat { self.previewSelectedFile() }
+                    return nil
+                }
+                if event.keyCode == 49, flags == [.shift], let editor = self.search.currentEditor() as? NSTextView {
+                    editor.insertText(" ", replacementRange: editor.selectedRange())
+                    return nil
+                }
             }
             if flags.isEmpty {
                 switch event.keyCode {
@@ -509,9 +521,9 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 } else if matches.count > files.count {
                     self.feedback.stringValue = AppLanguage.english ? "Top 80 files · Refine your search" : "已显示前 80 个文件结果，可继续输入缩小范围"
                 } else if filesOnly || baseResults.isEmpty {
-                    self.feedback.stringValue = status + (AppLanguage.english ? " · ⌘↵ Finder · ⌥Space Preview" : " · ⌘↵ 定位 · ⌥空格预览")
+                    self.feedback.stringValue = status + (AppLanguage.english ? " · ⌘↵ Finder · Space Preview" : " · ⌘↵ 定位 · 空格预览")
                 }
-                self.feedback.toolTip = status + (AppLanguage.english ? " · ⌘↵ Show file · ⌥Space Preview · ⌘⇧C Copy path" : " · ⌘↵ 定位文件 · ⌥空格预览 · ⌘⇧C 复制路径")
+                self.feedback.toolTip = status + (AppLanguage.english ? " · ⌘↵ Show file · Space Preview · ⇧Space Insert space · ⌘⇧C Copy path" : " · ⌘↵ 定位文件 · 空格预览 · ⇧空格输入空格 · ⌘⇧C 复制路径")
                 if let window = self.window, window.isVisible {
                     let height = min(102 + CGFloat(max(1, min(7, self.results.count))) * 40, (window.screen?.visibleFrame.height ?? 800) - 32)
                     let frame = window.frame
