@@ -175,10 +175,10 @@ import AppKit
    let row = filePanel.tableView(filePanel.table, viewFor: filePanel.table.tableColumns.first, row: 0)!
    let text = resultTitle(row)!.attributedStringValue
    for i in 0..<text.length {
-    precondition((text.attribute(.backgroundColor, at: i, effectiveRange: nil) != nil) == (i < 2))
+    precondition(((text.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor) == QuickActionRowView.matchColor) == (i < 2))
    }
   }
-  try Data("second fixture".utf8).write(to: fileRoot.appendingPathComponent("合同2.txt"))
+  try Data("second fixture".utf8).write(to: fileRoot.appendingPathComponent(String(repeating: "项目合同管理", count: 10) + ".txt"))
   fileIndex.rebuild()
   for _ in 0..<30 {
    if filePanel.results.count == 2 { break }

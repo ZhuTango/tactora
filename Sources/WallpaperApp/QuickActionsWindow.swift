@@ -9,6 +9,12 @@ final class QuickActionsPanel: NSPanel {
 
 @MainActor
 final class QuickActionRowView: NSTableRowView {
+    static let matchColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.47, green: 0.89, blue: 0.82, alpha: 1)
+            : NSColor(srgbRed: 0.02, green: 0.36, blue: 0.32, alpha: 1)
+    }
+
     override func drawSelection(in dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 1), xRadius: 6, yRadius: 6)
         NSColor.labelColor.withAlphaComponent(0.08).setFill()
@@ -463,7 +469,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 guard let self, !self.isComposing, self.fileRequest == request, self.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
                 let currentID = self.results.indices.contains(self.table.selectedRow) ? self.results[self.table.selectedRow].id : selectedID
                 self.results = baseResults + files.map { file in
-                    QuickAction(id: "file:" + file.path, title: file.name, detail: (file.path as NSString).deletingLastPathComponent + " · " + file.modified.formatted(date: .numeric, time: .shortened), symbol: file.directory ? "folder" : "doc", destination: .file(file.path))
+                    QuickAction(id: "file:" + file.path, title: file.name, detail: (((file.path as NSString).deletingLastPathComponent) as NSString).abbreviatingWithTildeInPath + " · " + file.modified.formatted(date: .numeric, time: .shortened), symbol: file.directory ? "folder" : "doc", destination: .file(file.path))
                 }
                 self.table.reloadData()
                 if !self.results.isEmpty {
@@ -566,6 +572,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let icon = QuickActionIconView(action: action)
         let title = NSTextField(labelWithString: action.title)
         title.font = .systemFont(ofSize: 13, weight: .regular)
+        title.maximumNumberOfLines = 1
         title.lineBreakMode = .byTruncatingTail
         let highlighted = NSMutableAttributedString(string: action.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
         let highlightQuery: String
@@ -575,8 +582,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         } else { highlightQuery = search.stringValue }
         let matchAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 13),
-            .foregroundColor: NSColor.black,
-            .backgroundColor: NSColor(srgbRed: 1, green: 0.76, blue: 0.22, alpha: 1)
+            .foregroundColor: QuickActionRowView.matchColor
         ]
         for range in action.highlightRanges(highlightQuery) {
             highlighted.addAttributes(matchAttributes, range: range)
@@ -585,16 +591,31 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let detail = NSTextField(labelWithString: action.detail)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
-        detail.lineBreakMode = .byTruncatingTail
+        detail.maximumNumberOfLines = 1
+        detail.lineBreakMode = .byTruncatingMiddle
         let labels = NSStackView(views: action.detail.isEmpty ? [title] : [title, detail])
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 2
-        let content = NSStackView(views: [icon, labels, NSView()])
-        content.spacing = 10
-        content.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
+        title.widthAnchor.constraint(equalTo: labels.widthAnchor).isActive = true
+        if !action.detail.isEmpty { detail.widthAnchor.constraint(equalTo: labels.widthAnchor).isActive = true }
+        let content = NSView()
+        for view in [icon as NSView, labels] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 10),
+            icon.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            labels.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            labels.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
+            labels.centerYAnchor.constraint(equalTo: content.centerYAnchor)
+        ])
         content.setAccessibilityLabel(action.title + " " + action.detail)
-        content.toolTip = action.title + "\n" + action.detail
+        switch action.destination {
+        case .file: break
+        default: content.toolTip = action.title + "\n" + action.detail
+        }
         return content
     }
     static func appTitle(_ app: SwitcherApp, alias: String?) -> String {
