@@ -217,6 +217,32 @@ import AppKit
   try await Task.sleep(nanoseconds: 300_000_000)
   precondition(filePanel.results.first?.id == "content.calculation", "Old file query cannot overwrite calculation")
   filePanel.dismiss(restoreFocus: false)
+  let pdfURL = fileRoot.appendingPathComponent("preview-check.pdf")
+  let page = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+  try page.dataWithPDF(inside: page.bounds).write(to: pdfURL)
+  fileIndex.rebuild()
+  filePanel.present(); filePanel.search.stringValue = "/preview-check"; filePanel.rebuild()
+  for _ in 0..<30 where filePanel.results.isEmpty { try await Task.sleep(nanoseconds: 100_000_000) }
+  fileAction = false
+  filePanel.executeSelected()
+  precondition(!fileAction && NSApp.windows.contains { $0.title == pdfURL.lastPathComponent && $0.isVisible })
+  filePanel.dismiss(restoreFocus: false)
+  filePanel.present()
+  let english = AppLanguage.english
+  func elements(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(elements) }
+  let controls = elements(filePanel.window!.contentView!)
+  let scopeButton = controls.compactMap { $0 as? NSButton }.first { $0.title == (english ? "Search scope…" : "查看检索范围…") }!
+  filePanel.search.stringValue = "/missing-fixture"; filePanel.rebuild()
+  try await Task.sleep(nanoseconds: 500_000_000)
+  precondition(filePanel.results.isEmpty && !scopeButton.isHidden)
+  for i in 0..<81 { try Data().write(to: fileRoot.appendingPathComponent("limit-fixture-\(i).txt")) }
+  fileIndex.rebuild()
+  filePanel.search.stringValue = "/limit-fixture"; filePanel.rebuild()
+  for _ in 0..<30 where filePanel.results.count != 80 { try await Task.sleep(nanoseconds: 100_000_000) }
+  let fields = controls.compactMap { $0 as? NSTextField }
+  precondition(filePanel.results.count == 80 && scopeButton.isHidden)
+  precondition(fields.contains { $0.stringValue.contains(english ? "Top 80" : "前 80") })
+  filePanel.dismiss(restoreFocus: false)
   let fileSettings = FileSearchSettingsView(index: fileIndex)
   fileSettings.frame = NSRect(x: 0, y: 0, width: 560, height: 230)
   fileSettings.layoutSubtreeIfNeeded()

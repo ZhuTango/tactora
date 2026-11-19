@@ -25,6 +25,11 @@ import Foundation
             precondition(catalog.search(query + " ext:pdf").count == 2)
         }
         precondition(catalog.search("xm type:folder").map(\.name) == ["项目"])
+        let older = IndexedFile(path: "/docs/项目管理.pdf", directory: false, modified: .distantPast)
+        let newer = IndexedFile(path: "/docs/关联属性.pdf", directory: false, modified: Date())
+        let ranked = FileSearchCatalog([newer, older])
+        precondition(ranked.search("guanli") == [older, newer])
+        precondition(ranked.search("guanlian") == [newer])
         let title = "📚项目管理.pdf"
         let index = QuickActionHighlightIndex(title)
         for query in ["管理", "guanli", "gl"] {

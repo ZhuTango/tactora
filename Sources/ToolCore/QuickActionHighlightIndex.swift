@@ -6,6 +6,7 @@ struct QuickActionHighlightIndex {
     private var plain = ""
     private(set) var latin = "", initials = ""
     private var plainMap: [NSRange] = [], latinMap: [NSRange] = [], initialMap: [NSRange] = []
+    private(set) var syllableBoundaries: Set<Int> = [0]
     private static func fold(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
@@ -23,6 +24,7 @@ struct QuickActionHighlightIndex {
                 .filter { $0.isLetter || $0.isNumber }
             latin += syllable
             latinMap += Array(repeating: range, count: syllable.utf16.count)
+            syllableBoundaries.insert(latinMap.count)
             let asciiWord = text.unicodeScalars.allSatisfy { $0.isASCII } && !syllable.isEmpty
             if let first = syllable.first, !asciiWord || !previousASCIIWord {
                 let value = String(first)

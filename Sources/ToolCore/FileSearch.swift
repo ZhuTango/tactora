@@ -23,26 +23,51 @@ struct FileSearchQuery {
 }
 
 struct FileSearchCatalog {
+    private struct Phonetics {
+        let latin: String
+        let initials: String
+        let boundaries: Set<Int>
+
+        func wholeSyllables(_ token: String) -> Bool {
+            let text = latin as NSString
+            var start = 0
+            while start < text.length {
+                let hit = text.range(of: token, options: .literal, range: NSRange(location: start, length: text.length - start))
+                guard hit.location != NSNotFound else { return false }
+                if boundaries.contains(hit.location), boundaries.contains(NSMaxRange(hit)) { return true }
+                start = hit.location + 1
+            }
+            return false
+        }
+    }
     private struct Row {
-        let file: IndexedFile
+        var file: IndexedFile
         let name: String
         let path: String
         let ext: String
-        let phonetics: (latin: String, initials: String)?
+        let phonetics: Phonetics?
     }
-    private let rows: [Row]
+    private var rows: [String: Row] = [:]
     init(_ files: [IndexedFile]) {
-        var keys = [String: (latin: String, initials: String)]()
-        rows = files.map { file in
+        update(files, removing: [])
+    }
+    mutating func update(_ files: [IndexedFile], removing paths: [String]) {
+        for path in paths { rows.removeValue(forKey: path) }
+        var keys = [String: Phonetics]()
+        for file in files {
+            if rows[file.path] != nil {
+                rows[file.path]?.file = file
+                continue
+            }
             let name = FileSearchQuery.fold(file.name)
             var phonetics = keys[name]
             if phonetics == nil, name.unicodeScalars.contains(where: { $0.properties.isIdeographic }) {
                 let index = QuickActionHighlightIndex(name)
-                phonetics = (index.latin, index.initials)
+                phonetics = Phonetics(latin: index.latin, initials: index.initials, boundaries: index.syllableBoundaries)
                 keys[name] = phonetics
             }
-            return Row(file: file, name: name, path: FileSearchQuery.fold(file.path),
-                       ext: FileSearchQuery.fold((file.path as NSString).pathExtension), phonetics: phonetics)
+            rows[file.path] = Row(file: file, name: name, path: FileSearchQuery.fold(file.path),
+                                  ext: FileSearchQuery.fold((file.path as NSString).pathExtension), phonetics: phonetics)
         }
     }
     func search(_ input: String, limit: Int = 80) -> [IndexedFile] {
@@ -77,16 +102,17 @@ struct FileSearchCatalog {
             }
         }
         let phrase = query.terms.joined(separator: " ")
-        for row in rows {
+        for row in rows.values {
             if query.foldersOnly && !row.file.directory { continue }
             if let ext = query.ext, row.file.directory || ext != row.ext { continue }
             let rank: Int
             if row.name == phrase { rank = 0 }
-            else if row.name.hasPrefix(phrase) || row.phonetics?.initials.hasPrefix(phrase) == true || row.phonetics?.latin.hasPrefix(phrase) == true { rank = 1 }
+            else if row.name.hasPrefix(phrase) || row.phonetics?.initials.hasPrefix(phrase) == true { rank = 1 }
             else if query.terms.allSatisfy({ row.name.contains($0) }) { rank = 2 }
+            else if let keys = row.phonetics, query.terms.allSatisfy({ row.name.contains($0) || keys.wholeSyllables($0) }) { rank = 2 }
             else if let keys = row.phonetics, query.terms.allSatisfy({
                 row.name.contains($0) || keys.latin.contains($0) || keys.initials.contains($0)
-            }) { rank = 2 }
+            }) { rank = 3 }
             else if query.terms.allSatisfy({ term in
                 row.path.contains(term) || row.phonetics?.latin.contains(term) == true || row.phonetics?.initials.contains(term) == true
             }) { rank = 4 }
@@ -118,12 +144,23 @@ enum FileSearchScanner {
         }
         return result
     }
-    static func scan(_ roots: [String], excluding exclusions: [String] = [], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
+    static func scan(_ roots: [String], includingEntries entries: Set<String> = [], excluding exclusions: [String] = [], limit: Int = capacity, cancelled: () -> Bool = { false }) -> Scan {
         var output = Scan()
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .contentModificationDateKey]
         // Visit each scope and its immediate children before descending into large subtrees.
         let blocked = Set(exclusions)
-        var level = roots.filter { root in !exclusions.contains { contains(root, in: $0) } }.map { URL(fileURLWithPath: $0) }
+        var level: [URL] = []
+        for root in roots where !exclusions.contains(where: { contains(root, in: $0) }) {
+            let url = URL(fileURLWithPath: root)
+            if entries.contains(root) {
+                guard let meta = try? url.resourceValues(forKeys: keys), meta.isSymbolicLink != true,
+                      let directory = meta.isDirectory else { continue }
+                if output.files.count >= limit { output.limited = true; break }
+                output.files.append(IndexedFile(path: root, directory: directory, modified: meta.contentModificationDate ?? .distantPast))
+                if !directory || meta.isPackage == true { continue }
+            }
+            level.append(url)
+        }
         while !level.isEmpty {
             var next: [URL] = []
             for directory in level {

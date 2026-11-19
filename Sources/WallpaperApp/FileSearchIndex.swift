@@ -52,7 +52,7 @@ final class FileSearchIndex: @unchecked Sendable {
                let saved = try? JSONDecoder().decode(Saved.self, from: data), saved.version == 1, saved.roots == initial, (saved.exclusions ?? []) == initialExclusions,
                saved.files.count <= FileSearchScanner.capacity {
                 self.files = Dictionary(saved.files.filter { file in initial.contains { FileSearchScanner.contains(file.path, in: $0) } }.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-                self.publish(scanning: true, token: 0)
+                self.publish(scanning: true, next: FileSearchCatalog(Array(self.files.values)), token: 0)
             }
             self.scan(initial, full: true, token: 0)
         }
@@ -84,11 +84,12 @@ final class FileSearchIndex: @unchecked Sendable {
         worker.async { [weak self] in self?.scan(roots, full: true, token: token) }
     }
     private func current(_ token: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return epoch == token }
-    private func publish(scanning: Bool, unavailable: [String]? = nil, limited: Bool? = nil, token: Int? = nil) {
-        let next = FileSearchCatalog(Array(files.values))
+    private func publish(scanning: Bool, next: FileSearchCatalog? = nil, revised: [String: IndexedFile]? = nil, unavailable: [String]? = nil, limited: Bool? = nil, token: Int? = nil) {
         lock.lock()
         if let token, epoch != token { lock.unlock(); return }
-        catalog = next; stateValue.count = files.count; stateValue.scanning = scanning
+        if let next { catalog = next }
+        if let revised { files = revised }
+        stateValue.count = files.count; stateValue.scanning = scanning
         if let unavailable { stateValue.unavailable = unavailable }
         if let limited { stateValue.limited = limited }
         stateValue.watching = stream != nil
@@ -97,14 +98,24 @@ final class FileSearchIndex: @unchecked Sendable {
     }
     private func scan(_ paths: [String], full: Bool, token: Int) {
         guard current(token) else { return }
-        if full { pending?.cancel(); dirty.removeAll(); startWatcher(paths) }
-        publish(scanning: true, token: token)
+        if full {
+            pending?.cancel(); pending = nil; dirty.removeAll()
+            startWatcher(paths)
+            publish(scanning: true, token: token)
+        }
         let retained = full ? [:] : files.filter { file in !paths.contains { FileSearchScanner.contains(file.key, in: $0) } }
-        let scanned = FileSearchScanner.scan(paths, excluding: state.exclusions, limit: max(0, FileSearchScanner.capacity - retained.count), cancelled: { !self.current(token) })
+        let scanned = FileSearchScanner.scan(paths, includingEntries: Set(paths).subtracting(state.roots), excluding: state.exclusions, limit: max(0, FileSearchScanner.capacity - retained.count), cancelled: { !self.current(token) })
         guard current(token) else { return }
-        files = retained
-        for file in scanned.files { files[file.path] = file }
-        publish(scanning: false, unavailable: (full ? [] : state.unavailable.filter { problem in !paths.contains { FileSearchScanner.contains(problem, in: $0) } }) + scanned.unavailable, limited: scanned.limited || (!full && state.limited), token: token)
+        var revised = retained
+        var changed: [IndexedFile] = []
+        for file in scanned.files {
+            revised[file.path] = file
+            if files[file.path] != file { changed.append(file) }
+        }
+        let removed = files.keys.filter { revised[$0] == nil }
+        lock.lock(); var next = catalog; lock.unlock()
+        next.update(changed, removing: removed)
+        publish(scanning: false, next: next, revised: revised, unavailable: (full ? [] : state.unavailable.filter { problem in !paths.contains { FileSearchScanner.contains(problem, in: $0) } }) + scanned.unavailable, limited: scanned.limited || (!full && state.limited), token: token)
         pendingSave?.cancel()
         if full { saveCache(token: token) }
         else {
@@ -126,10 +137,10 @@ final class FileSearchIndex: @unchecked Sendable {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cacheURL.path)
         } catch { /* The in-memory index remains usable if cache storage fails. */ }
     }
-    func search(_ text: String, completion: @escaping ([IndexedFile], State) -> Void) {
+    func search(_ text: String, limit: Int = 80, completion: @escaping ([IndexedFile], State) -> Void) {
         lock.lock(); let snapshot = catalog; let state = stateValue; lock.unlock()
         searchQueue.async {
-            let result = snapshot.search(text)
+            let result = snapshot.search(text, limit: limit)
             DispatchQueue.main.async { completion(result, state) }
         }
     }
@@ -161,14 +172,27 @@ final class FileSearchIndex: @unchecked Sendable {
             // Ignore excluded descendants, including compiler/build churn.
             let relative = String(path.dropFirst(root.count)).split(separator: "/").map(String.init)
             if relative.contains(where: { $0.hasPrefix(".") || FileSearchScanner.excluded.contains($0) || ["app", "bundle", "framework"].contains(($0 as NSString).pathExtension) }) { continue }
-            let parent = (path as NSString).deletingLastPathComponent
-            dirty.insert(FileSearchScanner.contains(parent, in: root) ? parent : root)
+            var target = root
+            for component in relative {
+                if target != root {
+                    guard let ancestor = files[target] else { break }
+                    let url = URL(fileURLWithPath: target)
+                    if !ancestor.directory || (try? url.resourceValues(forKeys: [.isPackageKey, .isSymbolicLinkKey])).map({ $0.isPackage == true || $0.isSymbolicLink == true }) == true { break }
+                }
+                target = (target as NSString).appendingPathComponent(component)
+            }
+            dirty.insert(target)
         }
         guard !dirty.isEmpty else { return }
-        pending?.cancel()
+        guard pending == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            let paths = FileSearchScanner.roots(Array(self.dirty)); self.dirty.removeAll()
+            self.pending = nil
+            // Keep the event path itself: resolving a newly created symlink could leave the scope.
+            let sorted = self.dirty.sorted { $0.count < $1.count }
+            var paths: [String] = []
+            for path in sorted where !paths.contains(where: { FileSearchScanner.contains(path, in: $0) }) { paths.append(path) }
+            self.dirty.removeAll()
             self.lock.lock(); let token = self.epoch; self.lock.unlock()
             self.scan(paths.count > 64 ? self.state.roots : paths, full: false, token: token)
         }
