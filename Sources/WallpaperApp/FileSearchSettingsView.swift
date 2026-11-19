@@ -47,8 +47,12 @@ final class FileSearchSettingsView: NSView {
         let selected = directories.titleOfSelectedItem
         let state = index.state
         directories.setAccessibilityLabel(editingExclusions ? (AppLanguage.english ? "Excluded folders" : "排除目录") : (AppLanguage.english ? "Indexed folders" : "检索目录"))
-        directories.removeAllItems(); directories.addItems(withTitles: editingExclusions ? state.exclusions : state.roots)
-        if let selected { directories.selectItem(withTitle: selected) }
+        let paths = editingExclusions ? state.exclusions : state.roots
+        directories.removeAllItems()
+        directories.addItems(withTitles: paths)
+        if !paths.isEmpty {
+            directories.selectItem(at: selected.flatMap { paths.firstIndex(of: $0) } ?? 0)
+        }
         info.stringValue = Self.status(state)
         info.toolTip = state.unavailable.joined(separator: "\n")
     }
