@@ -10,7 +10,10 @@ import AppKit
   precondition(QuickActionsWindow.appTitle(app,alias:" wechat ") == "WeChat")
   let currencyData = Data("{\"date\":\"2026-11-18\",\"base\":\"EUR\",\"rates\":{\"USD\":1.2,\"CNY\":8.4}}".utf8)
   let rates = CurrencyRates(defaults: defaults, fetch: { currencyData })
+  let emptyIndex = FileSearchIndex(defaults: defaults, cacheURL: FileManager.default.temporaryDirectory.appendingPathComponent(suite + ".json"), roots: [], watch: false)
+  defer { try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent(suite + ".json")) }
   let panel = QuickActionsWindow(defaults:defaults, currencyRates: rates)
+  panel.fileIndexProvider = { emptyIndex }
   panel.commandProvider = { [QuickAction(id:"maximize",title:"最大化",keywords:"maximize",destination:.command("maximize"))] }
   panel.present()
   panel.search.stringValue = "zdh"; panel.rebuild()
@@ -130,6 +133,7 @@ import AppKit
   }
   panel.close()
   let aliasPanel = QuickActionsWindow(defaults:defaults)
+  aliasPanel.fileIndexProvider = { emptyIndex }
   var alias = "微信"
   aliasPanel.configuredApps = { [SwitcherApp(id:"alias.fixture",name:"WeChat",path:"/System/Library/CoreServices/Finder.app")] }
   aliasPanel.appAlias = { _ in alias }
@@ -153,7 +157,7 @@ import AppKit
   let filePanel = QuickActionsWindow(defaults: defaults)
   filePanel.fileIndexProvider = { fileIndex }
   filePanel.present()
-  filePanel.search.stringValue = "/合同 ext:txt"; filePanel.rebuild()
+  filePanel.search.stringValue = "合同 ext:txt"; filePanel.rebuild()
   for _ in 0..<30 {
    if filePanel.results.count == 1 { break }
    try await Task.sleep(nanoseconds: 100_000_000)
@@ -168,6 +172,16 @@ import AppKit
   }
   precondition(filePanel.results.count == 2, "Index notifications refresh visible results")
   precondition(filePanel.results[filePanel.table.selectedRow].title == "合同.txt", "Refresh preserves selected file")
+  filePanel.commandProvider = { [QuickAction(id: "contract.command", title: "合同操作", destination: .command("contract"))] }
+  filePanel.dismiss(restoreFocus: false); filePanel.present()
+  filePanel.search.stringValue = "合同"; filePanel.rebuild()
+  precondition(filePanel.results.first?.id == "contract.command", "Existing actions remain immediately available")
+  try await Task.sleep(nanoseconds: 300_000_000)
+  precondition(filePanel.results.count == 3 && filePanel.results.first?.id == "contract.command")
+  precondition(filePanel.results[filePanel.table.selectedRow].id == "contract.command", "Incoming files must not change selected action")
+  filePanel.search.stringValue = "/合同"; filePanel.rebuild()
+  try await Task.sleep(nanoseconds: 300_000_000)
+  precondition(filePanel.results.count == 2 && filePanel.results.allSatisfy { $0.id.hasPrefix("file:") }, "Slash remains optional files-only filter")
   let priorHistory = QuickActionHistory(defaults: defaults).recent
   var fileAction = false
   filePanel.onExecute = { action, _, completion in

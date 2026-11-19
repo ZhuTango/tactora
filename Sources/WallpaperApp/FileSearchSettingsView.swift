@@ -11,7 +11,7 @@ final class FileSearchSettingsView: NSView {
         super.init(frame: .zero)
         let title = NSTextField(labelWithString: AppLanguage.english ? "File Search" : "文件搜索")
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Type /name · ext:pdf filters files · type:folder finds folders. Local filename index; hidden files, packages and build caches are skipped. Remove all folders to stop indexing." : "输入 /文件名，ext:pdf 筛选类型，type:folder 搜文件夹。本地文件名索引，跳过隐藏内容、包内文件及构建缓存；移除全部目录即可停止索引。")
+        let hint = NSTextField(wrappingLabelWithString: AppLanguage.english ? "Type a filename directly · ext:pdf filters files · type:folder finds folders. Local filename index; hidden files, packages and build caches are skipped. Remove all folders to stop indexing." : "直接输入文件名，ext:pdf 筛选类型，type:folder 搜文件夹。本地文件名索引，跳过隐藏内容、包内文件及构建缓存；移除全部目录即可停止索引。")
         hint.font = .systemFont(ofSize: 11); hint.textColor = .secondaryLabelColor
         directories.setAccessibilityLabel(AppLanguage.english ? "Indexed folders" : "检索目录")
         directories.widthAnchor.constraint(equalToConstant: 310).isActive = true

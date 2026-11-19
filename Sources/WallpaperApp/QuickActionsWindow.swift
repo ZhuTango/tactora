@@ -135,7 +135,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         root.blendingMode = .behindWindow
         root.state = .active
         panel.contentView = root
-        search.placeholderString = AppLanguage.english ? "Search apps, actions · / to find files" : "搜索应用与操作 · / 搜文件"
+        search.placeholderString = AppLanguage.english ? "Search apps, actions and files…" : "搜索应用、操作与文件…"
         search.font = .systemFont(ofSize: 17, weight: .regular)
         (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         search.isBordered = false
@@ -266,7 +266,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
             if event.keyCode == 53 { self.dismiss(restoreFocus: true); return nil }
             guard !self.executing else { return event }
-            if self.search.stringValue.hasPrefix("/"), self.selectedFilePath != nil {
+            if self.selectedFilePath != nil {
                 if event.keyCode == 36 && flags == [.command] { self.revealSelectedFile(); return nil }
                 if event.keyCode == 8 && flags == [.command, .shift] { self.copySelectedFilePath(); return nil }
                 if event.keyCode == 49 && (flags == [.option] || (flags.isEmpty && self.window?.firstResponder === self.table)) { self.previewSelectedFile(); return nil }
@@ -293,10 +293,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         rebuild()
     }
     func rebuild(preservingSelection: Bool = false) {
+        let previousFileResults = preservingSelection ? results.filter { if case .file = $0.destination { return true }; return false } : []
         let selectedID = preservingSelection && results.indices.contains(table.selectedRow) ? results[table.selectedRow].id : nil
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard query.utf8.count <= TextProcessor.maximumBytes else {
             updateCurrency("")
+            fileRequest += 1; fileDebounce?.cancel(); fileDebounce = nil
             results = []; table.reloadData()
             feedback.stringValue = AppLanguage.english ? "Input exceeds 1 MB" : "输入超过 1 MB，请缩短内容"
             return
@@ -340,6 +342,9 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 detail: "1 \(currencyQuery.from) = \(quote.rate) \(currencyQuery.to) · " + source,
                 symbol: "dollarsign.arrow.circlepath", destination: .calculation(quote.value)), at: 0)
         }
+        let shouldSearchFiles = !query.isEmpty && query.count <= 256 && calculation == nil && currencyQuery == nil && results.first?.id != "content.text"
+        let baseResults = results
+        if shouldSearchFiles { results += previousFileResults }
         table.reloadData()
         if !results.isEmpty {
             let selectedRow = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? 0
@@ -371,6 +376,9 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
             }
         } else if results.first?.id == "content.calculation" {
             feedback.stringValue = AppLanguage.english ? "↑↓ Select    ↵ Copy result" : "↑↓ 选择    ↵ 复制结果"
+        }
+        if shouldSearchFiles {
+            rebuildFiles(query, selectedID: selectedID, baseResults: baseResults)
         }
     }
     private func updateCurrency(_ text: String) {
@@ -429,12 +437,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         panel.contentView = view; panel.level = .floating
         panel.center(); previewPanel = panel; panel.orderFront(nil)
     }
-    private func rebuildFiles(_ query: String, selectedID: String?) {
+    private func rebuildFiles(_ query: String, selectedID: String?, baseResults: [QuickAction] = []) {
+        let filesOnly = query.hasPrefix("/")
         let index = fileIndexProvider()
         if fileObserver == nil {
             fileObserver = NotificationCenter.default.addObserver(forName: FileSearchIndex.changed, object: index, queue: .main) { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, self.window?.isVisible == true, self.search.stringValue.hasPrefix("/"), !self.isComposing else { return }
+                    guard let self, self.window?.isVisible == true, !self.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !self.isComposing else { return }
                     self.rebuild(preservingSelection: true)
                 }
             }
@@ -442,28 +451,31 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         fileRequest += 1
         let request = fileRequest
         fileDebounce?.cancel()
-        if selectedID == nil {
+        if filesOnly && selectedID == nil {
             results = []; table.reloadData(); updateFavorite()
             previewPanel?.orderOut(nil)
         }
-        feedback.stringValue = AppLanguage.english ? "Searching file index…" : "正在搜索文件索引…"
+        if filesOnly || baseResults.isEmpty { feedback.stringValue = AppLanguage.english ? "Searching file index…" : "正在搜索文件索引…" }
         fileDebounce = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
             guard let self, !Task.isCancelled else { return }
-            index.search(String(query.dropFirst())) { [weak self] files, state in
-                guard let self, self.fileRequest == request, self.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
-                self.results = files.map { file in
+            index.search(filesOnly ? String(query.dropFirst()) : query) { [weak self] files, state in
+                guard let self, !self.isComposing, self.fileRequest == request, self.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+                let currentID = self.results.indices.contains(self.table.selectedRow) ? self.results[self.table.selectedRow].id : selectedID
+                self.results = baseResults + files.map { file in
                     QuickAction(id: "file:" + file.path, title: file.name, detail: (file.path as NSString).deletingLastPathComponent + " · " + file.modified.formatted(date: .numeric, time: .shortened), symbol: file.directory ? "folder" : "doc", destination: .file(file.path))
                 }
                 self.table.reloadData()
                 if !self.results.isEmpty {
-                    let row = selectedID.flatMap { id in self.results.firstIndex { $0.id == id } } ?? 0
+                    let row = currentID.flatMap { id in self.results.firstIndex { $0.id == id } } ?? 0
                     self.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 }
                 self.updateFavorite()
                 let status = FileSearchSettingsView.status(state)
-                self.feedback.stringValue = (files.isEmpty ? (AppLanguage.english ? "No matches · " : "无匹配项 · ") : "") + status + (AppLanguage.english ? " · ↵ Open · ⌘↵ Finder · ⌥Space Preview" : " · ↵ 打开 · ⌘↵ 定位 · ⌥空格预览")
-                self.feedback.toolTip = self.feedback.stringValue + (AppLanguage.english ? " · ⌘⇧C Copy path" : " · ⌘⇧C 复制路径")
+                if filesOnly || baseResults.isEmpty {
+                    self.feedback.stringValue = (files.isEmpty ? (AppLanguage.english ? "No matches · " : "无匹配项 · ") : "") + status + (AppLanguage.english ? " · ↵ Open · ⌘↵ Finder · ⌥Space Preview" : " · ↵ 打开 · ⌘↵ 定位 · ⌥空格预览")
+                }
+                self.feedback.toolTip = status + (AppLanguage.english ? " · ⌘↵ Show file · ⌥Space Preview · ⌘⇧C Copy path" : " · ⌘↵ 定位文件 · ⌥空格预览 · ⌘⇧C 复制路径")
                 if let window = self.window, window.isVisible {
                     let height = min(102 + CGFloat(max(1, min(7, self.results.count))) * 40, (window.screen?.visibleFrame.height ?? 800) - 32)
                     let frame = window.frame
@@ -558,7 +570,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let highlighted = NSMutableAttributedString(string: action.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
         let highlightQuery: String
         if case .file = action.destination {
-            highlightQuery = String(search.stringValue.dropFirst()).split(whereSeparator: \.isWhitespace).filter { !$0.hasPrefix("ext:") && !$0.hasPrefix("type:") }.joined(separator: " ")
+            highlightQuery = (search.stringValue.hasPrefix("/") ? String(search.stringValue.dropFirst()) : search.stringValue).split(whereSeparator: \.isWhitespace).filter { !$0.hasPrefix("ext:") && !$0.hasPrefix("type:") }.joined(separator: " ")
         } else { highlightQuery = search.stringValue }
         for range in action.highlightRanges(highlightQuery) {
             highlighted.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.22)], range: range)
