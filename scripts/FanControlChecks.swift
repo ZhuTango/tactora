@@ -16,6 +16,18 @@ import Foundation
    preconditionFailure("Unaccepted mode must fail")
   } catch {}
   precondition(waits == 10 && writes == ["F0Md"], "Do not write target when mode fails")
+  var warning = FanWarningState()
+  let start = Date()
+  for second in stride(from: 0, to: 30, by: 2) {
+   precondition(warning.evaluate("Hot", at: start.addingTimeInterval(Double(second))) == nil)
+  }
+  precondition(warning.evaluate("Hot", at: start.addingTimeInterval(30)) == "Hot")
+  precondition(warning.evaluate("Hot", at: start.addingTimeInterval(32)) == nil)
+  precondition(warning.evaluate(nil, at: start.addingTimeInterval(34)) == nil)
+  precondition(warning.evaluate("Paused", at: start.addingTimeInterval(36)) == nil)
+  precondition(warning.evaluate("Paused", at: start.addingTimeInterval(120)) == nil)
+  let sample = FanHistorySample(time: start, snapshot: FanSnapshot(chip:"test", temperatures:["a":60,"b":65], fans:[fan]))
+  precondition(sample?.temperature == 65 && sample?.speeds[0] == fan.actual)
   let curve = FanCurve(low: 50, high: 85)
   precondition(curve.valid)
   precondition(!FanCurve(low: 80, high: 85).valid)

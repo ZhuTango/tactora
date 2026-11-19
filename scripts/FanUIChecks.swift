@@ -6,7 +6,10 @@ import AppKit
   defaults.removePersistentDomain(forName: "tactora-fan-ui-checks")
   defer { defaults.removePersistentDomain(forName: "tactora-fan-ui-checks") }
   let manager = FanControlManager(defaults: defaults, serviceEnabled: { false })
-  precondition(manager.showInMenu && !manager.showInMenuBar)
+  precondition(manager.showInMenu && !manager.showInMenuBar && !manager.warningsEnabled)
+  manager.setWarnings(true)
+  precondition(manager.warningsEnabled && !manager.enabled)
+  manager.setWarnings(false)
   manager.setDisplay(menu: false, menuBar: true)
   let restored = FanControlManager(defaults: defaults, serviceEnabled: { false })
   precondition(!restored.showInMenu && restored.showInMenuBar && !restored.enabled)
@@ -59,6 +62,19 @@ import AppKit
     try capture.run(); capture.waitUntilExit()
    }
   }
+  let trendButton = controls.compactMap { $0 as? NSButton }.first { $0.title.contains("15") }!
+  trendButton.performClick(nil)
+  guard let trend = NSApp.windows.first(where: { $0.title.contains("15") && $0.isVisible }), let chart = trend.contentView else { fatalError("Missing fan history chart") }
+  for _ in 0..<3 {
+   manager.poll()
+   RunLoop.main.run(until:Date().addingTimeInterval(1.1))
+  }
+  chart.displayIfNeeded()
+  let rendered = chart.bitmapImageRepForCachingDisplay(in:chart.bounds)!
+  chart.cacheDisplay(in:chart.bounds,to:rendered)
+  try rendered.representation(using:.png,properties:[:])!.write(to: URL(fileURLWithPath: ".build/fan-history.png"))
+  print("Chart readings:", manager.history.count, "latest actual RPM:", manager.history.last?.speeds ?? [:])
+  trend.orderOut(nil)
   print("Fan UI default-off, invalid input retention, persistence and light/dark layout checks passed")
  }
 }

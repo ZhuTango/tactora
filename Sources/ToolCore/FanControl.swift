@@ -138,3 +138,36 @@ final class FanEngine {
         snapshot?.message = message
     }
 }
+
+struct FanHistorySample {
+    let time: Date
+    let temperature: Double
+    let speeds: [Int: Double]
+    init?(time: Date, snapshot: FanSnapshot) {
+        guard let temperature = snapshot.maximumTemperature, temperature.isFinite, (1...125).contains(temperature) else { return nil }
+        self.time = time
+        self.temperature = temperature
+        speeds = snapshot.fans.reduce(into: [:]) { speeds, fan in
+            if fan.actual.isFinite && (0...20000).contains(fan.actual) { speeds[fan.id] = fan.actual }
+        }
+    }
+}
+
+struct FanWarningState {
+    private var since: Date?
+    private var reason: String?
+    private var lastTick: Date?
+    private var sent = false
+    mutating func evaluate(_ issue: String?, at time: Date) -> String? {
+        if let lastTick, !(0...8).contains(time.timeIntervalSince(lastTick)) { self = FanWarningState() }
+        lastTick = time
+        if issue != reason {
+            since = time
+            reason = issue
+            sent = false
+        }
+        guard let issue, let since, !sent, time.timeIntervalSince(since) >= 30 else { return nil }
+        sent = true
+        return issue
+    }
+}

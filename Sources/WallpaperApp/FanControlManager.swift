@@ -53,6 +53,40 @@ struct FanConnectionRecovery {
     private var requested = false
     private var preserveControlStatus = false
     private let readQueue = DispatchQueue(label: "local.tango.fan-read", qos: .utility)
+    private(set) var history: [FanHistorySample] = []
+    private var warning = FanWarningState()
+    private var warningPanel: NSPanel?
+    var warningsEnabled: Bool { defaults.object(forKey: "fans.warnPersistent") as? Bool ?? enabled }
+    func setWarnings(_ value: Bool) {
+        defaults.set(value, forKey: "fans.warnPersistent")
+        warning = FanWarningState()
+        if !value { warningPanel?.orderOut(nil) }
+        changed()
+    }
+    private func checkWarning(at time: Date) {
+        guard warningsEnabled, !sleeping else { warning = FanWarningState(); return }
+        let issue: String?
+        let fresh = history.last.flatMap { (0...8).contains(time.timeIntervalSince($0.time)) ? $0 : nil }
+        if let fresh, fresh.temperature >= 90 {
+            issue = AppLanguage.english ? "CPU core temperature at or above 90°C" : "CPU 核心温度持续达到或超过 90°C"
+        } else if enabled && !active {
+            issue = AppLanguage.english ? "Temperature control has not taken over" : "温控已开启，但持续未接管风扇"
+        } else if enabled && fresh?.speeds.isEmpty != false {
+            issue = AppLanguage.english ? "Temperature or fan readings unavailable" : "持续无法读取核心温度或风扇转速"
+        } else { issue = nil }
+        if issue == nil { warningPanel?.orderOut(nil) }
+        guard let reason = warning.evaluate(issue, at: time) else { return }
+        let panel = warningPanel ?? NSPanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 56), styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = AppLanguage.english ? "Tactora · Fan warning" : "方寸 · 温控异常提醒"
+        panel.isReleasedWhenClosed = false; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let label = NSTextField(wrappingLabelWithString: reason + (AppLanguage.english ? " (30 seconds)" : "（30 秒）"))
+        label.frame = NSRect(x: 14, y: 8, width: 322, height: 38)
+        panel.contentView?.subviews.forEach { $0.removeFromSuperview() }
+        panel.contentView?.addSubview(label)
+        if let frame = NSScreen.main?.visibleFrame { panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - panel.frame.width - 16, y: frame.maxY - 12)) }
+        warningPanel = panel; panel.orderFrontRegardless()
+    }
     private var reading = false
     private(set) var snapshot: FanSnapshot?
     private(set) var message = "系统自动控制"
@@ -105,7 +139,7 @@ struct FanConnectionRecovery {
         if let timer { RunLoop.main.add(timer, forMode: .common) }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
-            self?.sleeping = true; self?.disconnect(); self?.active = false
+            self?.warning = FanWarningState(); self?.sleeping = true; self?.disconnect(); self?.active = false
         } })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
             self?.sleeping = false; self?.recovery.reset()
@@ -117,6 +151,7 @@ struct FanConnectionRecovery {
     func setEnabled(_ value: Bool) {
         generation += 1; configuring = false; inFlight = false; heartbeatStarted = nil
         recovery.reset()
+        if !value { warning = FanWarningState(); warningPanel?.orderOut(nil) }
         requested = value
         preserveControlStatus = true
         ToolFeature.fans.setEnabled(value, in: defaults)
@@ -223,6 +258,9 @@ struct FanConnectionRecovery {
         } } as? FanHelperProtocol
     }
     func poll() {
+        let time = now()
+        history.removeAll { time.timeIntervalSince($0.time) > 900 || $0.time > time }
+        checkWarning(at: time)
         if enabled, !active, !configuring, !registrationUpdating, !sleeping,
            recovery.canAttempt(at: now()) {
             connectAndConfigure()
@@ -242,7 +280,7 @@ struct FanConnectionRecovery {
                 self.message = status; self.changed()
             } }
         }
-        guard (enabled || showInMenuBar || menuVisible || shouldMonitor?() == true), !reading else { return }
+        guard (enabled || warningsEnabled || showInMenuBar || menuVisible || shouldMonitor?() == true), !reading else { return }
         reading = true
         readQueue.async { [weak self] in
             let result = Result { try FanSMC().snapshot() }
@@ -251,6 +289,10 @@ struct FanConnectionRecovery {
                 switch result {
                 case .success(var value):
                     value.active = self.active; self.snapshot = value
+                    if !self.sleeping, let sample = FanHistorySample(time: self.now(), snapshot: value) {
+                        if let last = self.history.last, sample.time.timeIntervalSince(last.time) < 1 { self.history.removeLast() }
+                        self.history.append(sample)
+                    }
                     if !self.enabled && self.connection == nil && !self.preserveControlStatus { self.message = value.fans.contains { $0.mode == 1 } ? "其他程序或遗留设置正在手动控速" : "系统自动控制" }
                 case .failure(let error): if !self.active { if !self.preserveControlStatus { self.message = error.localizedDescription }; self.snapshot = nil }
                 }
