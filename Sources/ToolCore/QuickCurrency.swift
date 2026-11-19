@@ -8,6 +8,14 @@ struct CurrencyQuery: Equatable {
         "欧元": "EUR", "英镑": "GBP", "日元": "JPY", "日币": "JPY", "港币": "HKD", "港元": "HKD",
         "澳元": "AUD", "澳币": "AUD", "加元": "CAD", "新加坡元": "SGD", "新币": "SGD", "韩元": "KRW",
         "瑞郎": "CHF", "新西兰元": "NZD", "泰铢": "THB", "台币": "TWD", "新台币": "TWD"]
+    static func suggestion(_ input: String) -> String? {
+        let number = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: .widthInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+        guard number.count <= 32,
+              number.range(of: #"^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$"#, options: .regularExpression) != nil,
+              let value = Double(number), value.isFinite, abs(value) <= 1e15 else { return nil }
+        return number
+    }
     static func parse(_ input: String) -> CurrencyQuery? {
         guard input.count <= 128 else { return nil }
         var text = input.folding(options: .widthInsensitive, locale: Locale(identifier: "en_US_POSIX")).uppercased()

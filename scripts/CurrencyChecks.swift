@@ -10,6 +10,8 @@ import Foundation
         for input in ["微信", "12*(3+4)", "100 USD", "NaN USD CNY", "100 USD CNY x", "1,00 USD CNY"] {
             precondition(CurrencyQuery.parse(input) == nil, input)
         }
+        for input in ["100", "0.5", "-20", "１００", ".5"] { precondition(CurrencyQuery.suggestion(input) != nil) }
+        for input in ["", "微信", "1+2", "100 USD", "1,00", "1."] { precondition(CurrencyQuery.suggestion(input) == nil) }
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
         let date = formatter.string(from: Date())
         let data = Data("{\"date\":\"\(date)\",\"base\":\"EUR\",\"rates\":{\"USD\":1.2,\"CNY\":8.4}}".utf8)

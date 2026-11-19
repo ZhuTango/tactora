@@ -290,6 +290,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 results.insert(QuickAction(id: "awake.custom", title: AppLanguage.english ? "Keep awake for \(minutes) minutes" : "防休眠 \(minutes) 分钟", symbol: "sun.max", destination: .awake(minutes)), at: 0)
             }
         }
+        if let amount = CurrencyQuery.suggestion(query) {
+            results.append(QuickAction(id: "content.currencyHint",
+                title: AppLanguage.english ? "Currency conversion" : "汇率换算",
+                detail: AppLanguage.english ? "\(amount) USD → CNY · Return to try; currencies are editable" : "\(amount) 美元 → 人民币 · 回车试算，可修改币种",
+                symbol: "dollarsign.arrow.circlepath", destination: .command("currency.suggest")))
+        }
         let calculation = QuickCalculator.evaluate(query)
         if case .success(let value) = calculation {
             results.insert(QuickAction(id: "content.calculation", title: "= " + value,
@@ -374,8 +380,18 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     }
     @objc func executeSelected() {
         let row = table.selectedRow
-        guard !isComposing, !executing, results.indices.contains(row), let context, let onExecute else { return }
+        guard !isComposing, !executing, results.indices.contains(row) else { return }
         let action = results[row]
+        if action.id == "content.currencyHint", let amount = CurrencyQuery.suggestion(search.stringValue) {
+            search.stringValue = amount + " USD CNY"
+            rebuild()
+            window?.makeFirstResponder(search)
+            if let editor = search.currentEditor() as? NSTextView {
+                editor.setSelectedRange(NSRange(location: amount.utf16.count + 1, length: 3))
+            }
+            return
+        }
+        guard let context, let onExecute else { return }
         let token = generation
         executing = true
         search.isEnabled = false

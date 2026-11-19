@@ -26,6 +26,15 @@ import AppKit
   precondition(content == "{\"a\":1}")
   panel.search.stringValue = "1700000000000"; panel.rebuild()
   precondition(panel.results.first?.id == "content.text")
+  precondition(panel.results.contains { $0.id == "content.currencyHint" }, "Timestamp input also offers currency without displacing timestamp")
+  panel.search.stringValue = "100"; panel.rebuild()
+  let hintIndex = panel.results.firstIndex { $0.id == "content.currencyHint" }!
+  panel.table.selectRowIndexes(IndexSet(integer: hintIndex), byExtendingSelection: false)
+  panel.executeSelected()
+  precondition(panel.search.stringValue == "100 USD CNY" && panel.window!.isVisible)
+  try await Task.sleep(nanoseconds: 400_000_000)
+  precondition(panel.results.first?.id == "content.currency")
+  precondition(QuickActionHistory(defaults: defaults).recent.isEmpty)
   panel.search.stringValue = "100美元兑人民币"; panel.rebuild()
   try await Task.sleep(nanoseconds: 400_000_000)
   guard case .calculation(let converted) = panel.results.first?.destination else { fatalError("Missing currency result") }
