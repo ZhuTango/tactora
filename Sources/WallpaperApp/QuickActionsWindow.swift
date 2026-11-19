@@ -293,7 +293,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         if let amount = CurrencyQuery.suggestion(query) {
             results.append(QuickAction(id: "content.currencyHint",
                 title: AppLanguage.english ? "Currency conversion" : "汇率换算",
-                detail: AppLanguage.english ? "\(amount) USD → CNY · Return to try; currencies are editable" : "\(amount) 美元 → 人民币 · 回车试算，可修改币种",
+                detail: CurrencyQuery.completion(amount: amount, english: AppLanguage.english).text + (AppLanguage.english ? " · Return to try; edit currency" : " · 回车试算，可直接改为日元、欧元"),
                 symbol: "dollarsign.arrow.circlepath", destination: .command("currency.suggest")))
         }
         let calculation = QuickCalculator.evaluate(query)
@@ -383,11 +383,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         guard !isComposing, !executing, results.indices.contains(row) else { return }
         let action = results[row]
         if action.id == "content.currencyHint", let amount = CurrencyQuery.suggestion(search.stringValue) {
-            search.stringValue = amount + " USD CNY"
+            let completion = CurrencyQuery.completion(amount: amount, english: AppLanguage.english)
+            search.stringValue = completion.text
             rebuild()
             window?.makeFirstResponder(search)
             if let editor = search.currentEditor() as? NSTextView {
-                editor.setSelectedRange(NSRange(location: amount.utf16.count + 1, length: 3))
+                editor.setSelectedRange(completion.selection)
             }
             return
         }

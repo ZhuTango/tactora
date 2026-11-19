@@ -8,6 +8,11 @@ struct CurrencyQuery: Equatable {
         "欧元": "EUR", "英镑": "GBP", "日元": "JPY", "日币": "JPY", "港币": "HKD", "港元": "HKD",
         "澳元": "AUD", "澳币": "AUD", "加元": "CAD", "新加坡元": "SGD", "新币": "SGD", "韩元": "KRW",
         "瑞郎": "CHF", "新西兰元": "NZD", "泰铢": "THB", "台币": "TWD", "新台币": "TWD"]
+    static func completion(amount: String, english: Bool) -> (text: String, selection: NSRange) {
+        let source = english ? "USD" : "美元"
+        let text = amount + " " + source + (english ? " to CNY" : "兑人民币")
+        return (text, NSRange(location: amount.utf16.count + 1, length: source.utf16.count))
+    }
     static func suggestion(_ input: String) -> String? {
         let number = input.trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: .widthInsensitive, locale: Locale(identifier: "en_US_POSIX"))

@@ -31,7 +31,7 @@ import AppKit
   let hintIndex = panel.results.firstIndex { $0.id == "content.currencyHint" }!
   panel.table.selectRowIndexes(IndexSet(integer: hintIndex), byExtendingSelection: false)
   panel.executeSelected()
-  precondition(panel.search.stringValue == "100 USD CNY" && panel.window!.isVisible)
+  precondition(panel.search.stringValue == CurrencyQuery.completion(amount: "100", english: AppLanguage.english).text && panel.window!.isVisible)
   try await Task.sleep(nanoseconds: 400_000_000)
   precondition(panel.results.first?.id == "content.currency")
   precondition(QuickActionHistory(defaults: defaults).recent.isEmpty)

@@ -10,6 +10,13 @@ import Foundation
         for input in ["微信", "12*(3+4)", "100 USD", "NaN USD CNY", "100 USD CNY x", "1,00 USD CNY"] {
             precondition(CurrencyQuery.parse(input) == nil, input)
         }
+        for english in [false, true] {
+            let completed = CurrencyQuery.completion(amount: "100", english: english)
+            precondition(completed.text == (english ? "100 USD to CNY" : "100 美元兑人民币"))
+            precondition((completed.text as NSString).substring(with: completed.selection) == (english ? "USD" : "美元"))
+            let changed = (completed.text as NSString).replacingCharacters(in: completed.selection, with: english ? "JPY" : "日元")
+            precondition(CurrencyQuery.parse(changed) == CurrencyQuery(amount: 100, from: "JPY", to: "CNY"))
+        }
         for input in ["100", "0.5", "-20", "１００", ".5"] { precondition(CurrencyQuery.suggestion(input) != nil) }
         for input in ["", "微信", "1+2", "100 USD", "1,00", "1."] { precondition(CurrencyQuery.suggestion(input) == nil) }
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
