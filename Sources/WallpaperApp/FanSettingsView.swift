@@ -51,7 +51,7 @@ import AppKit
         for button in [authorize, settings, retry] { button.bezelStyle = .rounded }
         let trend = NSButton(title: AppLanguage.english ? "15-minute trend" : "近 15 分钟曲线", target: self, action: #selector(showTrend))
         warnings.target = self; warnings.action = #selector(changeWarnings)
-        warnings.toolTip = "开启后监测持续高温；启用调速时也监测未接管和读数缺失。连续 30 秒后提醒。"
+        warnings.toolTip = "开启后监测持续高温；已接管风扇时也监测读数缺失。连续 30 秒后提醒。"
         let trendRow = NSStackView(views: [trend, warnings]); trendRow.spacing = 12
         let buttons = NSStackView(views: [authorize, settings, retry]); buttons.spacing = 10
         status.setAccessibilityLabel("温控状态"); status.identifier = NSUserInterfaceItemIdentifier("fans.status")

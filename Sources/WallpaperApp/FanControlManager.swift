@@ -69,9 +69,7 @@ struct FanConnectionRecovery {
         let fresh = history.last.flatMap { (0...8).contains(time.timeIntervalSince($0.time)) ? $0 : nil }
         if let fresh, fresh.temperature >= 90 {
             issue = AppLanguage.english ? "CPU core temperature at or above 90°C" : "CPU 核心温度持续达到或超过 90°C"
-        } else if enabled && !active {
-            issue = AppLanguage.english ? "Temperature control has not taken over" : "温控已开启，但持续未接管风扇"
-        } else if enabled && fresh?.speeds.isEmpty != false {
+        } else if enabled && active && fresh?.speeds.isEmpty != false {
             issue = AppLanguage.english ? "Temperature or fan readings unavailable" : "持续无法读取核心温度或风扇转速"
         } else { issue = nil }
         if issue == nil { warningPanel?.orderOut(nil) }

@@ -5,7 +5,8 @@ import AppKit
   let defaults = UserDefaults(suiteName: "tactora-fan-ui-checks")!
   defaults.removePersistentDomain(forName: "tactora-fan-ui-checks")
   defer { defaults.removePersistentDomain(forName: "tactora-fan-ui-checks") }
-  let manager = FanControlManager(defaults: defaults, serviceEnabled: { false })
+  var clockOffset: TimeInterval = 0
+  let manager = FanControlManager(defaults: defaults, now: { Date().addingTimeInterval(clockOffset) }, serviceEnabled: { false })
   precondition(manager.showInMenu && !manager.showInMenuBar && !manager.warningsEnabled)
   manager.setWarnings(true)
   precondition(manager.warningsEnabled && !manager.enabled)
@@ -16,7 +17,16 @@ import AppKit
   manager.setDisplay(menu: true, menuBar: false)
   manager.setEnabled(true)
   precondition(manager.enabled && !manager.active, "Remember user intent without claiming control")
-  manager.poll()
+  manager.setWarnings(true)
+  let visibleBefore = Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber))
+  for _ in 0..<20 {
+   manager.poll()
+   clockOffset += 2
+  }
+  precondition(Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber)) == visibleBefore,
+               "A disconnected helper must not open a warning, even when telemetry is also missing")
+  clockOffset = 0
+  manager.setWarnings(false)
   precondition(manager.enabled, "Polling must not erase the requested setting")
   let intentRestored = FanControlManager(defaults: defaults, serviceEnabled: { false })
   precondition(intentRestored.enabled && !intentRestored.active, "Restart retains intent, not runtime state")
