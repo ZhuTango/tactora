@@ -3,9 +3,30 @@ import Quartz
 import UniformTypeIdentifiers
 
 @MainActor
+private final class QuickPasteEditor: NSTextView {
+    var onPaste: ((String, String) -> Void)?
+    override func readSelection(from board: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        let original = board.string(forType: .string)
+        let replacesAll = selectedRange() == NSRange(location: 0, length: string.utf16.count)
+        guard super.readSelection(from: board, type: type) else { return false }
+        if let original { onPaste?(string, replacesAll ? original : string) }
+        return true
+    }
+}
+
+@MainActor
 final class QuickActionsPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v",
+           let editor = firstResponder as? QuickPasteEditor, !editor.hasMarkedText() {
+            editor.paste(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
@@ -93,6 +114,12 @@ struct QuickActionContext {
 final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate, NSMenuDelegate {
     let search = NSSearchField()
     let table = NSTableView()
+    private let pasteEditor = QuickPasteEditor()
+    private var pasted: (field: String, original: String)?
+    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+        guard (client as? NSSearchField) === search else { return nil }
+        return pasteEditor
+    }
     private let scopeButton = NSButton()
     private let favorite = NSButton()
     private let feedback = NSTextField(labelWithString: "")
@@ -137,6 +164,12 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         super.init(window: panel)
+        pasteEditor.isFieldEditor = true
+        pasteEditor.isRichText = false
+        pasteEditor.onPaste = { [weak self] field, original in
+            self?.pasted = (field, original)
+            self?.rebuild()
+        }
         panel.delegate = self
         let root = NSVisualEffectView()
         root.material = .popover
@@ -234,6 +267,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         generation += 1
         executing = false
         search.isEnabled = true
+        pasted = nil
         search.stringValue = ""
         commands = commandProvider?() ?? []
         rebuildAppActions()
@@ -260,6 +294,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         window?.orderOut(nil)
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors.removeAll()
+        pasted = nil
         search.stringValue = ""
         results = []
         context = nil
@@ -315,6 +350,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
     }
     func controlTextDidChange(_ notification: Notification) {
         guard !isComposing else { return }
+        pasted = nil
         rebuild()
     }
     func rebuild(preservingSelection: Bool = false) {
@@ -338,12 +374,13 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         if !preservingSelection { previewPanel?.orderOut(nil) }
         updateCurrency(query)
         results = query.count > 256 ? [] : history.results(commands + (ToolFeature.apps.isEnabled() ? appActions : []), query: query)
+        let pastedText = pasted.flatMap { $0.field == search.stringValue ? $0.original : nil }
         if query.isEmpty { results = Array(results.prefix(4)) }
         if !query.isEmpty {
             let mode = TextWorkbench.detect(query)
             if mode == .json || mode == .timestamp {
                 let title = mode == .json ? (AppLanguage.english ? "Process JSON" : "处理 JSON") : (AppLanguage.english ? "Convert timestamp" : "转换时间戳")
-                results.insert(QuickAction(id: "content.text", title: title, detail: AppLanguage.english ? "Open in Text Tools" : "在文本处理面板查看结果", symbol: "text.alignleft", destination: .text(search.stringValue)), at: 0)
+                results.insert(QuickAction(id: "content.text", title: title, detail: AppLanguage.english ? "Open in Text Tools" : "在文本处理面板查看结果", symbol: "text.alignleft", destination: .text(pastedText ?? search.stringValue)), at: 0)
             }
             if let minutes = Self.awakeMinutes(query) {
                 results.insert(QuickAction(id: "awake.custom", title: AppLanguage.english ? "Keep awake for \(minutes) minutes" : "防休眠 \(minutes) 分钟", symbol: "sun.max", destination: .awake(minutes)), at: 0)
@@ -355,7 +392,43 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 detail: CurrencyQuery.completion(amount: amount, english: AppLanguage.english).text + (AppLanguage.english ? " · Return to try; edit currency" : " · 回车试算，可直接改为日元、欧元"),
                 symbol: "dollarsign.arrow.circlepath", destination: .command("currency.suggest")))
         }
-        let calculation = QuickCalculator.evaluate(query)
+        let english = AppLanguage.english
+        if let amount = CurrencyQuery.suggestion(query) {
+            results.append(QuickAction(id: "content.mathHint", title: english ? "Calculate" : "计算", detail: amount + " × 2", symbol: "plus.forwardslash.minus", destination: .command("mathHint")))
+            results.append(QuickAction(id: "content.unitHint", title: english ? "Convert units" : "单位换算", detail: amount + " cm → m", symbol: "ruler", destination: .command("unitHint")))
+        }
+        let date = QuickInputActions.date(query)
+        let url = QuickInputActions.webURL(query)
+        let unit = QuickInputActions.unitResult(query)
+        if let date {
+            let calendar = Calendar.current
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: calendar.startOfDay(for: date)).day ?? 0
+            let weekday = date.formatted(Date.FormatStyle().weekday(.wide).locale(english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")))
+            let distance = days == 0 ? (english ? "Today" : "今天") : (english ? "\(abs(days)) days " + (days > 0 ? "from now" : "ago") : "\(abs(days)) 天" + (days > 0 ? "后" : "前"))
+            results.insert(contentsOf: [
+                QuickAction(id: "content.date", title: weekday + " · " + distance, detail: query, symbol: "calendar", destination: .calculation(weekday + " · " + distance)),
+                QuickAction(id: "content.note", title: english ? "Add an item on this date" : "为这一天增加事项", detail: UserDefaults.standard.bool(forKey: "calendar.notesEnabled") ? query : (english ? "Enable date items in Calendar settings" : "前往日历设置启用日期事项"), symbol: "calendar.badge.plus", destination: .calendarNote(date))
+            ], at: 0)
+        } else if let url {
+            results.insert(contentsOf: [
+                QuickAction(id: "content.url", title: english ? "Open website" : "打开网址", detail: url.host ?? query, symbol: "safari", destination: .website(url)),
+                QuickAction(id: "content.qr", title: english ? "Generate QR code" : "生成二维码", symbol: "qrcode", destination: .qrCode(url))
+            ], at: 0)
+        } else if let unit {
+            results.insert(QuickAction(id: "content.unit", title: unit, detail: query, symbol: "ruler", destination: .calculation(unit)), at: 0)
+        }
+        if let text = pastedText, !query.isEmpty, url == nil {
+            results.append(QuickAction(id: "content.clipboard", title: english ? "Search clipboard" : "搜索剪贴板", symbol: "doc.on.clipboard", destination: .clipboardSearch(query)))
+            if !results.contains(where: { $0.id == "content.text" }) {
+                results.append(QuickAction(id: "content.text", title: english ? "Process text" : "文本处理", symbol: "text.alignleft", destination: .text(text)))
+            }
+        }
+        if !query.isEmpty, let i = results.firstIndex(where: { if case .application = $0.destination { return true }; return false }),
+           case .application(let path) = results[i].destination {
+            let match = results[i]
+            results.insert(QuickAction(id: "content.locate", title: english ? "Locate window" : "定位窗口", detail: match.title, symbol: "macwindow", destination: .locateWindow(path)), at: i + 1)
+        }
+        let calculation = date == nil ? QuickCalculator.evaluate(query) : nil
         if case .success(let value) = calculation {
             results.insert(QuickAction(id: "content.calculation", title: "= " + value,
                 detail: AppLanguage.english ? "Return to copy result · % means ÷100" : "回车复制结果 · % 表示除以 100",
@@ -368,7 +441,7 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
                 detail: "1 \(currencyQuery.from) = \(quote.rate) \(currencyQuery.to) · " + source,
                 symbol: "dollarsign.arrow.circlepath", destination: .calculation(quote.value)), at: 0)
         }
-        let shouldSearchFiles = !query.isEmpty && query.count <= 256 && calculation == nil && currencyQuery == nil && results.first?.id != "content.text"
+        let shouldSearchFiles = date == nil && url == nil && unit == nil && pastedText == nil && !query.isEmpty && query.count <= 256 && calculation == nil && currencyQuery == nil && results.first?.id != "content.text"
         let baseResults = results
         if shouldSearchFiles { results += previousFileResults }
         table.reloadData()
@@ -552,6 +625,31 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let action = results[row]
         if action.id == "files.search" {
             search.stringValue = "/"; rebuild(); window?.makeFirstResponder(search)
+            return
+        }
+        if case .qrCode(let url) = action.destination {
+            guard let image = QuickInputActions.qrImage(url), let window else {
+                feedback.stringValue = AppLanguage.english ? "URL is too long for a QR code" : "网址过长，无法生成二维码"
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = AppLanguage.english ? "QR code" : "网址二维码"
+            alert.informativeText = url.host ?? ""
+            let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 240, height: 240))
+            view.imageScaling = .scaleProportionallyUpOrDown
+            view.image = image; alert.accessoryView = view
+            alert.addButton(withTitle: AppLanguage.english ? "Done" : "完成")
+            alert.addButton(withTitle: AppLanguage.english ? "Copy image" : "复制图片")
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertSecondButtonReturn { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image]) }
+            }
+            return
+        }
+        if ["content.mathHint", "content.unitHint"].contains(action.id), let amount = CurrencyQuery.suggestion(search.stringValue) {
+            let expression = action.id == "content.unitHint" ? "cm → m" : "× 2"
+            search.stringValue = amount + " " + expression
+            rebuild(); window?.makeFirstResponder(search)
+            (search.currentEditor() as? NSTextView)?.setSelectedRange(NSRange(location: amount.utf16.count + 1, length: expression.utf16.count))
             return
         }
         if action.id == "content.currencyHint", let amount = CurrencyQuery.suggestion(search.stringValue) {

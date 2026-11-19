@@ -651,7 +651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         presentClipboard()
     }
 
-    private func presentClipboard() {
+    private func presentClipboard(query: String? = nil) {
         guard ToolFeature.clipboard.isEnabled() else { return }
         if clipboardWindow == nil {
             let panel = ClipboardWindow(store: clipboard)
@@ -670,7 +670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             clipboardWindow = panel
         }
-        clipboardWindow?.present()
+        clipboardWindow?.present(query: query)
     }
 
     @objc private func showWallpaperSettings() {
@@ -751,6 +751,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let error { completion(.failure(error)) } else { completion(.success(())) }
             }
             return
+        case .website(let url):
+            guard NSWorkspace.shared.open(url) else { fail("无法打开网址"); return }
+        case .qrCode: fail("二维码面板不可用"); return
+        case .clipboardSearch(let query):
+            guard available(.clipboard) else { return }
+            presentClipboard(query: query)
+        case .calendarNote(let date):
+            guard available(.calendar) else { return }
+            guard calendarTool.notesEnabled else {
+                completion(.success(())); settings("calendar"); return
+            }
+            completion(.success(())); calendarTool.showNote(on: date); return
+        case .locateWindow(let path):
+            guard available(.apps) else { return }
+            guard AXIsProcessTrusted() else { fail("定位窗口需要辅助功能权限，请在系统设置中授权方寸"); return }
+            guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: path).standardizedFileURL.path }) else {
+                fail("应用尚未运行，可使用打开应用"); return
+            }
+            let ax = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(ax, 0.5)
+            var raw: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &raw) == .success,
+                  let target = (raw as? [AXUIElement])?.first else { fail("此应用没有可定位的窗口"); return }
+            _ = AXUIElementSetAttributeValue(target, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            app.unhide(); app.activate(options: [])
+            guard AXUIElementPerformAction(target, kAXRaiseAction as CFString) == .success else { fail("应用未能置前该窗口"); return }
         case .file(let path):
             guard FileManager.default.fileExists(atPath: path) else { fail(AppLanguage.english ? "File moved or removed. Refresh the index." : "文件已移动或删除，请刷新索引。"); return }
             guard NSWorkspace.shared.open(URL(fileURLWithPath: path)) else { fail(AppLanguage.english ? "Unable to open file" : "无法打开文件，请检查权限"); return }

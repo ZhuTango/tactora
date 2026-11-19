@@ -212,6 +212,10 @@ import AppKit
   notePanel.mouseDown(with: NSEvent.mouseEvent(with:.leftMouseDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:noteWindow.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1)!)
   precondition(requestedClose, "Clicking calendar blank space must close the whole calendar group")
   precondition(!floating.isVisible && floating.parent == nil, "Closing calendar must dismiss the floating window")
+  let targetDay = calendar.date(byAdding: .month, value: 3, to: date)!
+  notePanel.editNote(on: targetDay)
+  precondition(calendar.isDate(notePanel.selectedDate, inSameDayAs: targetDay) && !input.isHiddenOrHasHiddenAncestor)
+  notePanel.dismissNotes()
   noteWindow.orderOut(nil)
   let infoView = views(notesView).first { $0.identifier?.rawValue == "calendar.notes.dateInfo" } as! NSTextField
   let makeupDate = calendar.date(from:DateComponents(year:2026,month:10,day:10,hour:12))!

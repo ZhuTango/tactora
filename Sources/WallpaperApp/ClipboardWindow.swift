@@ -357,7 +357,11 @@ final class ClipboardWindow: NSWindowController, NSWindowDelegate, NSSearchField
     private func configure(_ button: NSButton, title: String, action: Selector) {
         button.title = title; button.target = self; button.action = action; button.bezelStyle = .rounded
     }
-    func present() {
+    func present(query: String? = nil) {
+        if let query {
+            search.stringValue = query; selected = nil; selectedGroup = nil
+            filter.selectedSegment = 0; scroll.contentView.scroll(to: .zero)
+        }
         guard let window else { return }
         store.poll()
         let point = NSEvent.mouseLocation

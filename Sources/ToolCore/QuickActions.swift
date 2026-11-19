@@ -4,6 +4,11 @@ struct QuickAction {
     enum Destination {
         case command(String)
         case application(String)
+        case locateWindow(String)
+        case calendarNote(Date)
+        case clipboardSearch(String)
+        case website(URL)
+        case qrCode(URL)
         case file(String)
         case text(String)
         case calculation(String)

@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 @main struct Checks {
  @MainActor static func main() async throws {
   _ = NSApplication.shared
@@ -31,6 +32,7 @@ import AppKit
   precondition(panel.results.first?.id == "content.text")
   precondition(panel.results.contains { $0.id == "content.currencyHint" }, "Timestamp input also offers currency without displacing timestamp")
   panel.search.stringValue = "100"; panel.rebuild()
+  precondition(Set(["content.currencyHint", "content.mathHint", "content.unitHint"]).isSubset(of: Set(panel.results.map(\.id))))
   let hintIndex = panel.results.firstIndex { $0.id == "content.currencyHint" }!
   panel.table.selectRowIndexes(IndexSet(integer: hintIndex), byExtendingSelection: false)
   panel.executeSelected()
@@ -51,6 +53,32 @@ import AppKit
   panel.dismiss(restoreFocus: false); panel.present()
   try await Task.sleep(nanoseconds: 400_000_000)
   precondition(!panel.results.contains { $0.id == "content.currency" }, "Closed session must not receive stale rates")
+  precondition(QuickInputActions.unitResult("256 MiB 转 MB") == "268.435456 MB")
+  precondition(QuickInputActions.unitResult("100 cm → m") == "1 m")
+  precondition(QuickInputActions.unitResult("100 厘米转米") == "1 m")
+  precondition(QuickInputActions.unitResult("32华氏度转摄氏度") == "0 °C")
+  precondition(QuickInputActions.unitResult("12 kg to km") == nil)
+  precondition(QuickInputActions.date("2025-02-29") == nil)
+  panel.search.stringValue = "2026年11月19日"; panel.rebuild()
+  precondition(panel.results.prefix(2).map(\.id) == ["content.date", "content.note"])
+  precondition(panel.results.first?.title.contains("Thursday") == true || panel.results.first?.title.contains("星期四") == true)
+  let url = URL(string: "https://example.com/a?q=42")!
+  panel.search.stringValue = url.absoluteString; panel.rebuild()
+  precondition(panel.results.prefix(2).map(\.id) == ["content.url", "content.qr"])
+  let qr = QuickInputActions.qrImage(url)!
+  let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: nil)!
+  let decoded = detector.features(in: CIImage(data: qr.tiffRepresentation!)!).compactMap { ($0 as? CIQRCodeFeature)?.messageString }
+  precondition(decoded.contains(url.absoluteString))
+  panel.window!.makeFirstResponder(panel.search)
+  let pasteBoard = NSPasteboard.withUniqueName()
+  defer { pasteBoard.releaseGlobally() }
+  let pasted = "项目复盘\n第二行"
+  pasteBoard.setString(pasted, forType: .string)
+  let pasteEditor = panel.search.currentEditor() as! NSTextView
+  pasteEditor.selectAll(nil)
+  precondition(pasteEditor.readSelection(from: pasteBoard, type: .string))
+  precondition(panel.results.contains { if case .clipboardSearch = $0.destination { return true }; return false })
+  precondition(panel.results.contains { if case .text(let value) = $0.destination { return value == pasted }; return false })
   panel.search.stringValue = "12*(3+4)"; panel.rebuild()
   guard case .calculation(let result) = panel.results.first?.destination else { fatalError("Missing calculator") }
   precondition(result == "84" && panel.table.selectedRow == 0)
@@ -140,6 +168,7 @@ import AppKit
   aliasPanel.present()
   aliasPanel.search.stringValue = "weixin"; aliasPanel.rebuild()
   precondition(aliasPanel.results.first?.title == "微信（WeChat）")
+  precondition(aliasPanel.results.contains { if case .locateWindow = $0.destination { return true }; return false })
   aliasPanel.dismiss(restoreFocus:false)
   alias = "聊天"
   aliasPanel.present()

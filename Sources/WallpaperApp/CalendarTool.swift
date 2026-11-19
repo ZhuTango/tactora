@@ -82,6 +82,10 @@ final class CalendarTool: NSObject, NSPopoverDelegate {
         timer.tolerance = 1
         midnight = timer; RunLoop.main.add(timer, forMode: .common)
     }
+    func showNote(on date: Date) {
+        closeCalendar(); toggle()
+        (popover.contentViewController?.view as? CalendarPanel)?.editNote(on: date)
+    }
     func showToday() { closeCalendar(); toggle() }
     @objc func toggle() {
         guard ToolFeature.calendar.isEnabled(in: defaults), let button = statusItem?.button else { return }
@@ -308,6 +312,11 @@ final class CalendarPanel: NSView {
             notesView.show(date: date, calendar: model.calendar, preview: !notesEditing, showHolidays: showHolidays)
             positionNotesCard()
         }
+    }
+    func editNote(on date: Date) {
+        selectedDate = date
+        jumpToMonth(date)
+        openNotes()
     }
     @objc private func openNotes() {
         guard notesEnabled else { return }
