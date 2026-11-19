@@ -21,6 +21,16 @@ import Foundation
         precondition(catalog.search("合同 ext:pdf").count == 2)
         precondition(catalog.search("项目 合同 ext:pdf").count == 1)
         precondition(catalog.search("项目 type:folder").allSatisfy(\.directory))
+        for query in ["hetong", "ht", "he tong"] {
+            precondition(catalog.search(query + " ext:pdf").count == 2)
+        }
+        precondition(catalog.search("xm type:folder").map(\.name) == ["项目"])
+        let title = "📚项目管理.pdf"
+        let index = QuickActionHighlightIndex(title)
+        for query in ["管理", "guanli", "gl"] {
+            let matched = index.ranges(query).map { (title as NSString).substring(with: $0) }.joined()
+            precondition(matched == "管理")
+        }
         precondition(catalog.search("not-found").isEmpty)
         precondition(FileSearchScanner.scan(paths, limit: 1).limited)
         let old = root.appendingPathComponent("项目/合同.txt"), new = root.appendingPathComponent("项目/改名.txt")

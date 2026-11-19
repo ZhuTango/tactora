@@ -164,6 +164,20 @@ import AppKit
   }
   guard case .file(let found) = filePanel.results.first?.destination else { fatalError("Missing file search result") }
   precondition(found.hasSuffix("/合同.txt"))
+  func resultTitle(_ view: NSView) -> NSTextField? {
+   if let field = view as? NSTextField, field.stringValue == "合同.txt" { return field }
+   return view.subviews.lazy.compactMap(resultTitle).first
+  }
+  for input in ["hetong ext:txt", "/ht EXT:txt"] {
+   filePanel.search.stringValue = input; filePanel.rebuild()
+   try await Task.sleep(nanoseconds: 350_000_000)
+   precondition(filePanel.results.first?.title == "合同.txt")
+   let row = filePanel.tableView(filePanel.table, viewFor: filePanel.table.tableColumns.first, row: 0)!
+   let text = resultTitle(row)!.attributedStringValue
+   for i in 0..<text.length {
+    precondition((text.attribute(.backgroundColor, at: i, effectiveRange: nil) != nil) == (i < 2))
+   }
+  }
   try Data("second fixture".utf8).write(to: fileRoot.appendingPathComponent("合同2.txt"))
   fileIndex.rebuild()
   for _ in 0..<30 {

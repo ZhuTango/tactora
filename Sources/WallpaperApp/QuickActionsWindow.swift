@@ -570,7 +570,8 @@ final class QuickActionsWindow: NSWindowController, NSTableViewDataSource, NSTab
         let highlighted = NSMutableAttributedString(string: action.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
         let highlightQuery: String
         if case .file = action.destination {
-            highlightQuery = (search.stringValue.hasPrefix("/") ? String(search.stringValue.dropFirst()) : search.stringValue).split(whereSeparator: \.isWhitespace).filter { !$0.hasPrefix("ext:") && !$0.hasPrefix("type:") }.joined(separator: " ")
+            let input = search.stringValue
+            highlightQuery = FileSearchQuery(input.hasPrefix("/") ? String(input.dropFirst()) : input).terms.joined(separator: " ")
         } else { highlightQuery = search.stringValue }
         for range in action.highlightRanges(highlightQuery) {
             highlighted.addAttributes([.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.22)], range: range)

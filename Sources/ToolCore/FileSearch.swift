@@ -28,10 +28,22 @@ struct FileSearchCatalog {
         let name: String
         let path: String
         let ext: String
+        let phonetics: (latin: String, initials: String)?
     }
     private let rows: [Row]
     init(_ files: [IndexedFile]) {
-        rows = files.map { Row(file: $0, name: FileSearchQuery.fold($0.name), path: FileSearchQuery.fold($0.path), ext: FileSearchQuery.fold(($0.path as NSString).pathExtension)) }
+        var keys = [String: (latin: String, initials: String)]()
+        rows = files.map { file in
+            let name = FileSearchQuery.fold(file.name)
+            var phonetics = keys[name]
+            if phonetics == nil, name.unicodeScalars.contains(where: { $0.properties.isIdeographic }) {
+                let index = QuickActionHighlightIndex(name)
+                phonetics = (index.latin, index.initials)
+                keys[name] = phonetics
+            }
+            return Row(file: file, name: name, path: FileSearchQuery.fold(file.path),
+                       ext: FileSearchQuery.fold((file.path as NSString).pathExtension), phonetics: phonetics)
+        }
     }
     func search(_ input: String, limit: Int = 80) -> [IndexedFile] {
         guard input.count <= 256 else { return [] }
@@ -64,12 +76,21 @@ struct FileSearchCatalog {
                 }
             }
         }
+        let phrase = query.terms.joined(separator: " ")
         for row in rows {
             if query.foldersOnly && !row.file.directory { continue }
             if let ext = query.ext, row.file.directory || ext != row.ext { continue }
-            guard query.terms.allSatisfy({ row.path.contains($0) }) else { continue }
-            let phrase = query.terms.joined(separator: " ")
-            let rank = row.name == phrase ? 0 : row.name.hasPrefix(phrase) ? 1 : query.terms.allSatisfy({ row.name.contains($0) }) ? 2 : 3
+            let rank: Int
+            if row.name == phrase { rank = 0 }
+            else if row.name.hasPrefix(phrase) || row.phonetics?.initials.hasPrefix(phrase) == true || row.phonetics?.latin.hasPrefix(phrase) == true { rank = 1 }
+            else if query.terms.allSatisfy({ row.name.contains($0) }) { rank = 2 }
+            else if let keys = row.phonetics, query.terms.allSatisfy({
+                row.name.contains($0) || keys.latin.contains($0) || keys.initials.contains($0)
+            }) { rank = 2 }
+            else if query.terms.allSatisfy({ term in
+                row.path.contains(term) || row.phonetics?.latin.contains(term) == true || row.phonetics?.initials.contains(term) == true
+            }) { rank = 4 }
+            else { continue }
             insert((rank, row.file))
         }
         return matches.sorted(by: better).map { $0.1 }

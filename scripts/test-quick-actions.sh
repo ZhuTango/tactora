@@ -6,7 +6,7 @@ xcrun swiftc -parse-as-library Sources/ToolCore/QuickCurrency.swift scripts/Curr
 .build/currency-checks
 xcrun swiftc -parse-as-library Sources/ToolCore/QuickCalculator.swift scripts/QuickCalculatorChecks.swift -o .build/calculator-checks
 .build/calculator-checks
-xcrun swiftc -parse-as-library Sources/ToolCore/AppSearchIndex.swift Sources/ToolCore/QuickActions.swift scripts/QuickActionChecks.swift -o .build/quick-action-checks
+xcrun swiftc -parse-as-library Sources/ToolCore/AppSearchIndex.swift Sources/ToolCore/QuickActionHighlightIndex.swift Sources/ToolCore/QuickActions.swift scripts/QuickActionChecks.swift -o .build/quick-action-checks
 .build/quick-action-checks
 app_sources=()
 for source in Sources/WallpaperApp/*.swift; do
