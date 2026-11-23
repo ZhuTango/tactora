@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 || TextToolsShortcut.savedContains(value)
                 || self?.appSwitcher.containsShortcut(value) == true || self?.windowManager.contains(value) == true
         }
-        ocr.onCapture = { [weak self] in self?.clipboardWindow?.close(); self?.clipboardSettings?.window?.orderOut(nil) }
+        ocr.onCapture = { [weak self] in self?.clipboardWindow?.close() }
         ocr.onShowHistory = { [weak self] in self?.presentClipboard() }
         windowManager.conflicts = { [weak self] value in
             let clipboard = ClipboardShortcut.saved()
@@ -113,7 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         screenshots.onCapture = { [weak self] in
             self?.clipboardWindow?.close()
-            self?.clipboardSettings?.window?.orderOut(nil)
             self?.quickWindow?.dismiss(restoreFocus: false)
         }
         screenshots.canCapture = { [weak self] in self?.ocr.busy != true }
