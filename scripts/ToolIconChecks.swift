@@ -28,6 +28,20 @@ struct ToolIconChecks {
             NSGraphicsContext.restoreGraphicsState()
             return result
         }
+        let moduleSymbols = ["doc.on.clipboard", "photo", "square.stack.3d.up", "macwindow",
+                             "display.sun", "text.viewfinder", "textformat", "keyboard",
+                             "calendar", "fanblades", "camera.viewfinder"]
+        var silhouettes = Set<[Bool]>()
+        for symbol in moduleSymbols {
+            let image = ToolIcon.featureImage(symbol: symbol)
+            let pixels = bitmap(image)
+            let mask = (0..<20).flatMap { y in
+                (0..<20).map { x in pixels.colorAt(x: x, y: y)!.alphaComponent > 0.5 }
+            }
+            precondition(image.isTemplate && mask.contains(true), "Missing module icon: \(symbol)")
+            precondition(silhouettes.insert(mask).inserted, "Duplicate module silhouette: \(symbol)")
+        }
+        print("PASS: all eleven module icons render with distinct template silhouettes")
         let idle = ToolIcon.statusImage(awake: false)
         let active = ToolIcon.statusImage(awake: true)
         precondition(idle.isTemplate && active.isTemplate)
