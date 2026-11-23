@@ -812,7 +812,20 @@ struct Preview {
         precondition(!switcher.frequencySorting)
         let appsTable = allViews(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTableView }.first!
         precondition(appsTable.numberOfRows > 1)
-        precondition(appsTable.tableColumns.map { $0.identifier.rawValue } == ["app", "alias", "shortcut", "show"])
+        precondition(appsTable.tableColumns.map { $0.identifier.rawValue } == ["app", "alias", "shortcut", "inputSource", "show"])
+        let sourceCell = switcherView.tableView(appsTable, viewFor: appsTable.tableColumns[3], row: 0)!
+        let picker = allViews(sourceCell).compactMap { $0 as? NSPopUpButton }.first!
+        precondition(picker.indexOfSelectedItem == 0 && picker.numberOfItems > 1)
+        picker.selectItem(at: 1)
+        let chosenID = picker.selectedItem!.representedObject as! String
+        picker.sendAction(picker.action, to: picker.target)
+        precondition(switcher.bindings[extraApp.id]?.inputSourceID == chosenID)
+        try switcher.configure(extraApp, shortcut: nil, show: true)
+        precondition(AppSwitcher(defaults: switcherDefaults, start: false).bindings[extraApp.id]?.inputSourceID == chosenID)
+        picker.selectItem(at: 0)
+        picker.sendAction(picker.action, to: picker.target)
+        precondition(switcher.bindings[extraApp.id]?.inputSourceID == nil)
+        print("PASS: input source popup saves, survives shortcut edits and clears")
         for width: CGFloat in [170, 220, 300] {
             let aliasColumn = appsTable.tableColumns[1]
             let cell = switcherView.tableView(appsTable, viewFor: aliasColumn, row: 0) as! NSTableCellView

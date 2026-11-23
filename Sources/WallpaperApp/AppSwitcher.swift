@@ -17,6 +17,47 @@ struct SwitcherBinding: Codable, Equatable {
     var shortcut: ClipboardShortcut?
     var showInPanel = false
     var alias: String?
+    var inputSourceID: String?
+}
+
+@MainActor
+enum SwitcherInputSources {
+    struct Choice {
+        let id: String
+        let name: String
+    }
+
+    private static func property(_ key: CFString, of source: TISInputSource) -> String? {
+        guard let value = TISGetInputSourceProperty(source, key) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(value).takeUnretainedValue() as String
+    }
+
+    static var currentID: String? {
+        guard let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return nil }
+        return property(kTISPropertyInputSourceID, of: current)
+    }
+
+    private static func sources(id: String? = nil) -> [TISInputSource] {
+        var filter: [String: Any] = [
+            kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource!,
+            kTISPropertyInputSourceIsSelectCapable as String: true,
+            kTISPropertyInputSourceIsEnabled as String: true
+        ]
+        if let id { filter[kTISPropertyInputSourceID as String] = id }
+        return TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() as? [TISInputSource] ?? []
+    }
+
+    static func choices() -> [Choice] {
+        sources().compactMap { source in
+            guard let id = property(kTISPropertyInputSourceID, of: source) else { return nil }
+            return Choice(id: id, name: property(kTISPropertyLocalizedName, of: source) ?? id)
+        }
+    }
+
+    static func select(_ id: String) {
+        guard currentID != id, let source = sources(id: id).first else { return }
+        TISSelectInputSource(source)
+    }
 }
 
 // No keyboard content is captured: only the current modifier state is sampled.
@@ -73,9 +114,16 @@ final class AppSwitcher: NSObject {
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let id = app.bundleIdentifier else { return }
+                  let id = app.bundleIdentifier ?? app.bundleURL?.standardizedFileURL.path else { return }
             let regular = app.activationPolicy == .regular
-            Task { @MainActor [weak self] in self?.recordActivation(id, isRegular: regular) }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.recordActivation(id, isRegular: regular)
+                if self.featureEnabled, NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+                   let source = self.bindings[id]?.inputSourceID {
+                    SwitcherInputSources.select(source)
+                }
+            }
         }
     }
     private var configurationOpen = false
@@ -160,7 +208,7 @@ final class AppSwitcher: NSObject {
     }
     func isConfigured(_ id: String) -> Bool {
         guard let binding = bindings[id] else { return false }
-        return binding.showInPanel || binding.shortcut != nil
+        return binding.showInPanel || binding.shortcut != nil || binding.inputSourceID != nil
     }
     func orderedApps(_ apps: [SwitcherApp]) -> [SwitcherApp] {
         let saved = defaults.stringArray(forKey: "appSwitcherOrder") ?? []
@@ -226,9 +274,17 @@ final class AppSwitcher: NSObject {
             }
             guard !featureEnabled || install(shortcut, id: app.id) else { throw error("无法注册快捷键，可能已被系统或其他应用占用。原配置已保留。") }
         } else { shortcuts.removeValue(forKey: app.id); failures.removeValue(forKey: app.id) }
-        bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show, alias: bindings[app.id]?.alias)
+        bindings[app.id] = SwitcherBinding(path: app.path, name: app.name, shortcut: shortcut, showInPanel: show, alias: bindings[app.id]?.alias, inputSourceID: bindings[app.id]?.inputSourceID)
         defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
         hidePanelIfVisible(); panel = nil; updateTimer(); onChange?()
+    }
+    func setInputSource(_ id: String?, for app: SwitcherApp) throws {
+        if let loadError { throw error(loadError) }
+        var binding = bindings[app.id] ?? SwitcherBinding(path: app.path, name: app.name)
+        binding.inputSourceID = id
+        bindings[app.id] = binding
+        defaults.set(try JSONEncoder().encode(bindings), forKey: "appSwitcherBindings")
+        onChange?()
     }
     func setVisibility(_ app: SwitcherApp, show: Bool) throws {
         if let loadError { throw error(loadError) }
@@ -431,6 +487,7 @@ final class SwitcherIconButton: NSButton {
 @MainActor
 final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     private let manager: AppSwitcher
+    private var inputSources = SwitcherInputSources.choices()
     private let search = NSSearchField()
     private let table = NSTableView()
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -504,12 +561,13 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
         table.usesAlternatingRowBackgroundColors = false; table.backgroundColor = .clear
         table.style = .plain
         table.dataSource = self; table.delegate = self; table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        for (id, title, width) in [("app", AppLanguage.english ? "Application" : "应用", 230.0),
-                                    ("alias", AppLanguage.english ? "Display alias" : "显示别名", 170.0),
-                                    ("shortcut", AppLanguage.english ? "Shortcut" : "快捷键", 160.0),
-                                    ("show", AppLanguage.english ? "Show in panel" : "面板中展示", 115.0)] {
+        for (id, title, width) in [("app", AppLanguage.english ? "Application" : "应用", 180.0),
+                                    ("alias", AppLanguage.english ? "Display alias" : "显示别名", 116.0),
+                                    ("shortcut", AppLanguage.english ? "Shortcut" : "快捷键", 118.0),
+                                    ("inputSource", AppLanguage.english ? "Input source" : "输入法", 142.0),
+                                    ("show", AppLanguage.english ? "Show in panel" : "面板中展示", 88.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = title; column.width = width
-            column.minWidth = id == "app" ? 180 : width; column.resizingMask = .autoresizingMask
+            column.minWidth = id == "app" ? 150 : width; column.resizingMask = .autoresizingMask
             table.addTableColumn(column)
         }
         table.registerForDraggedTypes([Self.dragType])
@@ -533,7 +591,14 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             status.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16)
         ])
         manager.onChange = { [weak self] in self?.reload() }
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(refreshSources),
+            name: Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String), object: nil)
         scan()
+    }
+    deinit { DistributedNotificationCenter.default().removeObserver(self) }
+    @objc private func refreshSources() {
+        inputSources = SwitcherInputSources.choices()
+        table.reloadData()
     }
     required init?(coder: NSCoder) { fatalError("Not used") }
     @objc private func addApplication() {
@@ -702,6 +767,40 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
             field.toolTip = AppLanguage.english ? "Return or leave to save; clear to restore the original name" : "回车或离开输入框保存；清空恢复原名称"
             return cell
         }
+        if key.rawValue == "inputSource" {
+            let picker = AppInputSourcePicker(frame: .zero, pullsDown: false)
+            picker.controlSize = .small
+            picker.font = .systemFont(ofSize: 12)
+            picker.addItem(withTitle: AppLanguage.english ? "Keep current" : "不切换")
+            for source in inputSources {
+                let item = NSMenuItem(title: source.name, action: nil, keyEquivalent: "")
+                item.representedObject = source.id
+                picker.menu?.addItem(item)
+            }
+            if let id = binding?.inputSourceID {
+                if let item = picker.itemArray.first(where: { $0.representedObject as? String == id }) {
+                    picker.select(item)
+                } else {
+                    picker.addItem(withTitle: AppLanguage.english ? "Unavailable" : "输入法不可用")
+                    picker.lastItem?.representedObject = id
+                    picker.select(picker.lastItem)
+                }
+            }
+            picker.appID = app.id
+            picker.target = self
+            picker.action = #selector(changeInputSource(_:))
+            picker.toolTip = AppLanguage.english ? "Input source when this app becomes active" : "切到此应用时使用的输入法"
+            picker.setAccessibilityLabel(app.displayName + " · " + column.title)
+            let cell = NSTableCellView()
+            picker.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(picker)
+            NSLayoutConstraint.activate([
+                picker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 3),
+                picker.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -3),
+                picker.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
+            return cell
+        }
         if key.rawValue == "shortcut" {
             let cell = tableView.makeView(withIdentifier: key, owner: self) as? NSTableCellView ?? NSTableCellView()
             cell.identifier = key
@@ -759,6 +858,11 @@ final class AppSwitcherSettingsView: NSView, NSTableViewDataSource, NSTableViewD
     private func app(for sender: NSButton) -> SwitcherApp? {
         guard let id = sender.cell?.representedObject as? String else { return nil }
         return apps.first { $0.id == id }
+    }
+    @objc private func changeInputSource(_ sender: AppInputSourcePicker) {
+        guard let app = apps.first(where: { $0.id == sender.appID }) else { return }
+        do { try manager.setInputSource(sender.selectedItem?.representedObject as? String, for: app) }
+        catch { showError(error); reload() }
     }
     @objc private func toggleApp(_ sender: NSButton) {
         guard let app = app(for: sender) else { return }
@@ -854,6 +958,8 @@ final class SwitcherShortcutRecorder: NSButton {
 }
 
 @MainActor
+private final class AppInputSourcePicker: NSPopUpButton { var appID = "" }
+
 private final class AppAliasField: NSTextField { var appID = "" }
 
 @MainActor
