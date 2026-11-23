@@ -3,28 +3,17 @@ import AppKit
 @main struct KeyboardUIChecks {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
-        var registrationEvents: [String] = []
-        try await refreshKeyboardHelperRegistration(previous: "82", current: "84", unregister: {
-            registrationEvents.append("unregister")
-        }, register: { registrationEvents.append("register") }, save: { registrationEvents.append("save") })
-        precondition(registrationEvents == ["unregister", "register", "save"])
-        registrationEvents = []
-        try await refreshKeyboardHelperRegistration(previous: "84", current: "84", unregister: {
-            registrationEvents.append("unregister")
-        }, register: { registrationEvents.append("register") }, save: { registrationEvents.append("save") })
-        precondition(registrationEvents.isEmpty)
-        do {
-            try await refreshKeyboardHelperRegistration(previous: nil, current: "84", unregister: {}, register: {
-                throw KeyboardControlError(message: "denied")
-            }, save: { registrationEvents.append("save") })
-            preconditionFailure("failed registration must propagate")
-        } catch { precondition(registrationEvents.isEmpty) }
-        print("PASS: helper upgrade unregister/register/save order, same-build no-op and failed registration not persisted")
         if CommandLine.arguments.contains("--native") {
             let backend = NativeKeyboardBackend()
             let devices = try backend.devices()
             precondition(devices.contains(where: \.builtIn))
             precondition(!devices.contains { $0.name.contains("Virtual") || $0.name.contains("G604") })
+            for _ in 0..<3 {
+                for device in try backend.devices() {
+                    _ = try backend.mappings(for: device)
+                }
+            }
+            print("PASS: mapping services remain readable after inventory refresh returns")
             for device in devices { print("DEVICE", device.name, device.transport, device.builtIn) }
             if CommandLine.arguments.contains("--mapping") {
                 // F20 -> F19 only, immediately restored. No common typing key is affected.

@@ -10,8 +10,9 @@ final class NativeKeyboardBackend: KeyboardBackend {
     var onHelperChanged: (() -> Void)?
     var onDevicesChanged: (() -> Void)?
     private let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
-    private let client = IOHIDEventSystemClientCreateSimpleClient(kCFAllocatorDefault)
     private var handles: [String: IOHIDDevice] = [:]
+    // Service handles borrow their event-system client even after enumeration returns.
+    private var serviceClient: IOHIDEventSystemClient?
     private var services: [String: IOHIDServiceClient] = [:]
     private var helper: KeyboardHelperBridge?
     private var seized: [String: IOHIDDevice] = [:]
@@ -38,9 +39,15 @@ final class NativeKeyboardBackend: KeyboardBackend {
         for handle in seized.values { IOHIDDeviceClose(handle, IOOptionBits(kIOHIDOptionsTypeSeizeDevice)) }
     }
     func devices() throws -> [KeyboardDevice] {
-        let raw = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? []
+        // Notifications wake the controller; reconcile from a fresh inventory even
+        // when Bluetooth reconnects during sleep or a service appears after its device.
+        let inventory = IOHIDManagerCreate(kCFAllocatorDefault, 0)
+        IOHIDManagerSetDeviceMatching(inventory, ["DeviceUsagePage": 1, "DeviceUsage": 6] as CFDictionary)
+        let raw = IOHIDManagerCopyDevices(inventory) as? Set<IOHIDDevice> ?? []
+        let client = IOHIDEventSystemClientCreateSimpleClient(kCFAllocatorDefault)
         let serviceList = IOHIDEventSystemClientCopyServices(client) as? [IOHIDServiceClient] ?? []
         handles = [:]; services = [:]
+        serviceClient = client
         var result: [KeyboardDevice] = []
         for device in raw {
             func property(_ key: String) -> Any? { IOHIDDeviceGetProperty(device, key as CFString) }
