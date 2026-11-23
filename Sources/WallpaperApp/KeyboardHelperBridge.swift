@@ -5,6 +5,9 @@ import ServiceManagement
 @MainActor
 final class KeyboardHelperBridge {
     private var registrationAttempted = false
+    private var consecutiveFailures = 0
+    private var repairAttempted = false
+    private var repairing = false
     static let registrationKey = "keyboard.helperRegisteredBuild.v1"
     static var currentBuild: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown" }
     static func recordRegistration() { UserDefaults.standard.set(currentBuild, forKey: registrationKey) }
@@ -22,7 +25,8 @@ final class KeyboardHelperBridge {
     static var available: Bool { service.status == .enabled }
     func configure(_ ids: [String]) {
         let ids = ids.sorted()
-        if ids.isEmpty { disconnect(); return }
+        if ids.isEmpty { disconnect(); consecutiveFailures = 0; return }
+        guard !repairing else { return }
         // Reuse an enabled service across builds. Unregistering first can
         // remove a working approval even when the subsequent registration fails.
         let service = Self.service
@@ -64,6 +68,7 @@ final class KeyboardHelperBridge {
             proxy.setProtection(ids) { [weak self] active, message in
                 Task { @MainActor in
                     guard let self, current == self.generation else { return }
+                    self.consecutiveFailures = 0
                     self.inFlight = false; self.active = active; self.message = message
                     self.onChange?()
                 }
@@ -77,7 +82,33 @@ final class KeyboardHelperBridge {
     }
     private func failed(_ reason: String, generation: Int) {
         guard self.generation == generation else { return }
-        disconnect(); retryAfter = Date().addingTimeInterval(5); message = reason; onChange?()
+        disconnect()
+        retryAfter = Date().addingTimeInterval(5)
+        message = reason
+        consecutiveFailures += 1
+        if consecutiveFailures >= 2, !repairAttempted, Self.available {
+            repairAttempted = true
+            repairing = true
+            message = "正在重新登记键盘屏蔽辅助服务…"
+            Task { @MainActor in
+                defer { self.repairing = false; self.onChange?() }
+                do {
+                    let service = Self.service
+                    try await service.unregister()
+                    for attempt in 1...3 {
+                        do { try service.register(); break }
+                        catch {
+                            let failure = error as NSError
+                            guard attempt < 3, failure.domain == "SMAppServiceErrorDomain", failure.code == 1 else { throw error }
+                            try await Task.sleep(nanoseconds: 500_000_000)
+                        }
+                    }
+                    Self.recordRegistration()
+                    self.retryAfter = .distantPast
+                } catch { self.message = "辅助服务重新登记失败：" + error.localizedDescription }
+            }
+        }
+        onChange?()
     }
     func disconnect() {
         guard connection != nil || !requested.isEmpty || active else { return }
